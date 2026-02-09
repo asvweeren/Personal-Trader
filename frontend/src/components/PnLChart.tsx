@@ -11,7 +11,6 @@ import {
   AreaChart,
 } from "recharts";
 import { api } from "../api/client";
-import type { PortfolioSnapshot } from "../types";
 
 interface ChartPoint {
   date: string;
@@ -46,8 +45,8 @@ export function PnLChart() {
   }, []);
 
   const hasData = data.length > 0;
-  const startValue = hasData ? data[0].value : 0;
-  const endValue = hasData ? data[data.length - 1].value : 0;
+  const startValue = hasData ? data[0]!.value : 0;
+  const endValue = hasData ? data[data.length - 1]!.value : 0;
   const totalReturn = startValue > 0 ? ((endValue - startValue) / startValue) * 100 : 0;
 
   return (
