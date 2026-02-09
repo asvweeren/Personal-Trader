@@ -42,31 +42,49 @@ async def lifespan(app: FastAPI):
         paper_trading=settings.ibkr_paper_trading,
     )
 
-    # Start data pipeline
-    pipeline = get_data_pipeline()
-    await pipeline.start(settings.symbols_list)
-
-    # Initialize trading engine
-    db = session_factory()
-    engine = await init_trading_engine(db)
-    await engine.start()
-
     # Subscribe event bus to WS broadcasting
     for evt in (SIGNAL_GENERATED, ORDER_FILLED, PORTFOLIO_UPDATED, RISK_DAILY_STOP, POSITION_CLOSED):
         event_bus.subscribe(evt, _ws_forward)
 
-    # Start scheduler with pipeline and trading engine jobs
+    # Start scheduler
     start_scheduler()
-    schedule_data_pipeline(pipeline)
-    schedule_trading_engine(engine)
+
+    # Try to start data pipeline and trading engine (non-fatal if broker unavailable)
+    pipeline = None
+    engine = None
+    db = None
+    try:
+        pipeline = get_data_pipeline()
+        await pipeline.start(settings.symbols_list)
+        logger.info("pipeline.started")
+
+        db = session_factory()
+        engine = await init_trading_engine(db)
+        await engine.start()
+        logger.info("engine.started")
+
+        schedule_data_pipeline(pipeline)
+        schedule_trading_engine(engine)
+    except Exception as e:
+        logger.warning("startup.broker_unavailable", error=str(e))
+        logger.info("app.running_without_broker", hint="Configure IBKR credentials and restart")
 
     yield
 
     # Shutdown
     stop_scheduler()
-    await engine.stop()
-    await pipeline.stop()
-    await db.close()
+    if engine:
+        try:
+            await engine.stop()
+        except Exception:
+            pass
+    if pipeline:
+        try:
+            await pipeline.stop()
+        except Exception:
+            pass
+    if db:
+        await db.close()
     logger.info("app.shutdown")
 
 
@@ -78,7 +96,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
