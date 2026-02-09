@@ -316,14 +316,22 @@ class RiskManager:
         portfolio: Portfolio | None = None,
     ) -> None:
         """Persist a risk event to the database."""
-        logger.log(
-            "critical" if severity == RiskEventSeverity.CRITICAL else "warning",
-            "risk.event",
-            event_type=event_type.value,
-            severity=severity.value,
-            symbol=symbol,
-            description=description,
-        )
+        if severity == RiskEventSeverity.CRITICAL:
+            logger.critical(
+                "risk.event",
+                event_type=event_type.value,
+                severity=severity.value,
+                symbol=symbol,
+                description=description,
+            )
+        else:
+            logger.warning(
+                "risk.event",
+                event_type=event_type.value,
+                severity=severity.value,
+                symbol=symbol,
+                description=description,
+            )
 
         if not self._db:
             return

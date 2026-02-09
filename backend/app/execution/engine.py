@@ -256,6 +256,8 @@ class TradingEngine:
             self._reconnect_attempts = 0
             return True
 
+        self._reconnect_attempts += 1
+
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             self._state = EngineState.ERROR
             await send_alert(
@@ -265,8 +267,6 @@ class TradingEngine:
                 critical=True,
             )
             return False
-
-        self._reconnect_attempts += 1
         logger.warning(
             "engine.reconnecting",
             attempt=self._reconnect_attempts,

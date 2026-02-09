@@ -37,7 +37,7 @@ def test_bar_accumulator_updates_ohlcv():
     assert acc.high == 155.0
     assert acc.low == 148.0
     assert acc.close == 152.0
-    assert acc.volume == 150 + 200 + 150 + 100  # cumulative from all ticks
+    assert acc.volume == 100 + 200 + 150 + 100  # cumulative from all ticks
     assert acc.tick_count == 4
 
 

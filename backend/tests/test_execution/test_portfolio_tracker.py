@@ -56,7 +56,7 @@ async def test_get_current():
 
 @pytest.mark.asyncio
 async def test_get_current_updates_performance():
-    broker = make_mock_broker(make_portfolio(unrealized_pnl=100.0, total=5100.0, cash=3000.0))
+    broker = make_mock_broker(make_portfolio(total=5100.0, cash=3000.0))
     # Fix the portfolio to have correct unrealized
     portfolio = make_portfolio()
     portfolio.account_summary.unrealized_pnl = 100.0
