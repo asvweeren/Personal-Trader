@@ -1,7 +1,9 @@
-.PHONY: help setup up down restart logs backend-shell db-migrate db-upgrade test lint frontend-dev backend-dev
+.PHONY: help setup up down restart logs backend-shell db-migrate db-upgrade test lint frontend-dev backend-dev prod-up prod-down prod-logs prod-restart
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# ── Local Development ──────────────────────────────────────
 
 setup: ## Initial project setup
 	cp -n .env.example .env || true
@@ -12,16 +14,16 @@ setup: ## Initial project setup
 	cd backend && uv run alembic upgrade head
 	cd frontend && npm install
 
-up: ## Start all services
+up: ## Start all services (dev)
 	docker compose up -d
 
-down: ## Stop all services
+down: ## Stop all services (dev)
 	docker compose down
 
-restart: ## Restart all services
+restart: ## Restart all services (dev)
 	docker compose restart
 
-logs: ## Tail all logs
+logs: ## Tail all logs (dev)
 	docker compose logs -f
 
 backend-dev: ## Run backend in development mode
@@ -55,3 +57,23 @@ lint: ## Run linters
 format: ## Format code
 	cd backend && uv run ruff check --fix app/ tests/
 	cd backend && uv run ruff format app/ tests/
+
+# ── Production ─────────────────────────────────────────────
+
+prod-up: ## Start production services
+	docker compose -f docker-compose.prod.yml up -d --build
+
+prod-down: ## Stop production services
+	docker compose -f docker-compose.prod.yml down
+
+prod-restart: ## Restart production services
+	docker compose -f docker-compose.prod.yml restart
+
+prod-logs: ## Tail production logs
+	docker compose -f docker-compose.prod.yml logs -f
+
+prod-status: ## Show production service status
+	docker compose -f docker-compose.prod.yml ps
+
+prod-deploy: ## Full production deployment
+	bash scripts/deploy.sh
