@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+    volumes: []
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    volumes: []
+    restart: always
+
+  postgres:
+    restart: always
+
+  redis:
+    restart: always

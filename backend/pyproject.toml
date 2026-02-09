@@ -1,0 +1,66 @@
+[project]
+name = "trader-backend"
+version = "0.1.0"
+description = "AI Day Trading System - Backend"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    # Database
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    # Redis
+    "redis[hiredis]>=5.2.0",
+    # Settings
+    "pydantic-settings>=2.6.0",
+    # Broker
+    "ib_insync>=0.9.86",
+    # Data & ML
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    "xgboost>=2.1.0",
+    "scikit-learn>=1.5.0",
+    "ta>=0.11.0",
+    # LLM
+    "anthropic>=0.39.0",
+    # Scheduling
+    "apscheduler>=3.10.0",
+    # Logging
+    "structlog>=24.4.0",
+    # HTTP client
+    "httpx>=0.28.0",
+    # News
+    "feedparser>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "httpx>=0.28.0",
+]
+ml = [
+    "torch>=2.5.0",
+    "jupyter>=1.1.0",
+    "matplotlib>=3.9.0",
+    "seaborn>=0.13.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"

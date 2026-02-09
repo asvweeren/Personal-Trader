@@ -1,0 +1,170 @@
+"""Portfolio state management: position tracking, P&L calculation, and snapshots."""
+
+from datetime import datetime, timezone
+
+import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.broker.base import BrokerAdapter, Portfolio
+from app.core.event_bus import event_bus, PORTFOLIO_UPDATED, POSITION_CLOSED
+from app.models.portfolio_snapshot import PortfolioSnapshot
+from app.models.trade import Trade, TradeStatus
+from app.monitoring.performance import PerformanceTracker
+
+logger = structlog.get_logger()
+
+
+class PortfolioTracker:
+    """Tracks portfolio state and persists snapshots."""
+
+    def __init__(
+        self,
+        broker: BrokerAdapter,
+        db: AsyncSession,
+        performance: PerformanceTracker | None = None,
+    ):
+        self._broker = broker
+        self._db = db
+        self._performance = performance
+        self._last_portfolio: Portfolio | None = None
+        self._daily_start_value: float | None = None
+
+    async def get_current(self) -> Portfolio:
+        """Get current portfolio from broker."""
+        portfolio = await self._broker.get_portfolio()
+        self._last_portfolio = portfolio
+
+        if self._performance:
+            self._performance.update_unrealized(
+                portfolio.account_summary.unrealized_pnl
+            )
+
+        return portfolio
+
+    async def initialize_daily(self) -> float:
+        """Initialize daily tracking. Returns start-of-day portfolio value."""
+        portfolio = await self.get_current()
+        self._daily_start_value = portfolio.account_summary.total_value
+
+        if self._performance:
+            self._performance.reset_daily()
+
+        logger.info(
+            "portfolio.daily_init",
+            value=self._daily_start_value,
+        )
+        return self._daily_start_value
+
+    def get_daily_pnl(self) -> float:
+        """Calculate P&L since start of day."""
+        if self._daily_start_value is None or self._last_portfolio is None:
+            return 0.0
+        return self._last_portfolio.account_summary.total_value - self._daily_start_value
+
+    async def record_trade_close(
+        self,
+        trade: Trade,
+        exit_price: float,
+        commission: float = 0.0,
+    ) -> float:
+        """Record a closed trade and calculate realized P&L."""
+        if trade.entry_price is None:
+            logger.warning("portfolio.no_entry_price", trade_id=trade.id)
+            return 0.0
+
+        if trade.side.value == "BUY":
+            pnl = (exit_price - trade.entry_price) * trade.quantity
+        else:
+            pnl = (trade.entry_price - exit_price) * trade.quantity
+
+        pnl -= commission
+
+        trade.exit_price = exit_price
+        trade.realized_pnl = round(pnl, 2)
+        trade.commission = commission
+        trade.status = TradeStatus.CLOSED
+        trade.closed_at = datetime.now(timezone.utc)
+
+        if self._performance:
+            self._performance.record_trade(pnl, commission)
+
+        await event_bus.publish(POSITION_CLOSED, {
+            "trade_id": trade.id,
+            "symbol": trade.symbol,
+            "pnl": round(pnl, 2),
+            "exit_price": exit_price,
+        })
+
+        logger.info(
+            "portfolio.trade_closed",
+            trade_id=trade.id,
+            symbol=trade.symbol,
+            pnl=round(pnl, 2),
+            entry=trade.entry_price,
+            exit=exit_price,
+        )
+
+        return pnl
+
+    async def take_snapshot(self) -> PortfolioSnapshot:
+        """Take a snapshot of the current portfolio and persist to DB."""
+        portfolio = await self.get_current()
+
+        positions_detail = [
+            {
+                "symbol": p.symbol,
+                "quantity": p.quantity,
+                "avg_cost": p.avg_cost,
+                "market_price": p.market_price,
+                "market_value": p.market_value,
+                "unrealized_pnl": p.unrealized_pnl,
+            }
+            for p in portfolio.positions
+        ]
+
+        daily_pnl = self.get_daily_pnl()
+
+        snapshot = PortfolioSnapshot(
+            total_value=portfolio.account_summary.total_value,
+            cash=portfolio.account_summary.cash,
+            positions_value=sum(p.market_value for p in portfolio.positions),
+            unrealized_pnl=portfolio.account_summary.unrealized_pnl,
+            realized_pnl=portfolio.account_summary.realized_pnl,
+            daily_pnl=round(daily_pnl, 2),
+            positions_detail=positions_detail,
+        )
+
+        self._db.add(snapshot)
+        await self._db.flush()
+
+        await event_bus.publish(PORTFOLIO_UPDATED, {
+            "total_value": snapshot.total_value,
+            "cash": snapshot.cash,
+            "positions": len(portfolio.positions),
+            "daily_pnl": snapshot.daily_pnl,
+            "unrealized_pnl": snapshot.unrealized_pnl,
+        })
+
+        logger.info(
+            "portfolio.snapshot",
+            total_value=snapshot.total_value,
+            cash=snapshot.cash,
+            positions=len(portfolio.positions),
+            daily_pnl=snapshot.daily_pnl,
+        )
+
+        return snapshot
+
+    def get_status(self) -> dict:
+        """Return current portfolio tracker status."""
+        if self._last_portfolio is None:
+            return {"initialized": False}
+
+        return {
+            "initialized": True,
+            "total_value": self._last_portfolio.account_summary.total_value,
+            "cash": self._last_portfolio.account_summary.cash,
+            "position_count": len(self._last_portfolio.positions),
+            "daily_start_value": self._daily_start_value,
+            "daily_pnl": self.get_daily_pnl(),
+        }
