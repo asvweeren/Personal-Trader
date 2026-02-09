@@ -4,7 +4,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import portfolio, trades, strategy, risk, backtest, system
+from app.api.routes import portfolio, trades, strategy, risk, backtest, system, validation
 from app.api.websocket import router as ws_router, broadcast_update
 from app.config import settings
 from app.core.event_bus import (
@@ -20,6 +20,7 @@ from app.core.scheduler import (
     stop_scheduler,
     schedule_data_pipeline,
     schedule_trading_engine,
+    schedule_daily_validation_report,
 )
 from app.dependencies import get_data_pipeline, init_trading_engine
 from app.models.database import async_session as session_factory
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
 
     # Start scheduler
     start_scheduler()
+    schedule_daily_validation_report()
 
     # Try to start data pipeline and trading engine (non-fatal if broker unavailable)
     pipeline = None
@@ -109,6 +111,7 @@ app.include_router(strategy.router, prefix="/api", tags=["strategy"])
 app.include_router(risk.router, prefix="/api", tags=["risk"])
 app.include_router(backtest.router, prefix="/api", tags=["backtest"])
 app.include_router(system.router, prefix="/api", tags=["system"])
+app.include_router(validation.router, prefix="/api", tags=["validation"])
 
 # WebSocket
 app.include_router(ws_router)

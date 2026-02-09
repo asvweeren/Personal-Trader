@@ -65,3 +65,25 @@ def schedule_trading_engine(engine) -> None:
         max_instances=1,
     )
     logger.info("scheduler.job_added", job="trading_cycle", interval="5min")
+
+
+def schedule_daily_validation_report() -> None:
+    """Schedule the daily paper-trading validation report.
+
+    Runs at 21:00 UTC (after US market close) to summarise
+    the day's paper-trading performance.
+    """
+    from app.monitoring.daily_reporter import DailyReporter
+
+    scheduler.add_job(
+        DailyReporter.scheduled_daily_report,
+        CronTrigger(hour=21, minute=0),
+        id="daily_validation_report",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info(
+        "scheduler.job_added",
+        job="daily_validation_report",
+        trigger="cron(21:00)",
+    )
