@@ -79,6 +79,8 @@ services:
         condition: service_healthy
       ib-gateway:
         condition: service_started
+    volumes:
+      - ./ml/models:/app/ml/models:ro
     restart: always
     deploy:
       resources:

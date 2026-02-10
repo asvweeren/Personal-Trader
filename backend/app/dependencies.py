@@ -1,5 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import structlog
+
 from app.broker.base import BrokerAdapter
 from app.broker.mock_adapter import MockBrokerAdapter
 from app.config import settings
@@ -9,6 +11,9 @@ from app.execution.engine import TradingEngine
 from app.models.database import get_session
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
+from app.strategy.base import Strategy
+
+logger = structlog.get_logger()
 
 # Singletons
 _broker: BrokerAdapter | None = None
@@ -76,6 +81,52 @@ def get_trading_engine() -> TradingEngine:
     return _trading_engine
 
 
+def load_strategies() -> list[Strategy]:
+    """Load and initialize all available trading strategies."""
+    strategies: list[Strategy] = []
+
+    # 1. ML Strategy (XGBoost) - loads trained model from disk
+    try:
+        from app.strategy.ml_strategy import MLStrategy
+        ml = MLStrategy(confidence_threshold=0.5)
+        if ml._model is not None:
+            strategies.append(ml)
+            logger.info("strategies.loaded", name="ml_xgboost", features=len(ml._feature_columns))
+        else:
+            logger.warning("strategies.skipped", name="ml_xgboost", reason="no trained model")
+    except Exception:
+        logger.exception("strategies.load_error", name="ml_xgboost")
+
+    # 2. Sentiment Strategy (Claude LLM) - requires Anthropic API key
+    if settings.anthropic_api_key:
+        try:
+            from app.strategy.sentiment_strategy import SentimentStrategy
+            sentiment = SentimentStrategy(min_confidence=0.5)
+            strategies.append(sentiment)
+            logger.info("strategies.loaded", name="sentiment")
+        except Exception:
+            logger.exception("strategies.load_error", name="sentiment")
+    else:
+        logger.warning("strategies.skipped", name="sentiment", reason="no API key")
+
+    # 3. Ensemble Strategy - wraps the above if we have 2+ strategies
+    if len(strategies) >= 2:
+        try:
+            from app.strategy.ensemble import EnsembleStrategy
+            ensemble = EnsembleStrategy(
+                strategies=list(strategies),
+                weights={"ml_xgboost": 0.6, "sentiment": 0.4},
+                agreement_threshold=0.3,
+            )
+            strategies.append(ensemble)
+            logger.info("strategies.loaded", name="ensemble", sub_strategies=len(strategies) - 1)
+        except Exception:
+            logger.exception("strategies.load_error", name="ensemble")
+
+    logger.info("strategies.ready", count=len(strategies))
+    return strategies
+
+
 async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     """Initialize the trading engine with all dependencies."""
     global _trading_engine
@@ -86,10 +137,11 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     risk_manager = get_risk_manager()
     performance = get_performance_tracker()
     pipeline = get_data_pipeline()
+    strategies = load_strategies()
 
     _trading_engine = TradingEngine(
         broker=broker,
-        strategies=[],  # Strategies are added after model training
+        strategies=strategies,
         risk_manager=risk_manager,
         market_data=pipeline._market_data,
         performance=performance,
