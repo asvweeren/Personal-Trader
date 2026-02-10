@@ -40,8 +40,13 @@ class IBKRAdapter(BrokerAdapter):
     def _start_ib_loop(self):
         """Start a dedicated event loop thread for ib_insync."""
         self._ib_loop = asyncio.new_event_loop()
+
+        def _run():
+            asyncio.set_event_loop(self._ib_loop)
+            self._ib_loop.run_forever()
+
         self._ib_thread = threading.Thread(
-            target=self._ib_loop.run_forever,
+            target=_run,
             daemon=True,
             name="ib-insync-loop",
         )
