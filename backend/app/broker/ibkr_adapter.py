@@ -199,7 +199,10 @@ class IBKRAdapter(BrokerAdapter):
 
         values = {}
         for av in account_values:
-            values[av.tag] = float(av.value) if av.value else 0.0
+            try:
+                values[av.tag] = float(av.value)
+            except (ValueError, TypeError):
+                pass
 
         return AccountSummary(
             total_value=values.get("NetLiquidation", 0.0),
