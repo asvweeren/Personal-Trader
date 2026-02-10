@@ -51,9 +51,19 @@ async def pipeline_status(pipeline: DataPipeline = Depends(get_data_pipeline)):
 async def engine_status():
     try:
         engine = get_trading_engine()
+        return engine.get_status()
     except RuntimeError:
-        return {"state": "NOT_INITIALIZED", "trading_enabled": False}
-    return engine.get_status()
+        return {
+            "state": "NOT_INITIALIZED",
+            "trading_enabled": False,
+            "cycle_count": 0,
+            "last_cycle_at": None,
+            "open_trades": 0,
+            "pending_orders": 0,
+            "symbols": [],
+            "strategies": [],
+            "reconnect_attempts": 0,
+        }
 
 
 class TradingToggle(BaseModel):
