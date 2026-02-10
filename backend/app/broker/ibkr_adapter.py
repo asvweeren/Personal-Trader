@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from datetime import datetime
 
 import pandas as pd
@@ -21,42 +22,84 @@ logger = structlog.get_logger()
 
 
 class IBKRAdapter(BrokerAdapter):
-    """Interactive Brokers adapter using ib_insync (native async)."""
+    """Interactive Brokers adapter using ib_insync.
+
+    Runs ib_insync on a dedicated background thread with its own event loop
+    to avoid conflicts with uvicorn's asyncio loop.
+    """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 1):
         self._host = host
         self._port = port
         self._client_id = client_id
         self._ib: IB | None = None
+        self._ib_loop: asyncio.AbstractEventLoop | None = None
+        self._ib_thread: threading.Thread | None = None
         self._market_data_callbacks: dict[str, callable] = {}
 
-    def _ensure_ib(self) -> IB:
-        if self._ib is None:
-            self._ib = IB()
-        return self._ib
+    def _start_ib_loop(self):
+        """Start a dedicated event loop thread for ib_insync."""
+        self._ib_loop = asyncio.new_event_loop()
+        self._ib_thread = threading.Thread(
+            target=self._ib_loop.run_forever,
+            daemon=True,
+            name="ib-insync-loop",
+        )
+        self._ib_thread.start()
+        logger.info("ibkr.loop_started")
+
+    async def _run(self, coro):
+        """Schedule a coroutine on ib_insync's dedicated loop, await from FastAPI's loop."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._ib_loop)
+        return await asyncio.wrap_future(future)
+
+    async def _sync(self, fn, *args):
+        """Run a sync ib_insync function on the dedicated loop thread."""
+        async def _wrapper():
+            return fn(*args)
+        return await self._run(_wrapper())
 
     async def connect(self) -> None:
         try:
-            ib = self._ensure_ib()
-            await ib.connectAsync(self._host, self._port, clientId=self._client_id)
+            self._start_ib_loop()
+
+            async def _do_connect():
+                self._ib = IB()
+                logger.info(
+                    "ibkr.connecting",
+                    host=self._host,
+                    port=self._port,
+                    client_id=self._client_id,
+                )
+                await self._ib.connectAsync(
+                    self._host, self._port, clientId=self._client_id
+                )
+
+            await self._run(_do_connect())
             logger.info("ibkr.connected", host=self._host, port=self._port)
         except Exception as e:
             raise BrokerConnectionError(f"Failed to connect to IBKR: {e}") from e
 
     async def disconnect(self) -> None:
-        if self._ensure_ib().isConnected():
-            self._ensure_ib().disconnect()
+        if self._ib and self._ib.isConnected():
+            await self._sync(self._ib.disconnect)
             logger.info("ibkr.disconnected")
+        if self._ib_loop and self._ib_loop.is_running():
+            self._ib_loop.call_soon_threadsafe(self._ib_loop.stop)
+            if self._ib_thread:
+                self._ib_thread.join(timeout=5)
 
     async def is_connected(self) -> bool:
-        return self._ensure_ib().isConnected()
+        if self._ib is None:
+            return False
+        return self._ib.isConnected()
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
         try:
             contract = self._make_contract(order.symbol)
             ib_order = self._make_order(order)
 
-            trade: Trade = self._ensure_ib().placeOrder(contract, ib_order)
+            trade: Trade = await self._sync(self._ib.placeOrder, contract, ib_order)
 
             logger.info(
                 "ibkr.order_placed",
@@ -76,28 +119,36 @@ class IBKRAdapter(BrokerAdapter):
 
     async def cancel_order(self, order_id: str) -> bool:
         try:
-            for trade in self._ensure_ib().openTrades():
-                if str(trade.order.orderId) == order_id:
-                    self._ensure_ib().cancelOrder(trade.order)
-                    logger.info("ibkr.order_cancelled", order_id=order_id)
-                    return True
-            return False
+            async def _do_cancel():
+                for trade in self._ib.openTrades():
+                    if str(trade.order.orderId) == order_id:
+                        self._ib.cancelOrder(trade.order)
+                        return True
+                return False
+
+            result = await self._run(_do_cancel())
+            if result:
+                logger.info("ibkr.order_cancelled", order_id=order_id)
+            return result
         except Exception as e:
             raise BrokerOrderError(f"Failed to cancel order: {e}") from e
 
     async def get_order_status(self, order_id: str) -> OrderResult:
-        for trade in self._ensure_ib().trades():
-            if str(trade.order.orderId) == order_id:
-                return OrderResult(
-                    order_id=order_id,
-                    status=trade.orderStatus.status,
-                    filled_price=trade.orderStatus.avgFillPrice or None,
-                    filled_quantity=int(trade.orderStatus.filled) if trade.orderStatus.filled else None,
-                )
-        return OrderResult(order_id=order_id, status="UNKNOWN")
+        async def _do_get():
+            for trade in self._ib.trades():
+                if str(trade.order.orderId) == order_id:
+                    return OrderResult(
+                        order_id=order_id,
+                        status=trade.orderStatus.status,
+                        filled_price=trade.orderStatus.avgFillPrice or None,
+                        filled_quantity=int(trade.orderStatus.filled) if trade.orderStatus.filled else None,
+                    )
+            return OrderResult(order_id=order_id, status="UNKNOWN")
+
+        return await self._run(_do_get())
 
     async def get_positions(self) -> list[Position]:
-        positions = self._ensure_ib().positions()
+        positions = await self._sync(self._ib.positions)
         result = []
         for pos in positions:
             if pos.position != 0:
@@ -119,7 +170,7 @@ class IBKRAdapter(BrokerAdapter):
         return Portfolio(account_summary=summary, positions=positions)
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = self._ensure_ib().accountSummary()
+        account_values = await self._sync(self._ib.accountSummary)
 
         values = {}
         for av in account_values:
@@ -136,14 +187,14 @@ class IBKRAdapter(BrokerAdapter):
     async def subscribe_market_data(self, symbols: list[str], callback: callable) -> None:
         for symbol in symbols:
             contract = self._make_contract(symbol)
-            self._ensure_ib().reqMktData(contract)
+            await self._sync(self._ib.reqMktData, contract)
             self._market_data_callbacks[symbol] = callback
             logger.info("ibkr.subscribed_market_data", symbol=symbol)
 
     async def unsubscribe_market_data(self, symbols: list[str]) -> None:
         for symbol in symbols:
             contract = self._make_contract(symbol)
-            self._ensure_ib().cancelMktData(contract)
+            await self._sync(self._ib.cancelMktData, contract)
             self._market_data_callbacks.pop(symbol, None)
 
     async def get_historical_data(
@@ -156,15 +207,18 @@ class IBKRAdapter(BrokerAdapter):
         contract = self._make_contract(symbol)
         end_dt = end_date or datetime.now()
 
-        bars = await self._ensure_ib().reqHistoricalDataAsync(
-            contract,
-            endDateTime=end_dt,
-            durationStr=duration,
-            barSizeSetting=bar_size,
-            whatToShow="TRADES",
-            useRTH=True,
-            formatDate=1,
-        )
+        async def _do_request():
+            return await self._ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime=end_dt,
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow="TRADES",
+                useRTH=True,
+                formatDate=1,
+            )
+
+        bars = await self._run(_do_request())
 
         if not bars:
             return pd.DataFrame()
