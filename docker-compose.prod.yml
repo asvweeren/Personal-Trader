@@ -43,7 +43,7 @@ services:
       TWS_USERID: ${IBKR_USERNAME:?Set IBKR_USERNAME in .env}
       TWS_PASSWORD: ${IBKR_PASSWORD:?Set IBKR_PASSWORD in .env}
       TRADING_MODE: ${IBKR_TRADING_MODE:-paper}
-      TWS_ACCEPT_INCOMING: "yes"
+      TWS_ACCEPT_INCOMING: "accept"
       READ_ONLY_API: "no"
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-trader123}
     ports:
@@ -56,6 +56,21 @@ services:
       resources:
         limits:
           memory: 1G
+
+  # ── IB API Proxy ────────────────────────────────────────
+  # socat forwards API traffic to 127.0.0.1 so IB Gateway
+  # sees connections from a trusted IP (localhost).
+  ib-proxy:
+    image: alpine/socat
+    network_mode: "service:ib-gateway"
+    command: TCP-LISTEN:4003,fork,reuseaddr TCP:127.0.0.1:4002
+    depends_on:
+      - ib-gateway
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 32M
 
   # ── Backend ──────────────────────────────────────────────
   backend:
@@ -71,13 +86,13 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       IBKR_HOST: ib-gateway
-      IBKR_PORT: 4002
+      IBKR_PORT: 4003
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      ib-gateway:
+      ib-proxy:
         condition: service_started
     volumes:
       - ./ml/models:/app/ml/models:ro
