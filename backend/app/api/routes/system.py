@@ -75,4 +75,4 @@ async def test_alert():
         message="Dit is een test alert vanuit het AI Trading systeem. Als je dit ontvangt, werken de alerts correct.",
         critical=True,
     )
-    return {"status": "sent", "channels": {"signal": bool(settings.signal_sender_number), "email": bool(settings.smtp_user)}}
+    return {"status": "sent", "channels": {"telegram": bool(settings.telegram_bot_token), "signal": bool(settings.signal_sender_number), "email": bool(settings.smtp_user)}}

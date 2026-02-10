@@ -9,6 +9,34 @@ from app.config import settings
 logger = structlog.get_logger()
 
 
+async def send_telegram_message(message: str) -> bool:
+    """Send alert via Telegram bot."""
+    if not settings.telegram_bot_token or not settings.telegram_chat_ids:
+        logger.warning("telegram.not_configured")
+        return False
+
+    chat_ids = [c.strip() for c in settings.telegram_chat_ids.split(",")]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            for chat_id in chat_ids:
+                resp = await client.post(
+                    f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": message,
+                        "parse_mode": "HTML",
+                    },
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+        logger.info("telegram.sent", recipients=len(chat_ids))
+        return True
+    except Exception:
+        logger.exception("telegram.send_error")
+        return False
+
+
 async def send_signal_message(message: str) -> bool:
     """Send alert via Signal messenger using signal-cli-rest-api."""
     if not settings.signal_sender_number or not settings.signal_recipient_numbers:
@@ -70,6 +98,7 @@ async def send_email_alert(subject: str, body: str) -> bool:
 async def send_alert(title: str, message: str, critical: bool = False) -> None:
     """Send alert via all configured channels. Email is used for critical alerts."""
     full_message = f"🚨 {title}\n\n{message}" if critical else f"📊 {title}\n\n{message}"
+    await send_telegram_message(full_message)
     await send_signal_message(full_message)
 
     if critical:

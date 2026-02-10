@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     # News API
     news_api_key: str = ""
 
-    # Alerts - Signal
+    # Alerts - Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_ids: str = ""  # Comma-separated chat IDs
+
+    # Alerts - Signal (legacy)
     signal_cli_rest_api_url: str = "http://localhost:8080"
     signal_sender_number: str = ""
     signal_recipient_numbers: str = ""
