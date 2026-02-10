@@ -27,30 +27,36 @@ class IBKRAdapter(BrokerAdapter):
         self._host = host
         self._port = port
         self._client_id = client_id
-        self._ib = IB()
+        self._ib: IB | None = None
         self._market_data_callbacks: dict[str, callable] = {}
+
+    def _ensure_ib(self) -> IB:
+        if self._ib is None:
+            self._ib = IB()
+        return self._ib
 
     async def connect(self) -> None:
         try:
-            await self._ib.connectAsync(self._host, self._port, clientId=self._client_id)
+            ib = self._ensure_ib()
+            await ib.connectAsync(self._host, self._port, clientId=self._client_id)
             logger.info("ibkr.connected", host=self._host, port=self._port)
         except Exception as e:
             raise BrokerConnectionError(f"Failed to connect to IBKR: {e}") from e
 
     async def disconnect(self) -> None:
-        if self._ib.isConnected():
-            self._ib.disconnect()
+        if self._ensure_ib().isConnected():
+            self._ensure_ib().disconnect()
             logger.info("ibkr.disconnected")
 
     async def is_connected(self) -> bool:
-        return self._ib.isConnected()
+        return self._ensure_ib().isConnected()
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
         try:
             contract = self._make_contract(order.symbol)
             ib_order = self._make_order(order)
 
-            trade: Trade = self._ib.placeOrder(contract, ib_order)
+            trade: Trade = self._ensure_ib().placeOrder(contract, ib_order)
 
             logger.info(
                 "ibkr.order_placed",
@@ -70,9 +76,9 @@ class IBKRAdapter(BrokerAdapter):
 
     async def cancel_order(self, order_id: str) -> bool:
         try:
-            for trade in self._ib.openTrades():
+            for trade in self._ensure_ib().openTrades():
                 if str(trade.order.orderId) == order_id:
-                    self._ib.cancelOrder(trade.order)
+                    self._ensure_ib().cancelOrder(trade.order)
                     logger.info("ibkr.order_cancelled", order_id=order_id)
                     return True
             return False
@@ -80,7 +86,7 @@ class IBKRAdapter(BrokerAdapter):
             raise BrokerOrderError(f"Failed to cancel order: {e}") from e
 
     async def get_order_status(self, order_id: str) -> OrderResult:
-        for trade in self._ib.trades():
+        for trade in self._ensure_ib().trades():
             if str(trade.order.orderId) == order_id:
                 return OrderResult(
                     order_id=order_id,
@@ -91,7 +97,7 @@ class IBKRAdapter(BrokerAdapter):
         return OrderResult(order_id=order_id, status="UNKNOWN")
 
     async def get_positions(self) -> list[Position]:
-        positions = self._ib.positions()
+        positions = self._ensure_ib().positions()
         result = []
         for pos in positions:
             if pos.position != 0:
@@ -113,7 +119,7 @@ class IBKRAdapter(BrokerAdapter):
         return Portfolio(account_summary=summary, positions=positions)
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = self._ib.accountSummary()
+        account_values = self._ensure_ib().accountSummary()
 
         values = {}
         for av in account_values:
@@ -130,14 +136,14 @@ class IBKRAdapter(BrokerAdapter):
     async def subscribe_market_data(self, symbols: list[str], callback: callable) -> None:
         for symbol in symbols:
             contract = self._make_contract(symbol)
-            self._ib.reqMktData(contract)
+            self._ensure_ib().reqMktData(contract)
             self._market_data_callbacks[symbol] = callback
             logger.info("ibkr.subscribed_market_data", symbol=symbol)
 
     async def unsubscribe_market_data(self, symbols: list[str]) -> None:
         for symbol in symbols:
             contract = self._make_contract(symbol)
-            self._ib.cancelMktData(contract)
+            self._ensure_ib().cancelMktData(contract)
             self._market_data_callbacks.pop(symbol, None)
 
     async def get_historical_data(
@@ -150,7 +156,7 @@ class IBKRAdapter(BrokerAdapter):
         contract = self._make_contract(symbol)
         end_dt = end_date or datetime.now()
 
-        bars = await self._ib.reqHistoricalDataAsync(
+        bars = await self._ensure_ib().reqHistoricalDataAsync(
             contract,
             endDateTime=end_dt,
             durationStr=duration,
