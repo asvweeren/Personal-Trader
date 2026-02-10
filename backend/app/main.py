@@ -25,7 +25,7 @@ from app.core.scheduler import (
     schedule_heartbeat,
     schedule_snapshot_cleanup,
 )
-from app.dependencies import get_data_pipeline, init_trading_engine
+from app.dependencies import get_broker, get_data_pipeline, init_trading_engine
 from app.models.database import async_session as session_factory
 from app.monitoring.logger import setup_logging
 
@@ -60,7 +60,12 @@ async def lifespan(app: FastAPI):
     pipeline = None
     engine = None
     db = None
+    broker = None
     try:
+        broker = get_broker()
+        await broker.connect()
+        logger.info("broker.connected")
+
         pipeline = get_data_pipeline()
         await pipeline.start(settings.symbols_list)
         logger.info("pipeline.started")
@@ -88,6 +93,11 @@ async def lifespan(app: FastAPI):
     if pipeline:
         try:
             await pipeline.stop()
+        except Exception:
+            pass
+    if broker:
+        try:
+            await broker.disconnect()
         except Exception:
             pass
     if db:
