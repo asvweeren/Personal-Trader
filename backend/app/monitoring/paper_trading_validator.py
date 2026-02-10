@@ -56,10 +56,30 @@ class ReadinessResult:
     summary: str
 
     def to_dict(self) -> dict[str, Any]:
+        passed_count = sum(1 for c in self.checks if c.passed)
+        total_count = len(self.checks)
+        overall_score = passed_count / total_count if total_count > 0 else 0.0
+        blockers = [c.detail for c in self.checks if not c.passed]
         return {
             "ready": self.ready,
             "trading_days": self.trading_days,
             "summary": self.summary,
+            "passed_count": passed_count,
+            "total_count": total_count,
+            "overall_score": overall_score,
+            "recommendation": self.summary,
+            "blockers": blockers,
+            "criteria": [
+                {
+                    "name": c.name,
+                    "passed": c.passed,
+                    "required": c.required,
+                    "actual": c.actual,
+                    "description": c.detail,
+                }
+                for c in self.checks
+            ],
+            # Legacy field
             "checks": [
                 {
                     "name": c.name,
@@ -169,6 +189,15 @@ class PaperTradingValidator:
 
         if trading_days == 0:
             return {
+                "is_active": False,
+                "start_date": None,
+                "days_elapsed": 0,
+                "min_days_required": MIN_TRADING_DAYS,
+                "total_trades": 0,
+                "is_complete": False,
+                "current_phase": "collecting_data",
+                "progress_pct": 0.0,
+                # Legacy fields for backwards compatibility
                 "phase": "paper_trading",
                 "trading_days": 0,
                 "status": "collecting_data",
@@ -189,8 +218,20 @@ class PaperTradingValidator:
             for a in s.anomalies
             if a.severity == "critical"
         )
+        total_trades = cumulative.get("total_trades", 0)
+        is_complete = trading_days >= MIN_TRADING_DAYS
+        start_date = daily_summaries[0].date.isoformat() if daily_summaries[0].date else None
 
         return {
+            "is_active": True,
+            "start_date": start_date,
+            "days_elapsed": trading_days,
+            "min_days_required": MIN_TRADING_DAYS,
+            "total_trades": total_trades,
+            "is_complete": is_complete,
+            "current_phase": "evaluation_ready" if is_complete else "validating",
+            "progress_pct": round(min(trading_days / MIN_TRADING_DAYS * 100, 100), 1),
+            # Legacy fields for backwards compatibility
             "phase": "paper_trading",
             "trading_days": trading_days,
             "status": "validating" if trading_days < MIN_TRADING_DAYS else "evaluation_ready",

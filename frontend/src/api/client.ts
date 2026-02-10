@@ -121,9 +121,9 @@ export const api = {
   getValidationReadiness: () =>
     fetchApi<ReadinessAssessment>("/validation/readiness"),
   getLatestValidationReport: () =>
-    fetchApi<ValidationReport>("/validation/report/latest"),
+    fetchApi<ValidationReport>("/validation/report"),
   getValidationHistory: (days = 30) =>
-    fetchApi<ValidationReportSummary[]>(`/validation/history?days=${days}`),
+    fetchApi<ValidationReportSummary[]>(`/validation/reports/history?limit=${days}`),
   getRollingMetrics: () =>
     fetchApi<RollingMetrics>("/validation/metrics/rolling"),
   getBacktestComparison: () =>
