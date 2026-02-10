@@ -128,17 +128,6 @@ services:
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
     restart: always
 
-  # ── Signal CLI (alerts) ─────────────────────────────────
-  signal-cli-rest-api:
-    image: bbernhard/signal-cli-rest-api:latest
-    volumes:
-      - signal_data:/home/.local/share/signal-cli
-    restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-
 volumes:
   postgres_data:
   redis_data:
@@ -146,4 +135,3 @@ volumes:
   frontend_build:
   certbot_www:
   certbot_certs:
-  signal_data:

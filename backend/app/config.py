@@ -36,11 +36,6 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_ids: str = ""  # Comma-separated chat IDs
 
-    # Alerts - Signal (legacy)
-    signal_cli_rest_api_url: str = "http://localhost:8080"
-    signal_sender_number: str = ""
-    signal_recipient_numbers: str = ""
-
     # Alerts - Email
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

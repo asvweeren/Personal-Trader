@@ -62,15 +62,6 @@ services:
       - ./frontend/src:/app/src
     restart: unless-stopped
 
-  signal-cli-rest-api:
-    image: bbernhard/signal-cli-rest-api:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - signal_data:/home/.local/share/signal-cli
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   redis_data:
-  signal_data:
