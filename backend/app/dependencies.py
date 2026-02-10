@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
@@ -9,6 +10,7 @@ from app.core.event_bus import event_bus, EventBus
 from app.data.pipeline import DataPipeline
 from app.execution.engine import TradingEngine
 from app.models.database import get_session
+from app.models.strategy_config import StrategyConfig
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
 from app.strategy.base import Strategy
@@ -139,6 +141,17 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     pipeline = get_data_pipeline()
     strategies = load_strategies()
 
+    # Read persisted trading_enabled from DB
+    trading_enabled = False
+    try:
+        result = await db.execute(select(StrategyConfig).limit(1))
+        config = result.scalar_one_or_none()
+        if config:
+            trading_enabled = config.trading_enabled
+            logger.info("engine.trading_restored", enabled=trading_enabled)
+    except Exception:
+        logger.warning("engine.trading_restore_failed")
+
     _trading_engine = TradingEngine(
         broker=broker,
         strategies=strategies,
@@ -147,7 +160,7 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
         performance=performance,
         db=db,
         symbols=settings.symbols_list,
-        trading_enabled=False,  # Always start with trading disabled
+        trading_enabled=trading_enabled,
     )
 
     return _trading_engine

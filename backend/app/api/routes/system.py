@@ -2,12 +2,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter
 from app.config import settings
 from app.data.pipeline import DataPipeline
 from app.execution.engine import TradingEngine
-from app.dependencies import get_broker, get_data_pipeline, get_trading_engine
+from app.dependencies import get_broker, get_data_pipeline, get_trading_engine, get_db
+from app.models.strategy_config import StrategyConfig
 from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 from app.dependencies import get_performance_tracker
@@ -71,13 +74,21 @@ class TradingToggle(BaseModel):
 
 
 @router.put("/system/engine/trading")
-async def toggle_trading(body: TradingToggle):
+async def toggle_trading(body: TradingToggle, db: AsyncSession = Depends(get_db)):
     try:
         engine = get_trading_engine()
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Trading engine not initialized")
 
     engine.trading_enabled = body.enabled
+
+    # Persist to DB
+    result = await db.execute(select(StrategyConfig).limit(1))
+    config = result.scalar_one_or_none()
+    if config:
+        config.trading_enabled = body.enabled
+        await db.commit()
+
     return {"trading_enabled": engine.trading_enabled, "state": engine.state.value}
 
 
