@@ -302,4 +302,5 @@ export interface StrategyConfigUpdate {
   ensemble_method?: string;
   weights?: Record<string, number>;
   trading_enabled?: boolean;
+  symbols?: string[];
 }

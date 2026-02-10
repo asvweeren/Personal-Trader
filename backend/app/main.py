@@ -23,6 +23,7 @@ from app.core.scheduler import (
     schedule_trading_engine,
     schedule_daily_validation_report,
     schedule_heartbeat,
+    schedule_snapshot_cleanup,
 )
 from app.dependencies import get_data_pipeline, init_trading_engine
 from app.models.database import async_session as session_factory
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     schedule_daily_validation_report()
     schedule_heartbeat()
+    schedule_snapshot_cleanup()
 
     # Try to start data pipeline and trading engine (non-fatal if broker unavailable)
     pipeline = None

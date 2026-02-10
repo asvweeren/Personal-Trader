@@ -339,9 +339,6 @@ When IBKR is not connected, backtests download historical data from yfinance ins
 
 ### Known Limitations
 - Negative Sharpe ratios on backtests (few trades, conservative strategy)
-- EngineControl button has no confirmation dialog for enabling/disabling trading
-- Settings page symbols field says "on next restart" - no live update
-- Portfolio snapshots accumulate forever (no cleanup job yet)
 
 ---
 

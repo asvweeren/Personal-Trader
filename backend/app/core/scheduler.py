@@ -128,3 +128,72 @@ def schedule_daily_validation_report() -> None:
         job="daily_validation_report",
         trigger="cron(21:00)",
     )
+
+
+def schedule_snapshot_cleanup() -> None:
+    """Clean up old portfolio snapshots to prevent unbounded growth.
+
+    Runs daily at 02:00 UTC:
+    - Keeps all snapshots from the last 7 days
+    - Keeps 1 snapshot per day for days 7-90
+    - Deletes everything older than 90 days
+    """
+
+    async def cleanup_snapshots():
+        from datetime import datetime, timezone, timedelta
+        from sqlalchemy import text
+        from app.models.database import async_session
+
+        try:
+            async with async_session() as session:
+                now = datetime.now(timezone.utc)
+                cutoff_90d = now - timedelta(days=90)
+                cutoff_7d = now - timedelta(days=7)
+
+                # 1. Delete everything older than 90 days
+                result_old = await session.execute(
+                    text("DELETE FROM portfolio_snapshots WHERE timestamp < :cutoff"),
+                    {"cutoff": cutoff_90d},
+                )
+                deleted_old = result_old.rowcount
+
+                # 2. Downsample 7-90 day range: keep only the last snapshot per day
+                result_dup = await session.execute(
+                    text("""
+                        DELETE FROM portfolio_snapshots
+                        WHERE timestamp >= :cutoff_90d
+                          AND timestamp < :cutoff_7d
+                          AND id NOT IN (
+                            SELECT DISTINCT ON (timestamp::date) id
+                            FROM portfolio_snapshots
+                            WHERE timestamp >= :cutoff_90d
+                              AND timestamp < :cutoff_7d
+                            ORDER BY timestamp::date, timestamp DESC
+                          )
+                    """),
+                    {"cutoff_90d": cutoff_90d, "cutoff_7d": cutoff_7d},
+                )
+                deleted_dup = result_dup.rowcount
+
+                await session.commit()
+
+                total = deleted_old + deleted_dup
+                if total > 0:
+                    logger.info(
+                        "snapshots.cleanup",
+                        deleted_old=deleted_old,
+                        deleted_duplicates=deleted_dup,
+                        total_deleted=total,
+                    )
+
+        except Exception:
+            logger.exception("snapshots.cleanup_error")
+
+    scheduler.add_job(
+        cleanup_snapshots,
+        CronTrigger(hour=2, minute=0),
+        id="snapshot_cleanup",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="snapshot_cleanup", trigger="cron(02:00)")

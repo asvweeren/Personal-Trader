@@ -255,10 +255,15 @@ export function SettingsPage() {
   const handleSaveStrategyConfig = async () => {
     setStrategySaving(true);
     try {
+      const symbols = symbolsInput
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const updated = await api.updateStrategyConfig({
         active_strategies: strategyConfig.active_strategies,
         confidence_threshold: strategyConfig.confidence_threshold,
         ensemble_method: strategyConfig.ensemble_method,
+        symbols,
       });
       setStrategyConfig(updated);
       showToast("Strategy configuration saved successfully", "success");
@@ -580,8 +585,7 @@ export function SettingsPage() {
                 className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-600"
               />
               <div className="text-xs text-gray-600 mt-1">
-                Symbols are configured at the engine level and will take effect
-                on the next restart.
+                Symbols are updated immediately when you save strategy settings.
               </div>
             </div>
 

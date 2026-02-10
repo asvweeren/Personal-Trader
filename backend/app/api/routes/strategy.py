@@ -1,5 +1,9 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter
 from pydantic import BaseModel
+
+import structlog
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -19,6 +23,7 @@ class StrategyConfigUpdate(BaseModel):
     ensemble_method: str | None = None
     weights: dict[str, float] | None = None
     trading_enabled: bool | None = None
+    symbols: list[str] | None = None
 
 
 @router.get("/strategy/status")
@@ -62,4 +67,12 @@ async def update_strategy_config(update: StrategyConfigUpdate):
         _strategy_config["weights"] = update.weights
     if update.trading_enabled is not None:
         _strategy_config["trading_enabled"] = update.trading_enabled
+    if update.symbols is not None:
+        _strategy_config["symbols"] = update.symbols
+        try:
+            from app.dependencies import get_trading_engine
+            engine = get_trading_engine()
+            engine.update_symbols(update.symbols)
+        except RuntimeError:
+            logger.warning("strategy.symbols_update_no_engine")
     return _strategy_config

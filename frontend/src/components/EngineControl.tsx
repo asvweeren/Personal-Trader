@@ -14,6 +14,7 @@ const STATE_COLORS: Record<string, string> = {
 export function EngineControl() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [toggling, setToggling] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const fetchStatus = () => {
     api.getEngineStatus().then(setStatus).catch(() => {});
@@ -27,6 +28,7 @@ export function EngineControl() {
 
   const handleToggle = async () => {
     if (!status) return;
+    setShowConfirm(false);
     setToggling(true);
     try {
       const result = await api.toggleTrading(!status.trading_enabled);
@@ -100,21 +102,49 @@ export function EngineControl() {
         </div>
       )}
 
-      <button
-        onClick={handleToggle}
-        disabled={toggling || status.state === "NOT_INITIALIZED"}
-        className={`w-full py-2 rounded text-sm font-medium transition-colors ${
-          status.trading_enabled
-            ? "bg-red-900/50 text-red-400 hover:bg-red-900/70"
-            : "bg-green-900/50 text-green-400 hover:bg-green-900/70"
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
-      >
-        {toggling
-          ? "..."
-          : status.trading_enabled
-            ? "Disable Trading"
-            : "Enable Trading"}
-      </button>
+      {showConfirm ? (
+        <div className="border border-yellow-800 rounded-lg p-3 bg-yellow-900/20">
+          <p className="text-xs text-yellow-400 mb-3">
+            {status.trading_enabled
+              ? "Trading will be disabled. Open positions and pending orders remain active."
+              : "Trading will be enabled. The engine will start executing trades."}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleToggle}
+              className={`flex-1 py-1.5 rounded text-xs font-medium ${
+                status.trading_enabled
+                  ? "bg-red-900/50 text-red-400 hover:bg-red-900/70"
+                  : "bg-green-900/50 text-green-400 hover:bg-green-900/70"
+              }`}
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() => setShowConfirm(false)}
+              className="flex-1 py-1.5 rounded text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowConfirm(true)}
+          disabled={toggling || status.state === "NOT_INITIALIZED"}
+          className={`w-full py-2 rounded text-sm font-medium transition-colors ${
+            status.trading_enabled
+              ? "bg-red-900/50 text-red-400 hover:bg-red-900/70"
+              : "bg-green-900/50 text-green-400 hover:bg-green-900/70"
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {toggling
+            ? "..."
+            : status.trading_enabled
+              ? "Disable Trading"
+              : "Enable Trading"}
+        </button>
+      )}
     </div>
   );
 }

@@ -77,6 +77,11 @@ class TradingEngine:
         self._trading_enabled = value
         logger.info("engine.trading_toggled", enabled=value)
 
+    def update_symbols(self, symbols: list[str]) -> None:
+        old = self._symbols
+        self._symbols = symbols
+        logger.info("engine.symbols_updated", old=old, new=symbols)
+
     async def start(self) -> None:
         """Initialize the trading engine."""
         self._state = EngineState.STARTING
