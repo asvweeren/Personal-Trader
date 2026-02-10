@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router, get_current_user
 from app.api.routes import portfolio, trades, strategy, risk, backtest, system, validation
 from app.api.websocket import router as ws_router, broadcast_update
 from app.config import settings
@@ -104,14 +105,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# REST API routes
-app.include_router(portfolio.router, prefix="/api", tags=["portfolio"])
-app.include_router(trades.router, prefix="/api", tags=["trades"])
-app.include_router(strategy.router, prefix="/api", tags=["strategy"])
-app.include_router(risk.router, prefix="/api", tags=["risk"])
-app.include_router(backtest.router, prefix="/api", tags=["backtest"])
-app.include_router(system.router, prefix="/api", tags=["system"])
-app.include_router(validation.router, prefix="/api", tags=["validation"])
+# Auth routes (no authentication required)
+app.include_router(auth_router, prefix="/api", tags=["auth"])
 
-# WebSocket
+# REST API routes (authentication required)
+_auth = [Depends(get_current_user)]
+app.include_router(portfolio.router, prefix="/api", tags=["portfolio"], dependencies=_auth)
+app.include_router(trades.router, prefix="/api", tags=["trades"], dependencies=_auth)
+app.include_router(strategy.router, prefix="/api", tags=["strategy"], dependencies=_auth)
+app.include_router(risk.router, prefix="/api", tags=["risk"], dependencies=_auth)
+app.include_router(backtest.router, prefix="/api", tags=["backtest"], dependencies=_auth)
+app.include_router(system.router, prefix="/api", tags=["system"], dependencies=_auth)
+app.include_router(validation.router, prefix="/api", tags=["validation"], dependencies=_auth)
+
+# WebSocket (token validated inside the handler)
 app.include_router(ws_router)

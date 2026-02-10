@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSMessage } from "../types";
 
+const TOKEN_KEY = "auth_token";
+
 export function useWebSocket(url: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -9,7 +11,11 @@ export function useWebSocket(url: string) {
 
   const connect = useCallback(() => {
     try {
-      const ws = new WebSocket(url);
+      const token = localStorage.getItem(TOKEN_KEY);
+      const wsUrl = token
+        ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
+        : url;
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         setConnected(true);

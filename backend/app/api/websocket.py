@@ -1,8 +1,11 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from jose import JWTError, jwt
 import structlog
+
+from app.config import settings
 
 logger = structlog.get_logger()
 
@@ -46,7 +49,20 @@ async def broadcast_update(event_type: str, data: dict):
 
 
 @router.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(default=None)):
+    # Validate token before accepting the connection
+    if token is None:
+        await websocket.close(code=1008)
+        return
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
+        if payload.get("sub") is None:
+            await websocket.close(code=1008)
+            return
+    except JWTError:
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(websocket)
     try:
         while True:

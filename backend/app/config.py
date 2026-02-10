@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     alert_email_to: str = ""
 
+    # Authentication
+    admin_username: str = "admin"
+    admin_password: str = "changeme"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
+
     # Trading Configuration
     trading_symbols: str = "AAPL,MSFT,GOOGL,AMZN"  # Comma-separated symbols
     initial_capital: float = 5000.0
