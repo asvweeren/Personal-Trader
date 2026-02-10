@@ -19,6 +19,8 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     # Broker
     "ib_insync>=0.9.86",
+    # Timezone data (needed in slim Docker images)
+    "tzdata>=2024.1",
     # Data & ML
     "pandas>=2.2.0",
     "numpy>=2.0.0",
