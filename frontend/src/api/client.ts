@@ -6,7 +6,11 @@ import type {
   Trade,
   RiskMetricsData,
   RiskEvent,
+  RiskLimits,
+  RiskLimitsUpdate,
   StrategyConfig,
+  StrategyStatusResponse,
+  StrategyConfigUpdate,
   SystemHealth,
   EngineStatus,
   PortfolioSnapshot,
@@ -68,10 +72,17 @@ export const api = {
   getRiskMetrics: () => fetchApi<RiskMetricsData>("/risk/metrics"),
   getRiskEvents: (limit = 50) =>
     fetchApi<RiskEvent[]>(`/risk/events?limit=${limit}`),
+  updateRiskLimits: (limits: RiskLimitsUpdate) =>
+    fetchApi<RiskLimits>("/risk/limits", {
+      method: "PUT",
+      body: JSON.stringify(limits),
+    }),
 
   // Strategy
   getStrategyStatus: () => fetchApi<StrategyConfig>("/strategy/status"),
-  updateStrategyConfig: (config: Partial<StrategyConfig>) =>
+  getStrategyStatusFull: () =>
+    fetchApi<StrategyStatusResponse>("/strategy/status"),
+  updateStrategyConfig: (config: StrategyConfigUpdate) =>
     fetchApi<StrategyConfig>("/strategy/config", {
       method: "PUT",
       body: JSON.stringify(config),

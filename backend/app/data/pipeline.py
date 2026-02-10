@@ -56,6 +56,7 @@ class DataPipeline:
         """Stop the pipeline and clean up."""
         await self._market_data.stop_streaming(self._symbols)
         await self._news_fetcher.close()
+        await self._sentiment.close()
         await self._feature_store.disconnect()
         logger.info("pipeline.stopped")
 

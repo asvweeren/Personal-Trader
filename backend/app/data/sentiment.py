@@ -2,14 +2,25 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import anthropic
+import redis.asyncio as aioredis
 import structlog
 
 from app.config import settings
 from app.data.news_fetcher import NewsItem
 
 logger = structlog.get_logger()
+
+# Use Haiku for cost efficiency (fast + cheap)
+SENTIMENT_MODEL = "claude-haiku-4-5-20241022"
+
+# Redis cache TTL for sentiment results
+SENTIMENT_CACHE_TTL = 900  # 15 minutes
+
+# Maximum headlines to send per API call
+MAX_HEADLINES_PER_BATCH = 10
 
 
 @dataclass
@@ -19,6 +30,34 @@ class SentimentResult:
     confidence: float
     reasoning: str
     news_count: int
+    headlines_analyzed: list[str] | None = None
+    timestamp: datetime | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "score": self.score,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "news_count": self.news_count,
+            "headlines_analyzed": self.headlines_analyzed or [],
+            "timestamp": (self.timestamp or datetime.now(timezone.utc)).isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SentimentResult":
+        ts = data.get("timestamp")
+        if ts and isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        return cls(
+            symbol=data.get("symbol", ""),
+            score=float(data.get("score", 0.0)),
+            confidence=float(data.get("confidence", 0.0)),
+            reasoning=data.get("reasoning", ""),
+            news_count=int(data.get("news_count", 0)),
+            headlines_analyzed=data.get("headlines_analyzed"),
+            timestamp=ts,
+        )
 
 
 class RateLimiter:
@@ -46,23 +85,105 @@ class SentimentAnalyzer:
     """Uses Claude LLM to analyze market sentiment from news.
 
     Features:
+    - Uses Claude Haiku for cost efficiency
     - Rate limiting to control API costs
-    - In-memory cache for recent results
+    - Redis cache with 15-minute TTL for sentiment results
+    - In-memory fallback cache when Redis is unavailable
+    - Graceful degradation when API key is not set (returns neutral)
     - Structured prompt for consistent JSON output
     """
 
     def __init__(
         self,
         max_calls_per_minute: int = 10,
-        cache_ttl_seconds: int = 600,
+        cache_ttl_seconds: int = SENTIMENT_CACHE_TTL,
     ):
-        self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self._api_key = settings.anthropic_api_key
+        self._client: anthropic.AsyncAnthropic | None = None
+        if self._api_key:
+            self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+        else:
+            logger.warning(
+                "sentiment.no_api_key",
+                msg="Anthropic API key not set; sentiment analysis will return neutral scores",
+            )
+
         self._rate_limiter = RateLimiter(max_calls=max_calls_per_minute, period_seconds=60)
-        self._cache: dict[str, tuple[SentimentResult, float]] = {}
+
+        # In-memory fallback cache
+        self._memory_cache: dict[str, tuple[SentimentResult, float]] = {}
         self._cache_ttl = cache_ttl_seconds
 
+        # Redis connection (lazy init)
+        self._redis: aioredis.Redis | None = None
+
+    async def _get_redis(self) -> aioredis.Redis | None:
+        """Get Redis connection, or None if unavailable."""
+        if self._redis is None:
+            try:
+                self._redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+                await self._redis.ping()
+            except Exception:
+                logger.debug("sentiment.redis_unavailable")
+                self._redis = None
+        return self._redis
+
+    async def close(self) -> None:
+        """Close connections."""
+        if self._redis:
+            await self._redis.close()
+
+    # ── Cache layer (Redis with in-memory fallback) ───────────────
+
+    async def _get_cached(self, symbol: str) -> SentimentResult | None:
+        """Return cached sentiment result if available. Tries Redis first, then memory."""
+        cache_key = f"sentiment:analysis:{symbol}"
+
+        # Try Redis
+        r = await self._get_redis()
+        if r:
+            try:
+                data = await r.get(cache_key)
+                if data:
+                    logger.debug("sentiment.redis_cache_hit", symbol=symbol)
+                    return SentimentResult.from_dict(json.loads(data))
+            except Exception:
+                logger.debug("sentiment.redis_cache_error", symbol=symbol)
+
+        # Fallback to in-memory cache
+        if symbol in self._memory_cache:
+            result, cached_at = self._memory_cache[symbol]
+            if time.monotonic() - cached_at < self._cache_ttl:
+                logger.debug("sentiment.memory_cache_hit", symbol=symbol)
+                return result
+            del self._memory_cache[symbol]
+
+        return None
+
+    async def _set_cached(self, symbol: str, result: SentimentResult) -> None:
+        """Store sentiment result in Redis and in-memory cache."""
+        cache_key = f"sentiment:analysis:{symbol}"
+
+        # Store in Redis
+        r = await self._get_redis()
+        if r:
+            try:
+                data = json.dumps(result.to_dict(), default=str)
+                await r.setex(cache_key, self._cache_ttl, data)
+            except Exception:
+                logger.debug("sentiment.redis_cache_write_error", symbol=symbol)
+
+        # Always store in memory as fallback
+        self._memory_cache[symbol] = (result, time.monotonic())
+
+    # ── Public API ────────────────────────────────────────────────
+
     async def analyze(self, symbol: str, news_items: list[NewsItem]) -> SentimentResult:
-        """Analyze sentiment for a symbol. Uses cache if available."""
+        """Analyze sentiment for a symbol based on news items.
+
+        Returns cached result if available. Falls back to neutral sentiment
+        if no API key is configured or if the API call fails.
+        """
         if not news_items:
             return SentimentResult(
                 symbol=symbol,
@@ -70,21 +191,28 @@ class SentimentAnalyzer:
                 confidence=0.0,
                 reasoning="No news available",
                 news_count=0,
+                headlines_analyzed=[],
+                timestamp=datetime.now(timezone.utc),
             )
 
-        # Check cache
-        cached = self._get_cached(symbol)
+        # Check cache first
+        cached = await self._get_cached(symbol)
         if cached:
-            logger.debug("sentiment.cache_hit", symbol=symbol)
             return cached
+
+        # If no API key, return neutral sentiment
+        if not self._client:
+            return self._neutral_result(
+                symbol, news_items, reason="Anthropic API key not configured"
+            )
 
         # Rate limit before API call
         await self._rate_limiter.acquire()
 
         result = await self._call_api(symbol, news_items)
 
-        # Store in cache
-        self._cache[symbol] = (result, time.monotonic())
+        # Cache the result
+        await self._set_cached(symbol, result)
 
         return result
 
@@ -92,32 +220,36 @@ class SentimentAnalyzer:
         self, symbols_news: dict[str, list[NewsItem]]
     ) -> dict[str, SentimentResult]:
         """Analyze sentiment for multiple symbols."""
-        results = {}
+        results: dict[str, SentimentResult] = {}
         for symbol, news in symbols_news.items():
             results[symbol] = await self.analyze(symbol, news)
         return results
 
-    def _get_cached(self, symbol: str) -> SentimentResult | None:
-        """Return cached result if still valid."""
-        if symbol in self._cache:
-            result, cached_at = self._cache[symbol]
-            if time.monotonic() - cached_at < self._cache_ttl:
-                return result
-            del self._cache[symbol]
-        return None
-
     def clear_cache(self) -> None:
-        self._cache.clear()
+        """Clear in-memory cache. Redis cache expires via TTL."""
+        self._memory_cache.clear()
+
+    # ── API call ──────────────────────────────────────────────────
 
     async def _call_api(self, symbol: str, news_items: list[NewsItem]) -> SentimentResult:
-        """Make the actual Claude API call for sentiment analysis."""
+        """Make the actual Claude API call for sentiment analysis.
+
+        Batches headlines (max 10 at a time) and prompts Claude to return
+        structured JSON with sentiment_score and reasoning.
+        """
+        # Limit to MAX_HEADLINES_PER_BATCH headlines
+        batch = news_items[:MAX_HEADLINES_PER_BATCH]
+        headlines = [item.title for item in batch if item.title.strip()]
+
         news_text = "\n\n".join(
             f"[{item.source}] {item.title}\n{item.description}"
-            for item in news_items[:10]
+            for item in batch
+            if item.title.strip()
         )
 
         prompt = (
-            f"You are a financial sentiment analyst. Analyze these news articles about {symbol} stock.\n\n"
+            f"You are a financial sentiment analyst. Analyze these news articles about "
+            f"{symbol} stock.\n\n"
             "Score the overall sentiment and your confidence in the assessment.\n\n"
             "Rules:\n"
             "- score: -1.0 (extremely bearish) to 1.0 (extremely bullish), 0.0 = neutral\n"
@@ -125,14 +257,14 @@ class SentimentAnalyzer:
             "- reasoning: 1-2 sentences explaining your assessment\n"
             "- Consider both direct company impact and broader market implications\n"
             "- If news is generic/unrelated, score 0.0 with low confidence\n\n"
-            f"Respond ONLY with valid JSON:\n"
+            "Respond ONLY with valid JSON:\n"
             '{"score": 0.0, "confidence": 0.0, "reasoning": "..."}\n\n'
             f"News articles:\n{news_text}"
         )
 
         try:
             response = await self._client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model=SENTIMENT_MODEL,
                 max_tokens=300,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -153,7 +285,7 @@ class SentimentAnalyzer:
                 symbol=symbol,
                 score=score,
                 confidence=confidence,
-                news_count=len(news_items),
+                news_count=len(batch),
             )
 
             return SentimentResult(
@@ -161,33 +293,44 @@ class SentimentAnalyzer:
                 score=score,
                 confidence=confidence,
                 reasoning=result.get("reasoning", "No reasoning provided"),
-                news_count=len(news_items),
+                news_count=len(batch),
+                headlines_analyzed=headlines,
+                timestamp=datetime.now(timezone.utc),
             )
         except json.JSONDecodeError:
             logger.warning("sentiment.parse_error", symbol=symbol, raw=raw_text[:200])
-            return SentimentResult(
-                symbol=symbol,
-                score=0.0,
-                confidence=0.0,
-                reasoning="Failed to parse LLM response",
-                news_count=len(news_items),
+            return self._neutral_result(
+                symbol, batch, reason="Failed to parse LLM response"
+            )
+        except anthropic.AuthenticationError:
+            logger.error("sentiment.auth_error", symbol=symbol)
+            # Disable client to avoid repeated auth failures
+            self._client = None
+            return self._neutral_result(
+                symbol, batch, reason="Invalid Anthropic API key"
             )
         except Exception:
             logger.exception("sentiment.api_error", symbol=symbol)
-            return SentimentResult(
-                symbol=symbol,
-                score=0.0,
-                confidence=0.0,
-                reasoning="API call failed",
-                news_count=len(news_items),
+            return self._neutral_result(
+                symbol, batch, reason="API call failed"
             )
+
+    # ── Helpers ───────────────────────────────────────────────────
+
+    def _neutral_result(
+        self, symbol: str, news_items: list[NewsItem], reason: str
+    ) -> SentimentResult:
+        """Return a neutral sentiment result for graceful degradation."""
+        return SentimentResult(
+            symbol=symbol,
+            score=0.0,
+            confidence=0.0,
+            reasoning=reason,
+            news_count=len(news_items),
+            headlines_analyzed=[item.title for item in news_items if item.title.strip()],
+            timestamp=datetime.now(timezone.utc),
+        )
 
     def to_dict(self, result: SentimentResult) -> dict:
         """Convert SentimentResult to dict for storage/serialization."""
-        return {
-            "symbol": result.symbol,
-            "score": result.score,
-            "confidence": result.confidence,
-            "reasoning": result.reasoning,
-            "news_count": result.news_count,
-        }
+        return result.to_dict()

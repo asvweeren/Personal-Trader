@@ -268,3 +268,38 @@ export interface BacktestComparison {
   correlation: number;
   assessment: string;
 }
+
+// ─── Settings Types ─────────────────────────────────────────────────
+
+export interface RiskLimits {
+  max_daily_loss_pct: number;
+  max_position_pct: number;
+  max_open_positions: number;
+  min_cash_reserve_pct: number;
+}
+
+export interface RiskLimitsUpdate {
+  max_daily_loss_pct?: number;
+  max_position_pct?: number;
+  max_open_positions?: number;
+  min_cash_reserve_pct?: number;
+}
+
+export interface AvailableStrategy {
+  name: string;
+  type: string;
+  description: string;
+}
+
+export interface StrategyStatusResponse {
+  config: StrategyConfig;
+  available_strategies: AvailableStrategy[];
+}
+
+export interface StrategyConfigUpdate {
+  active_strategies?: string[];
+  confidence_threshold?: number;
+  ensemble_method?: string;
+  weights?: Record<string, number>;
+  trading_enabled?: boolean;
+}

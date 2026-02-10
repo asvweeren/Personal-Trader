@@ -24,6 +24,12 @@ class SentimentStrategy(Strategy):
     - Minimum confidence filter
     - Cost tracking for API usage
     - Confidence calibration based on news volume
+    - Sentiment score + reasoning included in signal metadata
+
+    Signal mapping:
+    - score > buy_threshold  -> BUY  (confidence = abs(score))
+    - score < sell_threshold -> SELL (confidence = abs(score))
+    - else                   -> HOLD
     """
 
     @property
@@ -48,7 +54,12 @@ class SentimentStrategy(Strategy):
         self._total_symbols_analyzed = 0
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
-        signals = []
+        """Generate trading signals from sentiment analysis of news.
+
+        For each symbol in market_data, fetches recent news, analyzes sentiment
+        via Claude, and maps the score to BUY/SELL/HOLD signals.
+        """
+        signals: list[TradingSignal] = []
         for symbol in market_data.prices:
             try:
                 news = await self._news_fetcher.fetch_news(symbol=symbol, limit=10)
@@ -80,6 +91,12 @@ class SentimentStrategy(Strategy):
                             "calibrated_confidence": calibrated_confidence,
                             "reasoning": sentiment.reasoning,
                             "news_count": sentiment.news_count,
+                            "headlines_analyzed": sentiment.headlines_analyzed or [],
+                            "analyzed_at": (
+                                sentiment.timestamp.isoformat()
+                                if sentiment.timestamp
+                                else None
+                            ),
                         },
                     )
                 )
@@ -91,8 +108,8 @@ class SentimentStrategy(Strategy):
     def _calibrate_confidence(self, sentiment: SentimentResult) -> float:
         """Adjust confidence based on news volume and score strength.
 
-        More news articles → higher confidence in the analysis.
-        Extreme scores → slightly lower confidence (might be noise).
+        More news articles -> higher confidence in the analysis.
+        Extreme scores -> slightly lower confidence (might be noise).
         """
         base = sentiment.confidence
 
@@ -113,6 +130,11 @@ class SentimentStrategy(Strategy):
 
         calibrated = base * volume_factor * extremity_factor
         return max(0.0, min(1.0, calibrated))
+
+    async def close(self) -> None:
+        """Clean up resources."""
+        await self._news_fetcher.close()
+        await self._analyzer.close()
 
     def get_stats(self) -> dict:
         """Return strategy usage statistics."""

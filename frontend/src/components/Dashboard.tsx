@@ -11,6 +11,7 @@ import { SystemStatus } from "./SystemStatus";
 import { EngineControl } from "./EngineControl";
 import { BacktestPanel } from "./BacktestPanel";
 import { ValidationDashboard } from "./ValidationDashboard";
+import { SettingsPage } from "./SettingsPage";
 
 type Tab = "overview" | "trades" | "backtest" | "validation" | "settings";
 
@@ -111,12 +112,7 @@ export function Dashboard() {
 
         {tab === "validation" && <ValidationDashboard />}
 
-        {tab === "settings" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <EngineControl />
-            <RiskMetrics risk={risk} />
-          </div>
-        )}
+        {tab === "settings" && <SettingsPage />}
       </main>
     </div>
   );
