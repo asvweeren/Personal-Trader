@@ -134,8 +134,21 @@ class DailyReporter:
 
         if not reports:
             return {
-                "window_days": window_days,
+                "period_days": window_days,
                 "available_days": 0,
+                "sharpe_ratio": 0.0,
+                "win_rate": 0.0,
+                "profit_factor": 0.0,
+                "max_drawdown": 0.0,
+                "total_pnl": 0.0,
+                "total_trades": 0,
+                "avg_trade_pnl": 0.0,
+                "expectancy": 0.0,
+                "volatility": 0.0,
+                "calmar_ratio": 0.0,
+                "updated_at": "",
+                # Legacy
+                "window_days": window_days,
                 "metrics": {},
             }
 
@@ -234,8 +247,15 @@ class DailyReporter:
                 }
                 break
 
+        trading_days = status.get("trading_days", 0)
         return {
-            "trading_days": status.get("trading_days", 0),
+            "has_data": trading_days > 0,
+            "metrics": [],
+            "overall_deviation": 0.0,
+            "correlation": 0.0,
+            "assessment": "Not enough data" if trading_days == 0 else "Collecting data",
+            # Legacy fields
+            "trading_days": trading_days,
             "paper_metrics": status.get("metrics", {}),
             "backtest_deviation": bt_deviation_check,
             "readiness": readiness.to_dict(),
