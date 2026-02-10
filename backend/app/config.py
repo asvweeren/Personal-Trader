@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
+    smtp_from: str = ""  # From address (defaults to smtp_user if empty)
     alert_email_to: str = ""
 
     # Authentication

@@ -8,6 +8,7 @@ from app.config import settings
 from app.data.pipeline import DataPipeline
 from app.execution.engine import TradingEngine
 from app.dependencies import get_broker, get_data_pipeline, get_trading_engine
+from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 from app.dependencies import get_performance_tracker
 
@@ -64,3 +65,14 @@ async def toggle_trading(body: TradingToggle):
 
     engine.trading_enabled = body.enabled
     return {"trading_enabled": engine.trading_enabled, "state": engine.state.value}
+
+
+@router.post("/system/test-alert")
+async def test_alert():
+    """Send a test alert via all configured channels."""
+    await send_alert(
+        title="Test Alert",
+        message="Dit is een test alert vanuit het AI Trading systeem. Als je dit ontvangt, werken de alerts correct.",
+        critical=True,
+    )
+    return {"status": "sent", "channels": {"signal": bool(settings.signal_sender_number), "email": bool(settings.smtp_user)}}
