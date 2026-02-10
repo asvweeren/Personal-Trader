@@ -105,4 +105,26 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["return_5d"] = close.pct_change(5)
     features["volatility_20d"] = close.pct_change().rolling(20).std()
 
+    # Price position relative to moving averages
+    features["price_vs_sma50"] = close / features["sma_50"] - 1
+    features["price_vs_sma10"] = close / features["sma_10"] - 1
+
+    # Momentum
+    features["momentum_10d"] = close / close.shift(10) - 1
+    features["momentum_20d"] = close / close.shift(20) - 1
+
+    # Volume dynamics
+    features["volume_change_5d"] = vol / vol.shift(5) - 1
+    features["volume_ratio"] = vol / vol.rolling(20).mean()
+
+    # Volatility ratio (short vs long)
+    vol_10 = close.pct_change().rolling(10).std()
+    features["vol_ratio_10_20"] = vol_10 / features["volatility_20d"]
+
+    # RSI momentum
+    features["rsi_change_5d"] = features["rsi_14"] - features["rsi_14"].shift(5)
+
+    # MACD divergence
+    features["macd_divergence"] = features["macd"] - features["macd_signal"]
+
     return features
