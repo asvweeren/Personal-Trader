@@ -96,6 +96,11 @@ export const api = {
       "/system/engine/trading",
       { method: "PUT", body: JSON.stringify({ enabled }) },
     ),
+  testAlert: () =>
+    fetchApi<{ status: string; channels: Record<string, boolean> }>(
+      "/system/test-alert",
+      { method: "POST" },
+    ),
 
   // Backtest
   runBacktest: (request: BacktestRequest) =>

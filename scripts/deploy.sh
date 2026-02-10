@@ -82,7 +82,7 @@ configure_env() {
         echo ""
         echo "  Optional but recommended:"
         echo "    - SMTP_* settings   (email alerts)"
-        echo "    - SIGNAL_*          (Signal messenger alerts)"
+        echo "    - TELEGRAM_*        (Telegram bot alerts)"
         echo ""
         echo "  Edit now:  nano $INSTALL_DIR/.env"
         echo ""
@@ -177,7 +177,7 @@ show_info() {
     echo "    1. Connect to IB Gateway via VNC and complete 2FA if needed"
     echo "    2. Open the dashboard and verify broker connection"
     echo "    3. Check that paper trading mode is active"
-    echo "    4. Monitor the Signal Feed for trading signals"
+    echo "    4. Monitor the dashboard for trading signals"
     echo ""
 }
 
@@ -185,6 +185,6 @@ show_info() {
 install_docker
 clone_repo
 configure_env
-start_services
 setup_ssl
+start_services
 show_info

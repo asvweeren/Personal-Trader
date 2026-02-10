@@ -23,24 +23,43 @@ async def get_risk_metrics(
     risk_manager: RiskManager = Depends(get_risk_manager),
     broker: BrokerAdapter = Depends(get_broker),
 ):
-    portfolio = await broker.get_portfolio()
-    health = await risk_manager.check_portfolio_health(portfolio)
-    return {
-        "health": {
-            "healthy": health.healthy,
-            "checks": health.checks,
-            "warnings": health.warnings,
-            "daily_loss_pct": health.daily_loss_pct,
-            "cash_reserve_pct": health.cash_reserve_pct,
-            "position_count": health.position_count,
-            "max_drawdown_pct": health.max_drawdown_pct,
-            "sector_exposure": health.sector_exposure,
-            "largest_position_pct": health.largest_position_pct,
-            "market_open": health.market_open,
-        },
-        "limits": risk_manager.get_limits(),
-        "daily_loss_triggered": risk_manager.daily_loss_triggered,
-    }
+    try:
+        portfolio = await broker.get_portfolio()
+        health = await risk_manager.check_portfolio_health(portfolio)
+        return {
+            "health": {
+                "healthy": health.healthy,
+                "checks": health.checks,
+                "warnings": health.warnings,
+                "daily_loss_pct": health.daily_loss_pct,
+                "cash_reserve_pct": health.cash_reserve_pct,
+                "position_count": health.position_count,
+                "max_drawdown_pct": health.max_drawdown_pct,
+                "sector_exposure": health.sector_exposure,
+                "largest_position_pct": health.largest_position_pct,
+                "market_open": health.market_open,
+            },
+            "limits": risk_manager.get_limits(),
+            "daily_loss_triggered": risk_manager.daily_loss_triggered,
+        }
+    except Exception:
+        return {
+            "health": {
+                "healthy": False,
+                "checks": {"broker_connected": False},
+                "warnings": ["Broker not connected"],
+                "daily_loss_pct": 0.0,
+                "cash_reserve_pct": 100.0,
+                "position_count": 0,
+                "max_drawdown_pct": 0.0,
+                "sector_exposure": {},
+                "largest_position_pct": 0.0,
+                "market_open": False,
+            },
+            "limits": risk_manager.get_limits(),
+            "daily_loss_triggered": risk_manager.daily_loss_triggered,
+            "broker_connected": False,
+        }
 
 
 @router.put("/risk/limits")

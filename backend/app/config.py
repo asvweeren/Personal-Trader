@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440  # 24 hours
 
     # Trading Configuration
-    trading_symbols: str = "AAPL,MSFT,GOOGL,AMZN"  # Comma-separated symbols
+    trading_symbols: str = "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,IWM,EFA,VGK"
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 5.0
     max_position_pct: float = 20.0

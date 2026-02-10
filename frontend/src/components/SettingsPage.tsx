@@ -187,6 +187,27 @@ export function SettingsPage() {
 
   // ── Handlers ────────────────────────────────────────────────────
 
+  const [alertSending, setAlertSending] = useState(false);
+
+  const handleTestAlert = async () => {
+    setAlertSending(true);
+    try {
+      const result = await api.testAlert();
+      const channels = Object.entries(result.channels)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join(", ");
+      showToast(`Test alert sent via: ${channels}`, "success");
+    } catch (err) {
+      showToast(
+        `Failed to send test alert: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      setAlertSending(false);
+    }
+  };
+
   const handleTradingToggle = async () => {
     if (!engine) return;
     setToggling(true);
@@ -698,7 +719,14 @@ export function SettingsPage() {
               <span className="text-sm text-gray-400">Active</span>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 space-y-3">
+              <button
+                onClick={handleTestAlert}
+                disabled={alertSending}
+                className="w-full py-2.5 rounded-md text-sm font-medium bg-blue-900/40 text-blue-400 hover:bg-blue-900/60 border border-blue-800/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {alertSending ? "Sending..." : "Send Test Alert"}
+              </button>
               <button
                 onClick={logout}
                 className="w-full py-2.5 rounded-md text-sm font-medium bg-red-900/40 text-red-400 hover:bg-red-900/60 border border-red-800/50 transition-colors"

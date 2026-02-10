@@ -17,7 +17,11 @@ router = APIRouter()
 
 @router.get("/system/health")
 async def health_check(broker: BrokerAdapter = Depends(get_broker)):
-    broker_connected = await broker.is_connected()
+    try:
+        broker_connected = await broker.is_connected()
+    except Exception:
+        broker_connected = False
+
     engine_status = "unknown"
     try:
         engine = get_trading_engine()
