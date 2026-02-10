@@ -2,6 +2,7 @@ import asyncio
 import threading
 from datetime import datetime
 
+import nest_asyncio
 import pandas as pd
 import structlog
 from ib_insync import IB, Contract, MarketOrder, LimitOrder, StopOrder, Trade
@@ -40,6 +41,7 @@ class IBKRAdapter(BrokerAdapter):
     def _start_ib_loop(self):
         """Start a dedicated event loop thread for ib_insync."""
         self._ib_loop = asyncio.new_event_loop()
+        nest_asyncio.apply(self._ib_loop)
 
         def _run():
             asyncio.set_event_loop(self._ib_loop)
