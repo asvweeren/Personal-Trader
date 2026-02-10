@@ -10,13 +10,15 @@ import { SignalFeed } from "./SignalFeed";
 import { SystemStatus } from "./SystemStatus";
 import { EngineControl } from "./EngineControl";
 import { BacktestPanel } from "./BacktestPanel";
+import { ValidationDashboard } from "./ValidationDashboard";
 
-type Tab = "overview" | "trades" | "backtest" | "settings";
+type Tab = "overview" | "trades" | "backtest" | "validation" | "settings";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "trades", label: "Trades" },
   { id: "backtest", label: "Backtest" },
+  { id: "validation", label: "Validation" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -106,6 +108,8 @@ export function Dashboard() {
         {tab === "trades" && <TradeTable />}
 
         {tab === "backtest" && <BacktestPanel />}
+
+        {tab === "validation" && <ValidationDashboard />}
 
         {tab === "settings" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

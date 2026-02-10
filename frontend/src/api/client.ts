@@ -13,6 +13,12 @@ import type {
   BacktestRequest,
   BacktestDetail,
   BacktestsResponse,
+  ValidationStatus,
+  ReadinessAssessment,
+  ValidationReport,
+  ValidationReportSummary,
+  RollingMetrics,
+  BacktestComparison,
 } from "../types";
 
 const API_BASE = "/api";
@@ -92,4 +98,22 @@ export const api = {
     if (strategyName) url += `&strategy_name=${strategyName}`;
     return fetchApi<BacktestsResponse>(url);
   },
+
+  // Validation
+  getValidationStatus: () =>
+    fetchApi<ValidationStatus>("/validation/status"),
+  getValidationReadiness: () =>
+    fetchApi<ReadinessAssessment>("/validation/readiness"),
+  getLatestValidationReport: () =>
+    fetchApi<ValidationReport>("/validation/report/latest"),
+  getValidationHistory: (days = 30) =>
+    fetchApi<ValidationReportSummary[]>(`/validation/history?days=${days}`),
+  getRollingMetrics: () =>
+    fetchApi<RollingMetrics>("/validation/metrics/rolling"),
+  getBacktestComparison: () =>
+    fetchApi<BacktestComparison>("/validation/comparison"),
+  generateValidationReport: () =>
+    fetchApi<ValidationReport>("/validation/report/generate", {
+      method: "POST",
+    }),
 };

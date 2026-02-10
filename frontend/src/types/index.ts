@@ -191,3 +191,80 @@ export interface AuthResponse {
   access_token: string;
   token_type: string;
 }
+
+// ─── Validation Types ────────────────────────────────────────────────
+
+export interface ValidationStatus {
+  is_active: boolean;
+  start_date: string | null;
+  days_elapsed: number;
+  min_days_required: number;
+  total_trades: number;
+  is_complete: boolean;
+  current_phase: string;
+  progress_pct: number;
+}
+
+export interface ReadinessCriterion {
+  name: string;
+  passed: boolean;
+  required: number | string;
+  actual: number | string;
+  description: string;
+}
+
+export interface ReadinessAssessment {
+  ready: boolean;
+  criteria: ReadinessCriterion[];
+  passed_count: number;
+  total_count: number;
+  overall_score: number;
+  recommendation: string;
+  blockers: string[];
+}
+
+export interface ValidationReportSummary {
+  id: number;
+  generated_at: string;
+  status: string;
+  overall_score: number;
+  days_elapsed: number;
+  total_trades: number;
+}
+
+export interface ValidationReport extends ValidationReportSummary {
+  metrics: Record<string, unknown>;
+  criteria_results: ReadinessCriterion[];
+  recommendation: string;
+}
+
+export interface RollingMetrics {
+  period_days: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  profit_factor: number;
+  max_drawdown: number;
+  total_pnl: number;
+  total_trades: number;
+  avg_trade_pnl: number;
+  expectancy: number;
+  volatility: number;
+  calmar_ratio: number;
+  updated_at: string;
+}
+
+export interface ComparisonMetric {
+  metric: string;
+  backtest_value: number;
+  live_value: number;
+  deviation_pct: number;
+  acceptable: boolean;
+}
+
+export interface BacktestComparison {
+  has_data: boolean;
+  metrics: ComparisonMetric[];
+  overall_deviation: number;
+  correlation: number;
+  assessment: string;
+}
