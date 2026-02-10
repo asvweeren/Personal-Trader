@@ -92,8 +92,11 @@ export function PnLChart() {
           Loading chart data...
         </div>
       ) : !hasData ? (
-        <div className="h-[250px] flex items-center justify-center text-gray-600 text-sm">
-          No snapshot data yet. Start the trading engine to collect data.
+        <div className="h-[250px] flex flex-col items-center justify-center text-gray-600 text-sm">
+          <p>No portfolio data yet</p>
+          <p className="text-xs text-gray-700 mt-1">
+            Data will appear once the trading engine starts collecting snapshots.
+          </p>
         </div>
       ) : view === "value" ? (
         <ResponsiveContainer width="100%" height={250}>

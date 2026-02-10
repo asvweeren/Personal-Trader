@@ -67,6 +67,47 @@ def schedule_trading_engine(engine) -> None:
     logger.info("scheduler.job_added", job="trading_cycle", interval="5min")
 
 
+def schedule_heartbeat() -> None:
+    """Send periodic system status over WebSocket so clients stay informed."""
+
+    async def send_heartbeat():
+        from datetime import datetime, timezone
+        from app.api.websocket import broadcast_update
+        from app.dependencies import get_broker
+
+        try:
+            broker = get_broker()
+            try:
+                connected = await broker.is_connected()
+            except Exception:
+                connected = False
+
+            engine_state = "not_initialized"
+            try:
+                from app.dependencies import get_trading_engine
+                engine = get_trading_engine()
+                engine_state = engine.state.value
+            except RuntimeError:
+                pass
+
+            await broadcast_update("system.heartbeat", {
+                "broker_connected": connected,
+                "engine_state": engine_state,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass  # Don't let heartbeat failures break the scheduler
+
+    scheduler.add_job(
+        send_heartbeat,
+        IntervalTrigger(seconds=30),
+        id="ws_heartbeat",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="ws_heartbeat", interval="30s")
+
+
 def schedule_daily_validation_report() -> None:
     """Schedule the daily paper-trading validation report.
 

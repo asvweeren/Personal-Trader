@@ -1,3 +1,6 @@
+import asyncio
+
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, desc, func
@@ -8,6 +11,8 @@ from app.dependencies import get_broker, get_db
 from app.models.backtest_result import BacktestResult
 from app.strategy.ml_strategy import MLStrategy
 from app.strategy.sentiment_strategy import SentimentStrategy
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -54,19 +59,63 @@ async def _run_backtest_task(
 
         strategy = factory(request.params or {})
 
-        # Get historical data from broker
+        # Get historical data - try broker first, fallback to yfinance
+        data = None
         broker = get_broker()
-        if not await broker.is_connected():
-            await broker.connect()
+        try:
+            if await broker.is_connected():
+                data = await broker.get_historical_data(
+                    symbol=request.symbol,
+                    duration="365 D",
+                    bar_size="1 hour",
+                )
+        except Exception:
+            logger.info("backtest.broker_unavailable", symbol=request.symbol)
 
-        data = await broker.get_historical_data(
-            symbol=request.symbol,
-            duration="365 D",
-            bar_size="1 hour",
-        )
+        if data is None or data.empty:
+            # Fallback: download from yfinance
+            try:
+                import yfinance as yf
 
-        if data.empty or len(data) < 50:
-            await _update_result(db, backtest_id, error="Insufficient historical data")
+                ticker = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: yf.download(
+                        request.symbol,
+                        start=request.start_date,
+                        end=request.end_date,
+                        interval="1h",
+                        progress=False,
+                    ),
+                )
+                if ticker is not None and not ticker.empty:
+                    # Flatten MultiIndex columns if present
+                    if hasattr(ticker.columns, 'levels'):
+                        ticker.columns = ticker.columns.get_level_values(0)
+                    ticker = ticker.reset_index()
+                    rename_map = {}
+                    for col in ticker.columns:
+                        lc = str(col).lower()
+                        if lc in ("datetime", "date", "index"):
+                            rename_map[col] = "timestamp"
+                        elif lc == "open":
+                            rename_map[col] = "open"
+                        elif lc == "high":
+                            rename_map[col] = "high"
+                        elif lc == "low":
+                            rename_map[col] = "low"
+                        elif lc == "close":
+                            rename_map[col] = "close"
+                        elif lc == "volume":
+                            rename_map[col] = "volume"
+                    data = ticker.rename(columns=rename_map)
+                    logger.info("backtest.yfinance_data", symbol=request.symbol, rows=len(data))
+            except Exception as e:
+                logger.exception("backtest.yfinance_error", symbol=request.symbol)
+                await _update_result(db, backtest_id, error=f"Failed to download data: {e}")
+                return
+
+        if data is None or data.empty or len(data) < 50:
+            await _update_result(db, backtest_id, error="Insufficient historical data. Check symbol and date range.")
             return
 
         # Run backtest

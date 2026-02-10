@@ -120,6 +120,11 @@ function formatMessage(msg: WSMessage): { message: string; severity: FeedItem["s
         message: `Trading cycle #${data.cycle_count} completed`,
         severity: "info",
       };
+    case "system.heartbeat":
+      return {
+        message: `System: broker ${data.broker_connected ? "connected" : "disconnected"}, engine ${data.engine_state}`,
+        severity: data.broker_connected ? "info" : "warning",
+      };
     default:
       return {
         message: `${msg.type}: ${JSON.stringify(data)}`,

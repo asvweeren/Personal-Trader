@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useAuth } from "../contexts/AuthContext";
 import { PortfolioCard } from "./PortfolioCard";
 import { PositionList } from "./PositionList";
 import { TradeTable } from "./TradeTable";
@@ -25,6 +26,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function Dashboard() {
   const [tab, setTab] = useState<Tab>("overview");
+  const { logout } = useAuth();
   const { portfolio, performance, risk, loading, error } = usePortfolio();
   const ws = useWebSocket(
     `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/live`,
@@ -33,7 +35,7 @@ export function Dashboard() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-gray-400 text-lg">Loading dashboard...</div>
+        <div className="animate-pulse text-gray-400 text-lg">Loading dashboard...</div>
       </div>
     );
   }
@@ -41,11 +43,17 @@ export function Dashboard() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-red-400 text-lg">
-          Error: {error}
+        <div className="text-center">
+          <div className="text-red-400 text-lg">Error: {error}</div>
           <div className="text-gray-500 text-sm mt-2">
             Make sure the backend is running on port 8000
           </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -60,7 +68,15 @@ export function Dashboard() {
             <h1 className="text-xl font-bold text-white">AI Trader Dashboard</h1>
             <p className="text-sm text-gray-500">Automated Day Trading System</p>
           </div>
-          <SystemStatus wsConnected={ws.connected} />
+          <div className="flex items-center gap-4">
+            <SystemStatus wsConnected={ws.connected} />
+            <button
+              onClick={logout}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded border border-gray-800 hover:border-gray-700"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 

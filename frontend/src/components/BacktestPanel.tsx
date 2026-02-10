@@ -16,6 +16,7 @@ export function BacktestPanel() {
   const [selected, setSelected] = useState<BacktestDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<BacktestRequest>({
     strategy_name: "ml_xgboost",
     symbol: "AAPL",
@@ -32,17 +33,21 @@ export function BacktestPanel() {
 
   const handleRun = async () => {
     setRunning(true);
+    setError(null);
     try {
       const result = await api.runBacktest(form);
       // Poll for completion
       const poll = setInterval(async () => {
         try {
           const bt = await api.getBacktest(result.id);
-          if (bt.metrics && (bt.metrics as Record<string, unknown>).status !== "running") {
+          const m = bt.metrics as Record<string, unknown> | undefined;
+          if (m && m.status !== "running") {
             clearInterval(poll);
+            if (m.status === "error") {
+              setError(String(m.error ?? "Backtest failed"));
+            }
             setSelected(bt);
             setRunning(false);
-            // Refresh list
             api.getBacktests(0, 10).then((r) => setBacktests(r.backtests)).catch(() => {});
           }
         } catch {
@@ -50,7 +55,8 @@ export function BacktestPanel() {
           setRunning(false);
         }
       }, 2000);
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start backtest");
       setRunning(false);
     }
   };
@@ -152,6 +158,12 @@ export function BacktestPanel() {
             </button>
           </div>
         </div>
+
+        {error && (
+          <div className="mt-3 rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
+            {error}
+          </div>
+        )}
       </div>
 
       {/* Results */}

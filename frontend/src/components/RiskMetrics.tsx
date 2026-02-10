@@ -5,7 +5,14 @@ interface Props {
 }
 
 export function RiskMetrics({ risk }: Props) {
-  if (!risk) return null;
+  if (!risk) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        <h2 className="text-sm font-medium text-gray-400 mb-4">Risk Management</h2>
+        <p className="text-gray-600 text-sm animate-pulse">Loading risk metrics...</p>
+      </div>
+    );
+  }
 
   const { health, limits, daily_loss_triggered } = risk;
 
