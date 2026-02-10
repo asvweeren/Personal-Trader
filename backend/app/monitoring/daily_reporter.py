@@ -80,6 +80,20 @@ class DailyReporter:
             trading_days=readiness.trading_days,
         )
 
+        # Send Telegram + email alert when system is ready for live trading
+        if readiness.ready:
+            passed = sum(1 for c in readiness.checks if c.passed)
+            total = len(readiness.checks)
+            await send_alert(
+                "Paper Trading Validation Complete",
+                f"The system has passed all readiness criteria after "
+                f"{readiness.trading_days} trading days.\n\n"
+                f"Score: {passed}/{total} checks passed\n"
+                f"Summary: {readiness.summary}\n\n"
+                f"You can now consider switching to live trading.",
+                critical=True,
+            )
+
         logger.info(
             "daily_reporter.complete",
             report_id=report.id,
@@ -197,27 +211,54 @@ class DailyReporter:
 
         latest = reports[-1]
 
+        total_pnl = round(sum(daily_pnls), 2)
+        win_rate = round(total_winning / total_trades * 100, 2) if total_trades > 0 else 0.0
+        max_dd = round(latest.max_drawdown_pct, 2)
+        avg_trade_pnl = round(total_pnl / total_trades, 2) if total_trades > 0 else 0.0
+
+        # Profit factor
+        gross_profit = sum(p for p in daily_pnls if p > 0)
+        gross_loss = abs(sum(p for p in daily_pnls if p < 0))
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
+
+        # Volatility (annualised daily return std)
+        volatility = round(float(np.std(daily_returns, ddof=1) * np.sqrt(252) * 100), 2) if len(daily_returns) >= 2 else 0.0
+
+        # Calmar ratio
+        calmar_ratio = round(rolling_sharpe / max_dd, 2) if max_dd > 0 else 0.0
+
         return {
-            "window_days": window_days,
+            "period_days": window_days,
             "available_days": len(reports),
+            "sharpe_ratio": round(rolling_sharpe, 3),
+            "win_rate": win_rate,
+            "profit_factor": profit_factor,
+            "max_drawdown": max_dd,
+            "total_pnl": total_pnl,
+            "total_trades": total_trades,
+            "avg_trade_pnl": avg_trade_pnl,
+            "expectancy": avg_trade_pnl,
+            "volatility": volatility,
+            "calmar_ratio": calmar_ratio,
+            "updated_at": latest.report_date.isoformat() if latest.report_date else "",
+            # Legacy fields
+            "window_days": window_days,
             "metrics": {
                 "avg_daily_pnl": round(avg_daily_pnl, 2),
-                "total_pnl": round(sum(daily_pnls), 2),
+                "total_pnl": total_pnl,
                 "best_day": round(max(daily_pnls), 2),
                 "worst_day": round(min(daily_pnls), 2),
                 "positive_days": len([p for p in daily_pnls if p > 0]),
                 "negative_days": len([p for p in daily_pnls if p < 0]),
                 "flat_days": len([p for p in daily_pnls if p == 0]),
                 "total_trades": total_trades,
-                "overall_win_rate": round(
-                    total_winning / total_trades * 100, 2
-                ) if total_trades > 0 else 0.0,
+                "overall_win_rate": win_rate,
                 "rolling_sharpe": round(rolling_sharpe, 3),
                 "current_streak": current_streak,
                 "streak_type": streak_type,
                 "latest_cumulative_pnl": round(latest.cumulative_pnl, 2),
                 "latest_portfolio_value": round(latest.portfolio_value, 2),
-                "latest_max_drawdown_pct": round(latest.max_drawdown_pct, 2),
+                "latest_max_drawdown_pct": max_dd,
                 "total_anomalies": total_anomalies,
             },
             "date_range": {
