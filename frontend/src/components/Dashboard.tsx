@@ -1,18 +1,19 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAuth } from "../contexts/AuthContext";
 import { PortfolioCard } from "./PortfolioCard";
 import { PositionList } from "./PositionList";
-import { TradeTable } from "./TradeTable";
 import { PnLChart } from "./PnLChart";
 import { RiskMetrics } from "./RiskMetrics";
 import { SignalFeed } from "./SignalFeed";
 import { SystemStatus } from "./SystemStatus";
 import { EngineControl } from "./EngineControl";
-import { BacktestPanel } from "./BacktestPanel";
-import { ValidationDashboard } from "./ValidationDashboard";
-import { SettingsPage } from "./SettingsPage";
+
+const TradeTable = lazy(() => import("./TradeTable").then(m => ({ default: m.TradeTable })));
+const BacktestPanel = lazy(() => import("./BacktestPanel").then(m => ({ default: m.BacktestPanel })));
+const ValidationDashboard = lazy(() => import("./ValidationDashboard").then(m => ({ default: m.ValidationDashboard })));
+const SettingsPage = lazy(() => import("./SettingsPage").then(m => ({ default: m.SettingsPage })));
 
 type Tab = "overview" | "trades" | "backtest" | "validation" | "settings";
 
@@ -122,13 +123,29 @@ export function Dashboard() {
           </>
         )}
 
-        {tab === "trades" && <TradeTable />}
+        {tab === "trades" && (
+          <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading trades...</div>}>
+            <TradeTable />
+          </Suspense>
+        )}
 
-        {tab === "backtest" && <BacktestPanel />}
+        {tab === "backtest" && (
+          <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading backtest...</div>}>
+            <BacktestPanel />
+          </Suspense>
+        )}
 
-        {tab === "validation" && <ValidationDashboard />}
+        {tab === "validation" && (
+          <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading validation...</div>}>
+            <ValidationDashboard />
+          </Suspense>
+        )}
 
-        {tab === "settings" && <SettingsPage />}
+        {tab === "settings" && (
+          <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading settings...</div>}>
+            <SettingsPage />
+          </Suspense>
+        )}
       </main>
     </div>
   );

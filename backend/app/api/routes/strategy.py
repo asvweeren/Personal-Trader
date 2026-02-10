@@ -1,18 +1,24 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
+
+from app.dependencies import get_db
+from app.models.strategy_config import StrategyConfig
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
-# In-memory strategy config (will be persisted to DB later)
-_strategy_config = {
+# Default values used when no DB row exists yet
+_DEFAULTS = {
     "active_strategies": ["ml_xgboost", "sentiment"],
     "confidence_threshold": 0.6,
     "ensemble_method": "weighted_average",
     "weights": {"ml_xgboost": 0.5, "sentiment": 0.3, "nn_lstm": 0.2},
+    "symbols": ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "NVDA", "AMZN", "META", "IWM", "EFA", "VGK"],
     "trading_enabled": False,
 }
 
@@ -26,10 +32,42 @@ class StrategyConfigUpdate(BaseModel):
     symbols: list[str] | None = None
 
 
-@router.get("/strategy/status")
-async def get_strategy_status():
+async def _get_or_create_config(db: AsyncSession) -> StrategyConfig:
+    """Get the singleton config row, creating it with defaults if missing."""
+    result = await db.execute(select(StrategyConfig).where(StrategyConfig.id == 1))
+    config = result.scalar_one_or_none()
+    if config is None:
+        config = StrategyConfig(
+            id=1,
+            active_strategies=_DEFAULTS["active_strategies"],
+            confidence_threshold=_DEFAULTS["confidence_threshold"],
+            ensemble_method=_DEFAULTS["ensemble_method"],
+            weights=_DEFAULTS["weights"],
+            symbols=_DEFAULTS["symbols"],
+            trading_enabled=_DEFAULTS["trading_enabled"],
+        )
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+    return config
+
+
+def _config_to_dict(config: StrategyConfig) -> dict:
     return {
-        "config": _strategy_config,
+        "active_strategies": config.active_strategies,
+        "confidence_threshold": config.confidence_threshold,
+        "ensemble_method": config.ensemble_method,
+        "weights": config.weights,
+        "symbols": config.symbols,
+        "trading_enabled": config.trading_enabled,
+    }
+
+
+@router.get("/strategy/status")
+async def get_strategy_status(db: AsyncSession = Depends(get_db)):
+    config = await _get_or_create_config(db)
+    return {
+        "config": _config_to_dict(config),
         "available_strategies": [
             {
                 "name": "ml_xgboost",
@@ -56,23 +94,28 @@ async def get_strategy_status():
 
 
 @router.put("/strategy/config")
-async def update_strategy_config(update: StrategyConfigUpdate):
+async def update_strategy_config(update: StrategyConfigUpdate, db: AsyncSession = Depends(get_db)):
+    config = await _get_or_create_config(db)
+
     if update.active_strategies is not None:
-        _strategy_config["active_strategies"] = update.active_strategies
+        config.active_strategies = update.active_strategies
     if update.confidence_threshold is not None:
-        _strategy_config["confidence_threshold"] = update.confidence_threshold
+        config.confidence_threshold = update.confidence_threshold
     if update.ensemble_method is not None:
-        _strategy_config["ensemble_method"] = update.ensemble_method
+        config.ensemble_method = update.ensemble_method
     if update.weights is not None:
-        _strategy_config["weights"] = update.weights
+        config.weights = update.weights
     if update.trading_enabled is not None:
-        _strategy_config["trading_enabled"] = update.trading_enabled
+        config.trading_enabled = update.trading_enabled
     if update.symbols is not None:
-        _strategy_config["symbols"] = update.symbols
+        config.symbols = update.symbols
         try:
             from app.dependencies import get_trading_engine
             engine = get_trading_engine()
             engine.update_symbols(update.symbols)
         except RuntimeError:
             logger.warning("strategy.symbols_update_no_engine")
-    return _strategy_config
+
+    await db.commit()
+    await db.refresh(config)
+    return _config_to_dict(config)

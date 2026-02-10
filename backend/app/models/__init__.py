@@ -6,6 +6,7 @@ from app.models.backtest_result import BacktestResult
 from app.models.market_data_bar import MarketDataBar
 from app.models.risk_event import RiskEvent
 from app.models.validation_report import ValidationReport
+from app.models.strategy_config import StrategyConfig
 from app.models.database import Base
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "MarketDataBar",
     "RiskEvent",
     "ValidationReport",
+    "StrategyConfig",
 ]
