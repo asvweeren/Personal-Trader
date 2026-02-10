@@ -56,30 +56,41 @@ async def lifespan(app: FastAPI):
     schedule_heartbeat()
     schedule_snapshot_cleanup()
 
-    # Try to start data pipeline and trading engine (non-fatal if broker unavailable)
+    # Try to start broker, pipeline and trading engine (each step non-fatal)
     pipeline = None
     engine = None
     db = None
     broker = None
+
+    # Step 1: Connect broker
     try:
         broker = get_broker()
         await broker.connect()
         logger.info("broker.connected")
-
-        pipeline = get_data_pipeline()
-        await pipeline.start(settings.symbols_list)
-        logger.info("pipeline.started")
-
-        db = session_factory()
-        engine = await init_trading_engine(db)
-        await engine.start()
-        logger.info("engine.started")
-
-        schedule_data_pipeline(pipeline)
-        schedule_trading_engine(engine)
     except Exception as e:
         logger.warning("startup.broker_unavailable", error=str(e))
         logger.info("app.running_without_broker", hint="Configure IBKR credentials and restart")
+
+    # Step 2: Start data pipeline (requires broker)
+    if broker and await broker.is_connected():
+        try:
+            pipeline = get_data_pipeline()
+            await pipeline.start(settings.symbols_list)
+            logger.info("pipeline.started")
+            schedule_data_pipeline(pipeline)
+        except Exception as e:
+            logger.warning("startup.pipeline_error", error=str(e))
+
+    # Step 3: Start trading engine (requires broker)
+    if broker and await broker.is_connected():
+        try:
+            db = session_factory()
+            engine = await init_trading_engine(db)
+            await engine.start()
+            logger.info("engine.started")
+            schedule_trading_engine(engine)
+        except Exception as e:
+            logger.warning("startup.engine_error", error=str(e))
 
     yield
 
