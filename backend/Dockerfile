@@ -24,4 +24,4 @@ CMD ["uv", "run", "uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "-
 FROM base AS production
 EXPOSE 8000
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--loop", "asyncio"]

@@ -1,8 +1,5 @@
 from contextlib import asynccontextmanager
 
-import ib_insync.util
-ib_insync.util.patchAsyncio()
-
 import structlog
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
