@@ -76,9 +76,27 @@ class IBKRAdapter(BrokerAdapter):
                     port=self._port,
                     client_id=self._client_id,
                 )
-                await self._ib.connectAsync(
-                    self._host, self._port, clientId=self._client_id
-                )
+                # Retry with increasing timeout — IB Gateway can be slow to handshake
+                last_err = None
+                for attempt in range(1, 4):
+                    try:
+                        await self._ib.connectAsync(
+                            self._host, self._port,
+                            clientId=self._client_id,
+                            timeout=20,
+                        )
+                        return  # success
+                    except Exception as e:
+                        last_err = e
+                        logger.warning(
+                            "ibkr.connect_retry",
+                            attempt=attempt,
+                            error=str(e),
+                        )
+                        if attempt < 3:
+                            await asyncio.sleep(3)
+                            self._ib = IB()  # fresh IB instance for retry
+                raise last_err
 
             await self._run(_do_connect())
             logger.info("ibkr.connected", host=self._host, port=self._port)
