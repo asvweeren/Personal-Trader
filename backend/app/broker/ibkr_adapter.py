@@ -21,7 +21,7 @@ logger = structlog.get_logger()
 
 
 class IBKRAdapter(BrokerAdapter):
-    """Interactive Brokers adapter using ib_insync."""
+    """Interactive Brokers adapter using ib_insync (native async)."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 1):
         self._host = host
@@ -32,10 +32,7 @@ class IBKRAdapter(BrokerAdapter):
 
     async def connect(self) -> None:
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self._ib.connect(self._host, self._port, clientId=self._client_id),
-            )
+            await self._ib.connectAsync(self._host, self._port, clientId=self._client_id)
             logger.info("ibkr.connected", host=self._host, port=self._port)
         except Exception as e:
             raise BrokerConnectionError(f"Failed to connect to IBKR: {e}") from e
@@ -53,9 +50,7 @@ class IBKRAdapter(BrokerAdapter):
             contract = self._make_contract(order.symbol)
             ib_order = self._make_order(order)
 
-            trade: Trade = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self._ib.placeOrder(contract, ib_order)
-            )
+            trade: Trade = self._ib.placeOrder(contract, ib_order)
 
             logger.info(
                 "ibkr.order_placed",
@@ -96,7 +91,7 @@ class IBKRAdapter(BrokerAdapter):
         return OrderResult(order_id=order_id, status="UNKNOWN")
 
     async def get_positions(self) -> list[Position]:
-        positions = await asyncio.get_event_loop().run_in_executor(None, self._ib.positions)
+        positions = self._ib.positions()
         result = []
         for pos in positions:
             if pos.position != 0:
@@ -118,9 +113,7 @@ class IBKRAdapter(BrokerAdapter):
         return Portfolio(account_summary=summary, positions=positions)
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = await asyncio.get_event_loop().run_in_executor(
-            None, self._ib.accountSummary
-        )
+        account_values = self._ib.accountSummary()
 
         values = {}
         for av in account_values:
@@ -157,17 +150,14 @@ class IBKRAdapter(BrokerAdapter):
         contract = self._make_contract(symbol)
         end_dt = end_date or datetime.now()
 
-        bars = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: self._ib.reqHistoricalData(
-                contract,
-                endDateTime=end_dt,
-                durationStr=duration,
-                barSizeSetting=bar_size,
-                whatToShow="TRADES",
-                useRTH=True,
-                formatDate=1,
-            ),
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime=end_dt,
+            durationStr=duration,
+            barSizeSetting=bar_size,
+            whatToShow="TRADES",
+            useRTH=True,
+            formatDate=1,
         )
 
         if not bars:
