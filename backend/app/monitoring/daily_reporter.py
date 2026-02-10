@@ -103,6 +103,9 @@ class DailyReporter:
             anomalies=len(report.anomalies) if report.anomalies else 0,
         )
 
+        # Send daily summary via Telegram
+        await self._send_daily_summary(report, readiness)
+
         return report
 
     async def get_recent_reports(
@@ -324,6 +327,42 @@ class DailyReporter:
                 logger.exception("daily_reporter.scheduled_run_error")
 
     # ── Internal helpers ────────────────────────────────────
+
+    async def _send_daily_summary(
+        self,
+        report: ValidationReport,
+        readiness,
+    ) -> None:
+        """Send a daily Telegram summary of paper trading results."""
+        pnl_emoji = "\U0001f7e2" if report.daily_pnl >= 0 else "\U0001f534"
+        cum_emoji = "\U0001f7e2" if report.cumulative_pnl >= 0 else "\U0001f534"
+        passed = sum(1 for c in readiness.checks if c.passed)
+        total = len(readiness.checks)
+        anomaly_count = len(report.anomalies) if report.anomalies else 0
+
+        lines = [
+            f"Date: {report.report_date}",
+            f"",
+            f"{pnl_emoji} Daily P&L: \u20ac{report.daily_pnl:,.2f}",
+            f"{cum_emoji} Cumulative P&L: \u20ac{report.cumulative_pnl:,.2f}",
+            f"Portfolio Value: \u20ac{report.portfolio_value:,.2f}",
+            f"",
+            f"Trades: {report.total_trades} ({report.winning_trades}W / {report.losing_trades}L)",
+            f"Win Rate: {report.win_rate:.1f}%",
+            f"Max Drawdown: {report.max_drawdown_pct:.2f}%",
+        ]
+
+        if anomaly_count:
+            lines.append(f"\u26a0\ufe0f Anomalies: {anomaly_count}")
+
+        lines.append(f"")
+        lines.append(f"Readiness: {passed}/{total} checks passed")
+        lines.append(f"Trading days: {readiness.trading_days}")
+
+        await send_alert(
+            title="Daily Paper Trading Report",
+            message="\n".join(lines),
+        )
 
     async def _send_anomaly_alert(
         self,
