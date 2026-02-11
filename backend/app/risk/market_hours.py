@@ -157,6 +157,36 @@ def get_exchange_for_symbol(symbol: str) -> Exchange:
     return Exchange.NYSE
 
 
+# ── IBKR contract mapping ──────────────────────────────────────
+
+SUFFIX_TO_IBKR: dict[str, dict[str, str]] = {
+    ".AS": {"currency": "EUR", "primary_exchange": "AEB"},      # Euronext Amsterdam
+    ".PA": {"currency": "EUR", "primary_exchange": "SBF"},      # Euronext Paris
+    ".BR": {"currency": "EUR", "primary_exchange": "BVME"},     # Euronext Brussels
+    ".DE": {"currency": "EUR", "primary_exchange": "IBIS"},     # Xetra (Frankfurt)
+    ".L":  {"currency": "GBP", "primary_exchange": "LSE"},      # London Stock Exchange
+}
+
+
+def parse_symbol_for_ibkr(symbol: str) -> tuple[str, str, str | None]:
+    """Parse a suffixed symbol into IBKR contract parameters.
+
+    Args:
+        symbol: Symbol with optional exchange suffix (e.g. "ASML.AS", "AAPL").
+
+    Returns:
+        Tuple of (bare_symbol, currency, primary_exchange).
+        primary_exchange is None for US stocks (SMART routing handles it).
+    """
+    upper = symbol.upper()
+    for suffix, info in SUFFIX_TO_IBKR.items():
+        if upper.endswith(suffix):
+            bare = symbol[: -len(suffix)]
+            return bare, info["currency"], info["primary_exchange"]
+    # US stock — no suffix
+    return symbol, "USD", None
+
+
 def is_any_market_open(
     symbols: list[str],
     now: datetime | None = None,

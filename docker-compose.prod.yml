@@ -66,6 +66,12 @@ services:
     command: TCP-LISTEN:4003,fork,reuseaddr TCP:127.0.0.1:4002
     depends_on:
       - ib-gateway
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4003 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: always
     deploy:
       resources:
@@ -93,7 +99,7 @@ services:
       redis:
         condition: service_healthy
       ib-proxy:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./ml/models:/app/ml/models:ro
     restart: always

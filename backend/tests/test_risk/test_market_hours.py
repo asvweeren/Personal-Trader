@@ -9,6 +9,7 @@ from app.risk.market_hours import (
     get_exchange_for_symbol,
     is_any_market_open,
     next_market_open,
+    parse_symbol_for_ibkr,
 )
 
 
@@ -122,3 +123,55 @@ def test_next_open_from_weekend():
     assert local.weekday() == 0  # Monday
     assert local.hour == 9
     assert local.minute == 30
+
+
+# ── parse_symbol_for_ibkr tests ──────────────────────────────
+
+
+def test_parse_us_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("AAPL")
+    assert bare == "AAPL"
+    assert currency == "USD"
+    assert exchange is None
+
+
+def test_parse_amsterdam_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("ASML.AS")
+    assert bare == "ASML"
+    assert currency == "EUR"
+    assert exchange == "AEB"
+
+
+def test_parse_london_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("SHEL.L")
+    assert bare == "SHEL"
+    assert currency == "GBP"
+    assert exchange == "LSE"
+
+
+def test_parse_frankfurt_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("SAP.DE")
+    assert bare == "SAP"
+    assert currency == "EUR"
+    assert exchange == "IBIS"
+
+
+def test_parse_paris_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("TTE.PA")
+    assert bare == "TTE"
+    assert currency == "EUR"
+    assert exchange == "SBF"
+
+
+def test_parse_brussels_symbol():
+    bare, currency, exchange = parse_symbol_for_ibkr("ABI.BR")
+    assert bare == "ABI"
+    assert currency == "EUR"
+    assert exchange == "BVME"
+
+
+def test_parse_lowercase_suffix():
+    bare, currency, exchange = parse_symbol_for_ibkr("asml.as")
+    assert bare == "asml"
+    assert currency == "EUR"
+    assert exchange == "AEB"

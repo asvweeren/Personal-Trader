@@ -30,6 +30,16 @@ SECTOR_MAP: dict[str, str] = {
     "SPY": "etf_broad", "QQQ": "etf_tech", "IWM": "etf_broad",
     "VTI": "etf_broad", "VOO": "etf_broad", "EFA": "etf_intl",
     "VGK": "etf_eu", "EWG": "etf_eu", "EWN": "etf_eu",
+    # EU Tech
+    "ASML.AS": "technology", "SAP.DE": "technology",
+    # EU Energy
+    "SHEL.L": "energy", "TTE.PA": "energy",
+    # EU Consumer
+    "MC.PA": "consumer", "OR.PA": "consumer",
+    # EU Finance
+    "INGA.AS": "finance", "BNP.PA": "finance",
+    # EU Healthcare
+    "SAN.PA": "healthcare", "AZN.L": "healthcare",
 }
 
 DEFAULT_SECTOR = "unknown"

@@ -18,6 +18,7 @@ from app.broker.base import (
     Position,
 )
 from app.core.exceptions import BrokerConnectionError, BrokerOrderError
+from app.risk.market_hours import parse_symbol_for_ibkr
 
 logger = structlog.get_logger()
 
@@ -87,6 +88,9 @@ class IBKRAdapter(BrokerAdapter):
                             clientId=self._client_id,
                             timeout=20,
                         )
+                        # Use delayed market data (type 3) — free, 15-min lag.
+                        # Avoids Error 10089 when no real-time subscription.
+                        self._ib.reqMarketDataType(3)
                         return  # success
                     except Exception as e:
                         last_err = e
@@ -265,12 +269,15 @@ class IBKRAdapter(BrokerAdapter):
         return pd.DataFrame(data)
 
     def _make_contract(self, symbol: str) -> Contract:
-        """Create an IBKR Contract. Assumes US stock by default."""
+        """Create an IBKR Contract with correct currency/exchange for US and EU stocks."""
+        bare_symbol, currency, primary_exchange = parse_symbol_for_ibkr(symbol)
         contract = Contract()
-        contract.symbol = symbol
+        contract.symbol = bare_symbol
         contract.secType = "STK"
         contract.exchange = "SMART"
-        contract.currency = "USD"
+        contract.currency = currency
+        if primary_exchange:
+            contract.primaryExchange = primary_exchange
         return contract
 
     def _make_order(self, order: OrderRequest):
