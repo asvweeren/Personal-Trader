@@ -15,20 +15,22 @@ SECTOR_MAP: dict[str, str] = {
     "AAPL": "technology", "MSFT": "technology", "GOOGL": "technology",
     "AMZN": "technology", "META": "technology", "NVDA": "technology",
     "TSLA": "technology", "AMD": "technology", "INTC": "technology",
+    "NFLX": "technology", "CRM": "technology", "AVGO": "technology",
     # US Finance
     "JPM": "finance", "BAC": "finance", "GS": "finance",
     "MS": "finance", "WFC": "finance", "C": "finance",
     # US Healthcare
     "JNJ": "healthcare", "UNH": "healthcare", "PFE": "healthcare",
-    "ABBV": "healthcare", "MRK": "healthcare",
+    "ABBV": "healthcare", "MRK": "healthcare", "LLY": "healthcare",
     # US Consumer
     "WMT": "consumer", "KO": "consumer", "PEP": "consumer",
-    "PG": "consumer", "COST": "consumer",
+    "PG": "consumer", "COST": "consumer", "HD": "consumer",
     # US Energy
     "XOM": "energy", "CVX": "energy", "COP": "energy",
     # ETFs
     "SPY": "etf_broad", "QQQ": "etf_tech", "IWM": "etf_broad",
-    "VTI": "etf_broad", "VOO": "etf_broad", "EFA": "etf_intl",
+    "DIA": "etf_broad", "VTI": "etf_broad", "VOO": "etf_broad",
+    "EFA": "etf_intl", "XLF": "etf_finance", "XLE": "etf_energy",
     "VGK": "etf_eu", "EWG": "etf_eu", "EWN": "etf_eu",
     # EU Tech
     "ASML.AS": "technology", "SAP.DE": "technology",
@@ -191,13 +193,13 @@ def calculate_position_size(
         )
     else:
         # Simplified Kelly scaled by confidence
-        kelly_fraction = confidence * 0.5
+        kelly_fraction = confidence * 0.8
 
     # Volatility adjustment: reduce size for high-volatility assets
     if volatility and volatility > 0:
-        vol_factor = max(0.3, 1.0 - volatility)
+        vol_factor = max(0.5, 1.0 - volatility * 0.5)
     else:
-        vol_factor = 0.7  # Default conservative
+        vol_factor = 0.8  # Default moderate
 
     # Correlation adjustment
     existing_symbols = [p.symbol for p in portfolio.positions]
@@ -236,6 +238,82 @@ def calculate_position_size(
         )
 
     return max(0, quantity)
+
+
+def calculate_take_profit(
+    entry_price: float,
+    symbol: str | None = None,
+    atr: float | None = None,
+) -> float:
+    """Calculate take-profit target price using ATR with a minimum percentage floor.
+
+    Returns take-profit price above entry.
+    """
+    from app.config import settings
+
+    # ATR-based target
+    if atr and atr > 0:
+        atr_target = entry_price + settings.atr_take_profit_multiplier * atr
+    else:
+        atr_target = 0.0
+
+    # Minimum percentage floor
+    pct_target = entry_price * (1 + settings.min_take_profit_pct / 100)
+
+    tp = max(atr_target, pct_target)
+
+    if symbol:
+        logger.debug(
+            "position_sizer.take_profit",
+            symbol=symbol,
+            entry=entry_price,
+            take_profit=round(tp, 2),
+            atr=atr,
+        )
+
+    return round(tp, 2)
+
+
+def calculate_progressive_trailing_stop(
+    entry_price: float,
+    current_price: float,
+    current_stop: float,
+    atr: float | None = None,
+    tiers: list[tuple[float, float]] | None = None,
+) -> float:
+    """Calculate a progressive trailing stop that tightens as profit grows.
+
+    Tiers are (gain_pct, trail_pct) pairs sorted highest-gain first.
+    The trail percentage used is determined by the highest tier the current
+    gain exceeds.
+
+    Returns a new stop price (never lower than current_stop).
+    """
+    if entry_price <= 0:
+        return current_stop
+
+    gain_pct = ((current_price - entry_price) / entry_price) * 100
+
+    if tiers is None:
+        from app.config import settings
+        tiers = settings.trailing_stop_tiers_parsed
+
+    # Find the applicable tier (highest gain threshold we exceed)
+    trail_pct = None
+    for threshold, trail in tiers:
+        if gain_pct >= threshold:
+            trail_pct = trail
+            break
+
+    if trail_pct is None:
+        # Below all tiers — use default ATR-based trailing
+        return current_stop
+
+    # Calculate stop from current price using the tier trail percentage
+    new_stop = round(current_price * (1 - trail_pct / 100), 2)
+
+    # Never lower the stop
+    return max(new_stop, current_stop)
 
 
 def calculate_trailing_stop(

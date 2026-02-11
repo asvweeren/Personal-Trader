@@ -20,7 +20,12 @@ from app.models.trade import Trade, TradeSide, TradeStatus
 from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
-from app.risk.position_sizer import calculate_trailing_stop
+from app.risk.market_hours import minutes_until_close_for_symbol
+from app.risk.position_sizer import (
+    calculate_progressive_trailing_stop,
+    calculate_take_profit,
+    calculate_trailing_stop,
+)
 from app.strategy.base import SignalAction, Strategy, TradingSignal
 
 logger = structlog.get_logger()
@@ -154,10 +159,16 @@ class TradingEngine:
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
 
-            # 3. Check trailing stops on open positions
+            # 3. EOD close — force-sell positions near market close (day trading)
+            await self._check_eod_close(snapshot.prices)
+
+            # 4. Take-profit check — sell positions that hit their target
+            await self._check_take_profits(snapshot.prices)
+
+            # 5. Check trailing stops on open positions (progressive)
             await self._check_trailing_stops(snapshot.prices)
 
-            # 4. Generate signals from all strategies
+            # 6. Generate signals from all strategies
             all_signals: list[TradingSignal] = []
             for strategy in self._strategies:
                 try:
@@ -171,10 +182,10 @@ class TradingEngine:
                 self._last_cycle_at = datetime.now(timezone.utc)
                 return
 
-            # 5. Get current portfolio for risk checks
+            # 7. Get current portfolio for risk checks
             portfolio = await self._portfolio_tracker.get_current()
 
-            # 6. Evaluate each signal through risk management
+            # 8. Evaluate each signal through risk management
             for signal in all_signals:
                 if signal.action == SignalAction.HOLD:
                     continue
@@ -252,7 +263,7 @@ class TradingEngine:
 
             await self._db.commit()
 
-            # 7. Take portfolio snapshot
+            # 9. Take portfolio snapshot
             await self._portfolio_tracker.take_snapshot()
             await self._db.commit()
 
@@ -410,6 +421,12 @@ class TradingEngine:
                     order_type=OrderType.STOP,
                     stop_price=stop_price,
                 )
+
+                # Set take-profit target (ATR-based with min floor)
+                atr_val = self._get_atr(signal.symbol)
+                trade.take_profit = calculate_take_profit(
+                    result.filled_price, signal.symbol, atr_val
+                )
         elif mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
             # Order accepted but not yet filled — track for fill polling
             trade.status = TradeStatus.PENDING
@@ -470,6 +487,12 @@ class TradingEngine:
                         order_type=OrderType.STOP,
                         stop_price=stop_price,
                     )
+
+                    # Set take-profit target
+                    atr_val = self._get_atr(symbol)
+                    trade.take_profit = calculate_take_profit(
+                        filled_price, symbol, atr_val
+                    )
         elif side == "SELL":
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
@@ -483,7 +506,8 @@ class TradingEngine:
         await self._db.flush()
 
     async def _check_trailing_stops(self, prices: dict[str, float]) -> None:
-        """Update trailing stops for open positions based on current prices."""
+        """Update trailing stops for open positions using progressive tiers."""
+        tiers = settings.trailing_stop_tiers_parsed
         for symbol, trade in list(self._open_trades.items()):
             if trade.entry_price is None or trade.stop_loss is None:
                 continue
@@ -493,12 +517,24 @@ class TradingEngine:
                 continue
 
             atr_val = self._get_atr(trade.symbol)
-            new_stop = calculate_trailing_stop(
+
+            # Progressive trailing: tighter stops as profit grows
+            new_stop = calculate_progressive_trailing_stop(
                 entry_price=trade.entry_price,
                 current_price=current_price,
+                current_stop=trade.stop_loss,
                 atr=atr_val,
-                trail_pct=settings.min_stop_loss_pct,
+                tiers=tiers,
             )
+
+            # Fall back to standard trailing if progressive didn't tighten
+            if new_stop <= trade.stop_loss:
+                new_stop = calculate_trailing_stop(
+                    entry_price=trade.entry_price,
+                    current_price=current_price,
+                    atr=atr_val,
+                    trail_pct=settings.min_stop_loss_pct,
+                )
 
             if new_stop > trade.stop_loss:
                 trade.stop_loss = new_stop
@@ -508,6 +544,91 @@ class TradingEngine:
                     new_stop=new_stop,
                     current_price=current_price,
                 )
+
+    async def _check_take_profits(self, prices: dict[str, float]) -> None:
+        """Close positions that have reached their take-profit target."""
+        if not self._trading_enabled:
+            return
+
+        for symbol, trade in list(self._open_trades.items()):
+            if trade.take_profit is None or trade.entry_price is None:
+                continue
+            if trade.status != TradeStatus.OPEN:
+                continue
+
+            current_price = prices.get(symbol)
+            if current_price is None:
+                continue
+
+            if current_price >= trade.take_profit:
+                logger.info(
+                    "engine.take_profit_triggered",
+                    symbol=symbol,
+                    current_price=current_price,
+                    take_profit=trade.take_profit,
+                    entry_price=trade.entry_price,
+                )
+                result = await self._order_manager.submit_order(
+                    trade_id=trade.id,
+                    symbol=symbol,
+                    side="SELL",
+                    quantity=trade.quantity,
+                    order_type=OrderType.MARKET,
+                )
+                mapped_status = self._order_manager._map_status(result.status)
+                if mapped_status == OrderStatus.FILLED and result.filled_price:
+                    await self._portfolio_tracker.record_trade_close(
+                        trade, result.filled_price
+                    )
+                    self._open_trades.pop(symbol, None)
+                    await send_alert(
+                        "Take-Profit Hit",
+                        f"{symbol}: sold at {result.filled_price:.2f} "
+                        f"(target {trade.take_profit:.2f}, entry {trade.entry_price:.2f})",
+                    )
+
+    async def _check_eod_close(self, prices: dict[str, float]) -> None:
+        """Force-close all positions when market is about to close (day trading rule)."""
+        if not self._trading_enabled:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        for symbol, trade in list(self._open_trades.items()):
+            if trade.status != TradeStatus.OPEN:
+                continue
+
+            mins_left = minutes_until_close_for_symbol(symbol, now)
+            if mins_left is None:
+                continue  # Market not open / already closed
+
+            if mins_left <= settings.eod_close_minutes_before:
+                current_price = prices.get(symbol, 0.0)
+                logger.info(
+                    "engine.eod_close_triggered",
+                    symbol=symbol,
+                    minutes_left=round(mins_left, 1),
+                    current_price=current_price,
+                )
+                result = await self._order_manager.submit_order(
+                    trade_id=trade.id,
+                    symbol=symbol,
+                    side="SELL",
+                    quantity=trade.quantity,
+                    order_type=OrderType.MARKET,
+                )
+                mapped_status = self._order_manager._map_status(result.status)
+                if mapped_status == OrderStatus.FILLED and result.filled_price:
+                    await self._portfolio_tracker.record_trade_close(
+                        trade, result.filled_price
+                    )
+                    self._open_trades.pop(symbol, None)
+                    pnl = trade.realized_pnl or 0.0
+                    await send_alert(
+                        "EOD Close",
+                        f"{symbol}: closed at {result.filled_price:.2f} "
+                        f"({mins_left:.0f} min before close, P&L: {pnl:+.2f})",
+                    )
 
     async def _load_open_trades(self) -> None:
         """Load open trades from database on startup for recovery."""

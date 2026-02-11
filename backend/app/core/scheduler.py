@@ -201,6 +201,64 @@ def schedule_snapshot_cleanup() -> None:
     logger.info("scheduler.job_added", job="snapshot_cleanup", trigger="cron(02:00)")
 
 
+def schedule_daily_reset(engine) -> None:
+    """Reset daily counters at 08:30 UTC Mon-Fri (before EU market open)."""
+
+    async def daily_reset():
+        try:
+            engine.reset_daily()
+        except Exception:
+            logger.exception("scheduler.daily_reset_error")
+
+    scheduler.add_job(
+        daily_reset,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=30),
+        id="daily_reset",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="daily_reset", trigger="cron(mon-fri 08:30)")
+
+
+def schedule_eod_safety_close(engine) -> None:
+    """Backup EOD close check every minute to catch positions between 5-min cycles.
+
+    The main trading cycle runs every 5 minutes, but EOD close needs
+    tighter timing to avoid overnight positions.
+    """
+
+    async def eod_safety_check():
+        from app.risk.market_hours import is_any_market_open
+        from app.config import settings
+
+        try:
+            if engine.state.value != "RUNNING" or not engine.trading_enabled:
+                return
+            if not engine._open_trades:
+                return
+
+            # Only run the check if any market is still open
+            symbols = list(engine._open_trades.keys())
+            if not is_any_market_open(symbols):
+                return
+
+            # Get fresh prices and run the EOD close check
+            snapshot = await engine._market_data.get_snapshot(symbols)
+            await engine._check_eod_close(snapshot.prices)
+            await engine._db.commit()
+        except Exception:
+            logger.exception("scheduler.eod_safety_check_error")
+
+    scheduler.add_job(
+        eod_safety_check,
+        IntervalTrigger(minutes=1),
+        id="eod_safety_close",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="eod_safety_close", interval="1min")
+
+
 def schedule_weekly_model_retrain() -> None:
     """Retrain the XGBoost model weekly (Sunday 02:00 UTC).
 

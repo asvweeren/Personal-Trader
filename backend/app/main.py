@@ -21,6 +21,8 @@ from app.core.scheduler import (
     stop_scheduler,
     schedule_data_pipeline,
     schedule_trading_engine,
+    schedule_daily_reset,
+    schedule_eod_safety_close,
     schedule_daily_validation_report,
     schedule_heartbeat,
     schedule_snapshot_cleanup,
@@ -89,6 +91,8 @@ async def lifespan(app: FastAPI):
             await engine.start()
             logger.info("engine.started")
             schedule_trading_engine(engine)
+            schedule_daily_reset(engine)
+            schedule_eod_safety_close(engine)
         except Exception as e:
             logger.warning("startup.engine_error", error=str(e))
 

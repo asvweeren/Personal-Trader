@@ -51,16 +51,39 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440  # 24 hours
 
     # Trading Configuration
-    trading_symbols: str = "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,IWM,EFA,VGK"
+    trading_symbols: str = "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,TSLA,AMD,NFLX,CRM,AVGO,JPM,BAC,GS,JNJ,UNH,LLY,XOM,CVX,WMT,HD,KO,COST,IWM,EFA,VGK,DIA,XLF,XLE"
     initial_capital: float = 5000.0
-    max_daily_loss_pct: float = 5.0
+    max_daily_loss_pct: float = 7.0
     max_position_pct: float = 20.0
-    max_open_positions: int = 10
-    min_cash_reserve_pct: float = 30.0
+    max_open_positions: int = 20
+    min_cash_reserve_pct: float = 20.0
 
     # ATR-based stop-loss
     atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
     min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
+
+    # Take-profit
+    atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
+    min_take_profit_pct: float = 2.0         # Minimum 2% profit target as floor
+
+    # End-of-day close
+    eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
+
+    # Progressive trailing stop tiers: "gain%:trail%,..."
+    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
+
+    @property
+    def trailing_stop_tiers_parsed(self) -> list[tuple[float, float]]:
+        """Parse trailing_stop_tiers string into sorted list of (gain_pct, trail_pct) tuples."""
+        tiers = []
+        for pair in self.trailing_stop_tiers.split(","):
+            pair = pair.strip()
+            if ":" not in pair:
+                continue
+            gain_s, trail_s = pair.split(":", 1)
+            tiers.append((float(gain_s), float(trail_s)))
+        tiers.sort(key=lambda t: t[0], reverse=True)  # highest gain first for matching
+        return tiers
 
     @property
     def database_url(self) -> str:

@@ -187,6 +187,48 @@ def parse_symbol_for_ibkr(symbol: str) -> tuple[str, str, str | None]:
     return symbol, "USD", None
 
 
+def minutes_until_close(
+    exchange: Exchange,
+    now: datetime | None = None,
+) -> float | None:
+    """Return minutes until the exchange closes, or None if market is not open today."""
+    session = EXCHANGE_SESSIONS[exchange]
+    tz = ZoneInfo(session.timezone)
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    local_now = now.astimezone(tz)
+
+    # Not a trading day
+    if local_now.weekday() >= 5:
+        return None
+    holidays = EXCHANGE_HOLIDAYS.get(exchange, set())
+    if local_now.date() in holidays:
+        return None
+
+    close_dt = local_now.replace(
+        hour=session.close_time.hour,
+        minute=session.close_time.minute,
+        second=0,
+        microsecond=0,
+    )
+    diff = (close_dt - local_now).total_seconds() / 60.0
+
+    if diff <= 0:
+        return None  # Already past close
+    return diff
+
+
+def minutes_until_close_for_symbol(
+    symbol: str,
+    now: datetime | None = None,
+) -> float | None:
+    """Return minutes until the relevant exchange closes for a symbol."""
+    exchange = get_exchange_for_symbol(symbol)
+    return minutes_until_close(exchange, now)
+
+
 def is_any_market_open(
     symbols: list[str],
     now: datetime | None = None,
