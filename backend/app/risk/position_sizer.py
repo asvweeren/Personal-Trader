@@ -250,9 +250,9 @@ def calculate_trailing_stop(
     The stop follows price up but never moves down.
     """
     if atr and atr > 0:
-        # ATR-based: 2x ATR below current price
-        atr_stop = current_price - (2.0 * atr)
-        # But never above the minimum percentage stop
+        from app.config import settings
+        atr_stop = current_price - (settings.atr_stop_multiplier * atr)
+        # Floor: never less than the minimum percentage stop
         pct_stop = current_price * (1 - trail_pct / 100)
         return max(atr_stop, pct_stop)
 

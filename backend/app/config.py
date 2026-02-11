@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     max_open_positions: int = 10
     min_cash_reserve_pct: float = 30.0
 
+    # ATR-based stop-loss
+    atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
+    min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
+
     @property
     def database_url(self) -> str:
         return (

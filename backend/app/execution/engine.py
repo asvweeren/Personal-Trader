@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, OrderType
+from app.config import settings
 from app.core.event_bus import event_bus, SIGNAL_GENERATED, RISK_DAILY_STOP, SYSTEM_ERROR
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
@@ -336,6 +337,30 @@ class TradingEngine:
                 pnl=open_trade.realized_pnl,
             )
 
+    def _get_atr(self, symbol: str) -> float | None:
+        """Get ATR value for a symbol from cached market data features."""
+        try:
+            cache = getattr(self._market_data, "_cache", {})
+            entry = cache.get(symbol)
+            if entry and hasattr(entry, "features"):
+                atr = entry.features.get("atr_14")
+                if atr and atr > 0:
+                    return float(atr)
+        except Exception:
+            pass
+        return None
+
+    def _calculate_atr_stop(self, filled_price: float, symbol: str) -> float:
+        """Calculate stop price using ATR if available, else fallback to 3%."""
+        atr_val = self._get_atr(symbol)
+        if atr_val and atr_val > 0:
+            stop_price = round(filled_price - settings.atr_stop_multiplier * atr_val, 2)
+            min_stop = round(filled_price * (1 - settings.min_stop_loss_pct / 100), 2)
+            stop_price = max(stop_price, min_stop)
+        else:
+            stop_price = round(filled_price * 0.97, 2)
+        return stop_price
+
     async def _execute_buy(
         self, signal: TradingSignal, quantity: int, price: float, signal_id: int
     ) -> None:
@@ -373,9 +398,9 @@ class TradingEngine:
                 price=result.filled_price,
             )
 
-            # Place stop-loss
+            # Place stop-loss (ATR-based with min floor)
             if result.filled_price:
-                stop_price = round(result.filled_price * 0.97, 2)  # 3% stop-loss
+                stop_price = self._calculate_atr_stop(result.filled_price, signal.symbol)
                 trade.stop_loss = stop_price
                 await self._order_manager.submit_order(
                     trade_id=trade.id,
@@ -433,9 +458,9 @@ class TradingEngine:
                     symbol=symbol,
                     price=filled_price,
                 )
-                # Place stop-loss for the newly filled buy
+                # Place stop-loss for the newly filled buy (ATR-based)
                 if filled_price:
-                    stop_price = round(filled_price * 0.97, 2)
+                    stop_price = self._calculate_atr_stop(filled_price, symbol)
                     trade.stop_loss = stop_price
                     await self._order_manager.submit_order(
                         trade_id=trade.id,
@@ -467,11 +492,12 @@ class TradingEngine:
             if current_price is None:
                 continue
 
+            atr_val = self._get_atr(trade.symbol)
             new_stop = calculate_trailing_stop(
                 entry_price=trade.entry_price,
                 current_price=current_price,
-                atr=None,
-                trail_pct=0.03,
+                atr=atr_val,
+                trail_pct=settings.min_stop_loss_pct,
             )
 
             if new_stop > trade.stop_loss:

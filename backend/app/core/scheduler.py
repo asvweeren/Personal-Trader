@@ -122,11 +122,13 @@ def schedule_daily_validation_report() -> None:
         id="daily_validation_report",
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=3600,
     )
     logger.info(
         "scheduler.job_added",
         job="daily_validation_report",
         trigger="cron(21:00)",
+        misfire_grace_time=3600,
     )
 
 
@@ -197,3 +199,134 @@ def schedule_snapshot_cleanup() -> None:
         max_instances=1,
     )
     logger.info("scheduler.job_added", job="snapshot_cleanup", trigger="cron(02:00)")
+
+
+def schedule_weekly_model_retrain() -> None:
+    """Retrain the XGBoost model weekly (Sunday 02:00 UTC).
+
+    Downloads 90 days of data via yfinance, trains a candidate model,
+    and hot-swaps it if accuracy is >= 95% of the current model.
+    """
+
+    async def retrain_model():
+        import json
+        from pathlib import Path
+
+        import pandas as pd
+
+        from app.config import settings
+        from app.monitoring.alerts import send_alert
+
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.error("scheduler.retrain_yfinance_missing")
+            return
+
+        from app.strategy.ml_strategy import MLStrategy, MODEL_DIR
+
+        logger.info("scheduler.retrain_started")
+
+        try:
+            # 1. Download 90 days of data for all symbols
+            symbols = settings.symbols_list
+            frames = []
+            for sym in symbols:
+                try:
+                    df = yf.download(sym, period="90d", interval="1d", progress=False)
+                    if df.empty:
+                        continue
+                    df = df.copy()
+                    df["symbol"] = sym
+                    frames.append(df)
+                except Exception:
+                    logger.warning("scheduler.retrain_download_error", symbol=sym)
+
+            if not frames:
+                logger.error("scheduler.retrain_no_data")
+                await send_alert(
+                    "Model Retrain Failed",
+                    "No historical data could be downloaded.",
+                )
+                return
+
+            historical_data = pd.concat(frames)
+
+            # 2. Train candidate
+            strategy = MLStrategy()
+            result = await strategy.train_candidate(historical_data)
+
+            if not result.success:
+                logger.error("scheduler.retrain_failed", message=result.message)
+                await send_alert(
+                    "Model Retrain Failed",
+                    f"Training error: {result.message}",
+                )
+                return
+
+            candidate_accuracy = result.metrics.get("test_accuracy", 0.0)
+
+            # 3. Compare with current model
+            meta_path = MODEL_DIR / "xgboost_model.json"
+            current_accuracy = 0.0
+            if meta_path.exists():
+                try:
+                    with open(meta_path) as f:
+                        current_meta = json.load(f)
+                    current_accuracy = current_meta.get("test_accuracy", 0.0)
+                except Exception:
+                    pass
+
+            threshold = current_accuracy * 0.95  # Must be >= 95% of current
+
+            # 4. Swap if candidate meets threshold
+            if candidate_accuracy >= threshold:
+                swapped = strategy.hot_swap_model()
+                if swapped:
+                    msg = (
+                        f"Model retrained and deployed.\n"
+                        f"Old accuracy: {current_accuracy:.4f}\n"
+                        f"New accuracy: {candidate_accuracy:.4f}"
+                    )
+                    logger.info("scheduler.retrain_swapped", old=current_accuracy, new=candidate_accuracy)
+                    await send_alert("Model Retrain Success", msg)
+                else:
+                    await send_alert(
+                        "Model Retrain Warning",
+                        "Candidate trained but hot-swap failed. Rollback applied.",
+                    )
+            else:
+                msg = (
+                    f"Candidate rejected (below threshold).\n"
+                    f"Current: {current_accuracy:.4f}\n"
+                    f"Candidate: {candidate_accuracy:.4f}\n"
+                    f"Threshold (95%): {threshold:.4f}"
+                )
+                logger.info("scheduler.retrain_rejected", current=current_accuracy, candidate=candidate_accuracy)
+                await send_alert("Model Retrain Skipped", msg)
+
+        except Exception:
+            logger.exception("scheduler.retrain_error")
+            try:
+                await send_alert(
+                    "Model Retrain Error",
+                    "Unexpected error during weekly model retrain. Check logs.",
+                    critical=True,
+                )
+            except Exception:
+                pass
+
+    scheduler.add_job(
+        retrain_model,
+        CronTrigger(day_of_week="sun", hour=2, minute=0),
+        id="weekly_model_retrain",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=7200,
+    )
+    logger.info(
+        "scheduler.job_added",
+        job="weekly_model_retrain",
+        trigger="cron(sun 02:00)",
+        misfire_grace_time=7200,
+    )

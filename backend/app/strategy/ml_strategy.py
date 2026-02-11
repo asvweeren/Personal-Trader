@@ -2,6 +2,7 @@
 
 import json
 import pickle
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -313,6 +314,83 @@ class MLStrategy(Strategy):
         except Exception as e:
             logger.exception("ml_strategy.train_error")
             return TrainResult(success=False, metrics={}, message=str(e))
+
+    async def train_candidate(self, historical_data: pd.DataFrame) -> TrainResult:
+        """Train a candidate model without affecting the live model.
+
+        Saves to xgboost_model_candidate.pkl so the live model stays untouched.
+        """
+        candidate_path = self._model_path.parent / "xgboost_model_candidate.pkl"
+
+        # Temporarily swap model path, train, then restore
+        original_path = self._model_path
+        original_model = self._model
+        original_features = self._feature_columns
+        original_metadata = self._model_metadata
+
+        try:
+            self._model_path = candidate_path
+            result = await self.train(historical_data)
+        finally:
+            # Restore live model state regardless of outcome
+            self._model_path = original_path
+            self._model = original_model
+            self._feature_columns = original_features
+            self._model_metadata = original_metadata
+
+        return result
+
+    def hot_swap_model(self, candidate_path: Path | None = None) -> bool:
+        """Swap the live model with a trained candidate.
+
+        1. Backup current model to xgboost_model_backup.pkl
+        2. Move candidate to the live model path
+        3. Reload
+        4. On failure: rollback from backup
+        """
+        if candidate_path is None:
+            candidate_path = self._model_path.parent / "xgboost_model_candidate.pkl"
+
+        if not candidate_path.exists():
+            logger.error("ml_strategy.hot_swap_no_candidate", path=str(candidate_path))
+            return False
+
+        backup_path = self._model_path.parent / "xgboost_model_backup.pkl"
+
+        try:
+            # Backup current model
+            if self._model_path.exists():
+                shutil.copy2(self._model_path, backup_path)
+                logger.info("ml_strategy.model_backed_up", path=str(backup_path))
+
+            # Move candidate to live
+            shutil.move(str(candidate_path), str(self._model_path))
+
+            # Also move candidate metadata JSON if it exists
+            candidate_meta = candidate_path.with_suffix(".json")
+            if candidate_meta.exists():
+                shutil.move(str(candidate_meta), str(self._model_path.with_suffix(".json")))
+
+            # Reload
+            self._load_model()
+
+            if self._model is None:
+                raise RuntimeError("Model failed to load after swap")
+
+            logger.info("ml_strategy.hot_swap_success")
+            return True
+
+        except Exception:
+            logger.exception("ml_strategy.hot_swap_error")
+            # Rollback
+            if backup_path.exists():
+                try:
+                    shutil.copy2(backup_path, self._model_path)
+                    self._load_model()
+                    logger.info("ml_strategy.rollback_success")
+                except Exception:
+                    logger.exception("ml_strategy.rollback_error")
+            return False
 
     def get_confidence(self) -> float:
         if self._model_metadata:
