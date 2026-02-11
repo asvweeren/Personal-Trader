@@ -66,7 +66,8 @@ class OrderManager:
             status=self._map_status(result.status),
         )
 
-        if result.status == "FILLED":
+        mapped = self._map_status(result.status)
+        if mapped == OrderStatus.FILLED:
             db_order.filled_at = datetime.now(timezone.utc)
 
         self._db.add(db_order)
@@ -82,11 +83,11 @@ class OrderManager:
         }
         await event_bus.publish(ORDER_PLACED, event_data)
 
-        if result.status == "FILLED":
+        if mapped == OrderStatus.FILLED:
             event_data["filled_price"] = result.filled_price
             event_data["filled_quantity"] = result.filled_quantity
             await event_bus.publish(ORDER_FILLED, event_data)
-        elif result.status in ("SUBMITTED", "PARTIALLY_FILLED"):
+        elif mapped in _ACTIVE_STATUSES:
             self._pending_orders[result.order_id] = db_order
 
         logger.info(
@@ -101,8 +102,12 @@ class OrderManager:
 
         return result
 
-    async def poll_pending_orders(self) -> list[OrderResult]:
-        """Check status of all pending orders and update accordingly."""
+    async def poll_pending_orders(self) -> list[dict]:
+        """Check status of all pending orders and update accordingly.
+
+        Returns list of fill info dicts for orders that were filled, each containing:
+        trade_id, order_id, symbol, side, filled_price, filled_quantity.
+        """
         if not self._pending_orders:
             return []
 
@@ -119,12 +124,19 @@ class OrderManager:
 
                 db_order.status = new_status
 
-                if result.status == "FILLED":
+                if new_status == OrderStatus.FILLED:
                     db_order.filled_price = result.filled_price
                     db_order.filled_quantity = result.filled_quantity
                     db_order.filled_at = datetime.now(timezone.utc)
                     to_remove.append(broker_id)
-                    filled.append(result)
+                    filled.append({
+                        "trade_id": db_order.trade_id,
+                        "order_id": broker_id,
+                        "symbol": db_order.symbol,
+                        "side": db_order.side,
+                        "filled_price": result.filled_price,
+                        "filled_quantity": result.filled_quantity,
+                    })
                     await event_bus.publish(ORDER_FILLED, {
                         "order_id": broker_id,
                         "trade_id": db_order.trade_id,
@@ -140,7 +152,7 @@ class OrderManager:
                         price=result.filled_price,
                     )
 
-                elif result.status == "PARTIALLY_FILLED":
+                elif new_status == OrderStatus.PARTIALLY_FILLED:
                     db_order.filled_quantity = result.filled_quantity
                     db_order.filled_price = result.filled_price
                     logger.info(
@@ -151,7 +163,7 @@ class OrderManager:
                         total=db_order.quantity,
                     )
 
-                elif result.status in ("CANCELLED", "REJECTED", "ERROR"):
+                elif new_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
                     to_remove.append(broker_id)
                     await event_bus.publish(ORDER_CANCELLED, {
                         "order_id": broker_id,
@@ -204,10 +216,19 @@ class OrderManager:
 
     def _map_status(self, broker_status: str) -> OrderStatus:
         status_map = {
+            # Standard uppercase statuses
             "FILLED": OrderStatus.FILLED,
             "SUBMITTED": OrderStatus.SUBMITTED,
             "CANCELLED": OrderStatus.CANCELLED,
             "REJECTED": OrderStatus.REJECTED,
             "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
+            # IBKR ib_insync statuses (mixed case)
+            "PendingSubmit": OrderStatus.SUBMITTED,
+            "PreSubmitted": OrderStatus.SUBMITTED,
+            "Submitted": OrderStatus.SUBMITTED,
+            "Filled": OrderStatus.FILLED,
+            "Cancelled": OrderStatus.CANCELLED,
+            "Inactive": OrderStatus.CANCELLED,
+            "ApiCancelled": OrderStatus.CANCELLED,
         }
         return status_map.get(broker_status, OrderStatus.ERROR)

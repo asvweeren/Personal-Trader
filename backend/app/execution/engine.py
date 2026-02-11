@@ -13,6 +13,7 @@ from app.core.event_bus import event_bus, SIGNAL_GENERATED, RISK_DAILY_STOP, SYS
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
 from app.execution.portfolio_tracker import PortfolioTracker
+from app.models.order import OrderStatus
 from app.models.signal import Signal as DBSignal, SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
 from app.monitoring.alerts import send_alert
@@ -146,8 +147,8 @@ class TradingEngine:
 
             # 1. Poll pending orders for status updates
             filled_orders = await self._order_manager.poll_pending_orders()
-            if filled_orders:
-                logger.info("engine.orders_filled", count=len(filled_orders))
+            for fill in filled_orders:
+                await self._handle_order_fill(fill)
 
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
@@ -313,7 +314,8 @@ class TradingEngine:
             order_type=OrderType.MARKET,
         )
 
-        if result.status == "FILLED" and result.filled_price:
+        mapped_status = self._order_manager._map_status(result.status)
+        if mapped_status == OrderStatus.FILLED and result.filled_price:
             await self._portfolio_tracker.record_trade_close(
                 open_trade, result.filled_price
             )
@@ -350,7 +352,8 @@ class TradingEngine:
             order_type=OrderType.MARKET,
         )
 
-        if result.status == "FILLED":
+        mapped_status = self._order_manager._map_status(result.status)
+        if mapped_status == OrderStatus.FILLED:
             trade.status = TradeStatus.OPEN
             trade.entry_price = result.filled_price
             self._open_trades[signal.symbol] = trade
@@ -373,8 +376,75 @@ class TradingEngine:
                     order_type=OrderType.STOP,
                     stop_price=stop_price,
                 )
+        elif mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
+            # Order accepted but not yet filled — track for fill polling
+            trade.status = TradeStatus.PENDING
+            self._open_trades[signal.symbol] = trade
+            logger.info(
+                "engine.trade_pending_fill",
+                symbol=signal.symbol,
+                quantity=quantity,
+                broker_status=result.status,
+            )
         else:
             trade.status = TradeStatus.CANCELLED
+
+        await self._db.flush()
+
+    async def _handle_order_fill(self, fill: dict) -> None:
+        """Update trade record when a pending order is filled via polling."""
+        trade_id = fill["trade_id"]
+        symbol = fill["symbol"]
+        side = fill["side"]
+        filled_price = fill.get("filled_price")
+
+        trade = self._open_trades.get(symbol)
+        if not trade or trade.id != trade_id:
+            # Try loading from DB
+            try:
+                result = await self._db.execute(
+                    select(Trade).where(Trade.id == trade_id)
+                )
+                trade = result.scalar_one_or_none()
+            except Exception:
+                logger.exception("engine.fill_load_error", trade_id=trade_id)
+                return
+
+        if not trade:
+            logger.warning("engine.fill_no_trade", trade_id=trade_id, symbol=symbol)
+            return
+
+        if side == "BUY" and trade.status in (TradeStatus.PENDING, TradeStatus.OPEN):
+            if trade.status == TradeStatus.PENDING:
+                trade.status = TradeStatus.OPEN
+                trade.entry_price = filled_price
+                self._open_trades[symbol] = trade
+                logger.info(
+                    "engine.trade_opened_on_fill",
+                    symbol=symbol,
+                    price=filled_price,
+                )
+                # Place stop-loss for the newly filled buy
+                if filled_price:
+                    stop_price = round(filled_price * 0.97, 2)
+                    trade.stop_loss = stop_price
+                    await self._order_manager.submit_order(
+                        trade_id=trade.id,
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=trade.quantity,
+                        order_type=OrderType.STOP,
+                        stop_price=stop_price,
+                    )
+        elif side == "SELL":
+            if filled_price:
+                await self._portfolio_tracker.record_trade_close(trade, filled_price)
+            self._open_trades.pop(symbol, None)
+            logger.info(
+                "engine.position_closed_on_fill",
+                symbol=symbol,
+                exit_price=filled_price,
+            )
 
         await self._db.flush()
 
@@ -408,7 +478,7 @@ class TradingEngine:
         """Load open trades from database on startup for recovery."""
         try:
             result = await self._db.execute(
-                select(Trade).where(Trade.status == TradeStatus.OPEN)
+                select(Trade).where(Trade.status.in_([TradeStatus.OPEN, TradeStatus.PENDING]))
             )
             trades = result.scalars().all()
             for trade in trades:

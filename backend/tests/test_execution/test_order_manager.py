@@ -100,7 +100,9 @@ async def test_poll_filled_order():
 
     filled = await om.poll_pending_orders()
     assert len(filled) == 1
-    assert filled[0].filled_price == 151.0
+    assert filled[0]["filled_price"] == 151.0
+    assert filled[0]["trade_id"] == 1
+    assert filled[0]["symbol"] == "AAPL"
     assert om.pending_count == 0
 
 
@@ -196,3 +198,36 @@ def test_status_mapping():
     assert om._map_status("FILLED") == OrderStatus.FILLED
     assert om._map_status("SUBMITTED") == OrderStatus.SUBMITTED
     assert om._map_status("UNKNOWN") == OrderStatus.ERROR
+
+
+def test_ibkr_status_mapping():
+    """IBKR returns mixed-case statuses like PendingSubmit, Filled, etc."""
+    broker = make_mock_broker()
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    assert om._map_status("PendingSubmit") == OrderStatus.SUBMITTED
+    assert om._map_status("PreSubmitted") == OrderStatus.SUBMITTED
+    assert om._map_status("Submitted") == OrderStatus.SUBMITTED
+    assert om._map_status("Filled") == OrderStatus.FILLED
+    assert om._map_status("Cancelled") == OrderStatus.CANCELLED
+    assert om._map_status("Inactive") == OrderStatus.CANCELLED
+    assert om._map_status("ApiCancelled") == OrderStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_submit_ibkr_pending_submit_goes_pending():
+    """IBKR returns PendingSubmit for newly placed orders — should track as pending."""
+    broker = make_mock_broker()
+    broker.place_order.return_value = OrderResult(
+        order_id="ord-10", status="PendingSubmit"
+    )
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    result = await om.submit_order(
+        trade_id=1, symbol="ASML", side="BUY", quantity=50,
+    )
+
+    assert result.status == "PendingSubmit"
+    assert om.pending_count == 1  # Should be tracked for polling
