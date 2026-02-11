@@ -31,6 +31,9 @@ class BacktestConfig:
     spread_pct: float = 0.02
     max_position_pct: float = 20.0
     stop_loss_pct: float = 3.0
+    take_profit_pct: float = 2.0
+    enable_eod_close: bool = True
+    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
     min_bars: int = 50
 
 
@@ -67,14 +70,76 @@ class BacktestEngine:
 
     For each bar in the historical data:
     1. Check stop-losses on open positions
-    2. Create a MarketSnapshot from historical data up to current bar
-    3. Call strategy.generate_signals()
-    4. Execute signals via MarketSimulator
-    5. Record equity
+    2. Check take-profits on open positions
+    3. Check EOD close (last bar of trading day)
+    4. Update progressive trailing stops
+    5. Create a MarketSnapshot from historical data up to current bar
+    6. Call strategy.generate_signals()
+    7. Execute signals via MarketSimulator
+    8. Record equity
     """
 
     def __init__(self):
         self._simulator: MarketSimulator | None = None
+
+    @staticmethod
+    def _parse_trailing_tiers(tiers_str: str) -> list[tuple[float, float]]:
+        """Parse trailing stop tiers string into sorted list."""
+        tiers = []
+        for pair in tiers_str.split(","):
+            pair = pair.strip()
+            if ":" not in pair:
+                continue
+            gain_s, trail_s = pair.split(":", 1)
+            tiers.append((float(gain_s), float(trail_s)))
+        tiers.sort(key=lambda t: t[0], reverse=True)
+        return tiers
+
+    @staticmethod
+    def _is_last_bar_of_day(data: pd.DataFrame, current_idx: int) -> bool:
+        """Check if the current bar is the last bar of its trading day."""
+        if "timestamp" not in data.columns:
+            return False
+        try:
+            current_ts = pd.Timestamp(data.iloc[current_idx]["timestamp"])
+            if current_idx + 1 >= len(data):
+                return True  # Last bar in dataset
+            next_ts = pd.Timestamp(data.iloc[current_idx + 1]["timestamp"])
+            return current_ts.date() != next_ts.date()
+        except Exception:
+            return False
+
+    def _close_position(
+        self,
+        symbol: str,
+        pos: SimulatedPosition,
+        fill_price: float,
+        bar_time: str,
+        bar_idx: int,
+        exit_reason: str,
+        entry_bar_idx: dict[str, int],
+        bar_volume: int,
+    ) -> tuple[BacktestTrade, float, float] | None:
+        """Close a position and return (trade, cash_received, commission) or None."""
+        fill = self._simulator.simulate_fill(fill_price, "SELL", pos.quantity, bar_volume)
+        if fill.status != FillStatus.FILLED:
+            return None
+        pnl = (fill.fill_price - pos.avg_cost) * pos.quantity - fill.commission
+        trade = BacktestTrade(
+            symbol=symbol,
+            side="SELL",
+            quantity=pos.quantity,
+            entry_price=pos.avg_cost,
+            exit_price=fill.fill_price,
+            pnl=round(pnl, 2),
+            commission=fill.commission,
+            entry_time=str(entry_bar_idx.get(symbol, "")),
+            exit_time=bar_time,
+            exit_reason=exit_reason,
+            bars_held=bar_idx - entry_bar_idx.get(symbol, bar_idx),
+        )
+        cash_received = fill.fill_price * pos.quantity - fill.commission
+        return trade, cash_received, fill.commission
 
     async def run(self, config: BacktestConfig, data: pd.DataFrame) -> BacktestResult:
         """Run a full backtest on historical OHLCV data."""
@@ -88,6 +153,8 @@ class BacktestEngine:
             slippage_pct=config.slippage_pct,
             spread_pct=config.spread_pct,
         )
+
+        trailing_tiers = self._parse_trailing_tiers(config.trailing_stop_tiers)
 
         cash = config.initial_capital
         positions: dict[str, SimulatedPosition] = {}
@@ -104,6 +171,8 @@ class BacktestEngine:
             strategy=config.strategy.name,
             symbol=config.symbol,
             bars=len(data),
+            take_profit_pct=config.take_profit_pct,
+            eod_close=config.enable_eod_close,
         )
 
         # We need a lookback window for the strategy to work on
@@ -149,7 +218,70 @@ class BacktestEngine:
                             del positions[symbol]
                             entry_bar_idx.pop(symbol, None)
 
-            # 2. Create market snapshot from historical window
+            # 2. Check take-profits
+            for symbol in list(positions.keys()):
+                pos = positions[symbol]
+                if pos.take_profit is not None:
+                    if self._simulator.simulate_take_profit_check(
+                        pos.take_profit, bar_high
+                    ):
+                        fill = self._simulator.simulate_take_profit_fill(
+                            pos.take_profit, bar_open, bar_high, pos.quantity
+                        )
+                        if fill.status == FillStatus.FILLED:
+                            pnl = (fill.fill_price - pos.avg_cost) * pos.quantity - fill.commission
+                            trades.append(BacktestTrade(
+                                symbol=symbol,
+                                side="SELL",
+                                quantity=pos.quantity,
+                                entry_price=pos.avg_cost,
+                                exit_price=fill.fill_price,
+                                pnl=round(pnl, 2),
+                                commission=fill.commission,
+                                entry_time=str(entry_bar_idx.get(symbol, "")),
+                                exit_time=bar_time,
+                                exit_reason="take_profit",
+                                bars_held=i - entry_bar_idx.get(symbol, i),
+                            ))
+                            trade_pnls.append(pnl)
+                            cash += fill.fill_price * pos.quantity - fill.commission
+                            total_commission += fill.commission
+                            del positions[symbol]
+                            entry_bar_idx.pop(symbol, None)
+
+            # 3. EOD close — force-sell all positions on last bar of trading day
+            if config.enable_eod_close and positions:
+                if self._is_last_bar_of_day(data, i):
+                    for symbol in list(positions.keys()):
+                        pos = positions[symbol]
+                        result = self._close_position(
+                            symbol, pos, bar_close, bar_time, i,
+                            "eod_close", entry_bar_idx, bar_volume,
+                        )
+                        if result:
+                            trade, cash_recv, comm = result
+                            trades.append(trade)
+                            trade_pnls.append(trade.pnl)
+                            cash += cash_recv
+                            total_commission += comm
+                            del positions[symbol]
+                            entry_bar_idx.pop(symbol, None)
+
+            # 4. Update progressive trailing stops on remaining positions
+            for symbol in list(positions.keys()):
+                pos = positions[symbol]
+                if pos.avg_cost is None or pos.stop_loss is None:
+                    continue
+                gain_pct = ((bar_close - pos.avg_cost) / pos.avg_cost) * 100
+                # Find applicable tier (highest threshold exceeded)
+                for threshold, trail in trailing_tiers:
+                    if gain_pct >= threshold:
+                        new_stop = round(bar_close * (1 - trail / 100), 2)
+                        if new_stop > pos.stop_loss:
+                            pos.stop_loss = new_stop
+                        break
+
+            # 5. Create market snapshot from historical window
             window = data.iloc[max(0, i - lookback):i + 1].copy()
             snapshot = MarketSnapshot(
                 timestamp=datetime.now(timezone.utc),
@@ -158,19 +290,23 @@ class BacktestEngine:
                 features={},
             )
 
-            # 3. Generate signals
+            # 6. Generate signals
             try:
                 signals = await config.strategy.generate_signals(snapshot)
             except Exception:
                 logger.debug("backtest.strategy_error", bar=i)
                 signals = []
 
-            # 4. Execute signals
+            # 7. Execute signals
             for signal in signals:
                 if signal.symbol != config.symbol:
                     continue
 
                 if signal.action == SignalAction.BUY and config.symbol not in positions:
+                    # Skip buying on the last bar of the day (would be closed immediately)
+                    if config.enable_eod_close and self._is_last_bar_of_day(data, i):
+                        continue
+
                     # Calculate position size
                     max_value = cash * (config.max_position_pct / 100)
                     quantity = int(max_value / bar_close)
@@ -203,11 +339,15 @@ class BacktestEngine:
                     stop_loss = round(
                         fill.fill_price * (1 - config.stop_loss_pct / 100), 2
                     )
+                    take_profit = round(
+                        fill.fill_price * (1 + config.take_profit_pct / 100), 2
+                    )
                     positions[config.symbol] = SimulatedPosition(
                         symbol=config.symbol,
                         quantity=fill.filled_quantity,
                         avg_cost=fill.fill_price,
                         stop_loss=stop_loss,
+                        take_profit=take_profit,
                     )
                     entry_bar_idx[config.symbol] = i
 
@@ -239,7 +379,7 @@ class BacktestEngine:
                     del positions[config.symbol]
                     entry_bar_idx.pop(config.symbol, None)
 
-            # 5. Record equity
+            # 8. Record equity
             positions_value = sum(
                 float(data.iloc[i]["close"]) * pos.quantity
                 for pos in positions.values()
@@ -320,6 +460,9 @@ class BacktestEngine:
                 "slippage_pct": config.slippage_pct,
                 "max_position_pct": config.max_position_pct,
                 "stop_loss_pct": config.stop_loss_pct,
+                "take_profit_pct": config.take_profit_pct,
+                "enable_eod_close": config.enable_eod_close,
+                "trailing_stop_tiers": config.trailing_stop_tiers,
                 "start_date": config.start_date,
                 "end_date": config.end_date,
             },

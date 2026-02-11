@@ -38,7 +38,10 @@ class BacktestRequest(BaseModel):
     commission_pct: float = 0.1
     slippage_pct: float = 0.05
     max_position_pct: float = 20.0
-    stop_loss_pct: float = 3.0
+    stop_loss_pct: float = 1.5
+    take_profit_pct: float = 2.0
+    enable_eod_close: bool = True
+    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
     params: dict | None = None
 
 
@@ -135,6 +138,9 @@ async def _run_backtest_task(
             slippage_pct=request.slippage_pct,
             max_position_pct=request.max_position_pct,
             stop_loss_pct=request.stop_loss_pct,
+            take_profit_pct=request.take_profit_pct,
+            enable_eod_close=request.enable_eod_close,
+            trailing_stop_tiers=request.trailing_stop_tiers,
         )
 
         engine = BacktestEngine()
@@ -198,6 +204,9 @@ async def run_backtest(
             "slippage_pct": request.slippage_pct,
             "max_position_pct": request.max_position_pct,
             "stop_loss_pct": request.stop_loss_pct,
+            "take_profit_pct": request.take_profit_pct,
+            "enable_eod_close": request.enable_eod_close,
+            "trailing_stop_tiers": request.trailing_stop_tiers,
             **(request.params or {}),
         },
         metrics={"status": "running"},

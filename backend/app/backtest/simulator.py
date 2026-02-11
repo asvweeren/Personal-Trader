@@ -30,6 +30,7 @@ class SimulatedPosition:
     quantity: int
     avg_cost: float
     stop_loss: float | None = None
+    take_profit: float | None = None
 
     @property
     def is_open(self) -> bool:
@@ -153,5 +154,26 @@ class MarketSimulator:
         """Simulate a stop-loss fill. Price may gap through the stop level."""
         # If bar opened below stop (gap down), fill at open price (worse)
         fill_ref = min(stop_price, bar_open) if bar_open < stop_price else stop_price
+
+        return self.simulate_fill(fill_ref, "SELL", quantity)
+
+    def simulate_take_profit_check(
+        self,
+        take_profit_price: float,
+        bar_high: float,
+    ) -> bool:
+        """Check if take-profit would have been triggered during a bar."""
+        return bar_high >= take_profit_price
+
+    def simulate_take_profit_fill(
+        self,
+        take_profit_price: float,
+        bar_open: float,
+        bar_high: float,
+        quantity: int,
+    ) -> FillResult:
+        """Simulate a take-profit fill. Price may gap through the target."""
+        # If bar opened above target (gap up), fill at open price (better)
+        fill_ref = max(take_profit_price, bar_open) if bar_open > take_profit_price else take_profit_price
 
         return self.simulate_fill(fill_ref, "SELL", quantity)
