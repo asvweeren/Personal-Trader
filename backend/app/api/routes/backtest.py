@@ -88,13 +88,17 @@ async def _run_backtest_task(
                     ),
                 )
                 if ticker is not None and not ticker.empty:
-                    # Flatten MultiIndex columns if present
-                    if hasattr(ticker.columns, 'levels'):
-                        ticker.columns = ticker.columns.get_level_values(0)
+                    # Flatten MultiIndex columns (yfinance >= 0.2.36 always returns MultiIndex)
+                    import pandas as _pd
+                    if isinstance(ticker.columns, _pd.MultiIndex):
+                        ticker.columns = [
+                            str(c[0]) if isinstance(c, tuple) else str(c)
+                            for c in ticker.columns
+                        ]
                     ticker = ticker.reset_index()
                     rename_map = {}
                     for col in ticker.columns:
-                        lc = str(col).lower()
+                        lc = str(col).strip().lower()
                         if lc in ("datetime", "date", "index"):
                             rename_map[col] = "timestamp"
                         elif lc == "open":
@@ -108,6 +112,8 @@ async def _run_backtest_task(
                         elif lc == "volume":
                             rename_map[col] = "volume"
                     data = ticker.rename(columns=rename_map)
+                    # Drop duplicate columns (yfinance sometimes returns both Date and Datetime)
+                    data = data.loc[:, ~data.columns.duplicated()]
                     logger.info("backtest.yfinance_data", symbol=request.symbol, rows=len(data))
             except Exception as e:
                 logger.exception("backtest.yfinance_error", symbol=request.symbol)
