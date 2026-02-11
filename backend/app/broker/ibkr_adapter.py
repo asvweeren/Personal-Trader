@@ -22,6 +22,15 @@ from app.risk.market_hours import parse_symbol_for_ibkr
 
 logger = structlog.get_logger()
 
+# Reverse mapping: IBKR primaryExchange → symbol suffix
+_IBKR_EXCHANGE_TO_SUFFIX = {
+    "AEB": ".AS",
+    "SBF": ".PA",
+    "BVME": ".BR",
+    "IBIS": ".DE",
+    "LSE": ".L",
+}
+
 
 class IBKRAdapter(BrokerAdapter):
     """Interactive Brokers adapter using ib_insync.
@@ -177,18 +186,20 @@ class IBKRAdapter(BrokerAdapter):
         return await self._run(_do_get())
 
     async def get_positions(self) -> list[Position]:
-        positions = await self._sync(self._ib.positions)
+        portfolio_items = await self._sync(self._ib.portfolio)
         result = []
-        for pos in positions:
-            if pos.position != 0:
+        for item in portfolio_items:
+            if item.position != 0:
+                symbol = self._reverse_map_symbol(item.contract)
                 result.append(
                     Position(
-                        symbol=pos.contract.symbol,
-                        quantity=int(pos.position),
-                        avg_cost=pos.avgCost,
-                        market_price=pos.avgCost,  # Updated via market data
-                        market_value=pos.position * pos.avgCost,
-                        unrealized_pnl=0.0,
+                        symbol=symbol,
+                        quantity=int(item.position),
+                        avg_cost=item.averageCost,
+                        market_price=item.marketPrice,
+                        market_value=item.marketValue,
+                        unrealized_pnl=item.unrealizedPNL,
+                        realized_pnl=item.realizedPNL,
                     )
                 )
         return result
@@ -308,6 +319,12 @@ class IBKRAdapter(BrokerAdapter):
         if primary_exchange:
             contract.primaryExchange = primary_exchange
         return contract
+
+    def _reverse_map_symbol(self, contract) -> str:
+        """Map IBKR contract back to suffixed symbol (e.g. ASML on AEB → ASML.AS)."""
+        exchange = getattr(contract, 'primaryExchange', '') or getattr(contract, 'exchange', '')
+        suffix = _IBKR_EXCHANGE_TO_SUFFIX.get(exchange, "")
+        return f"{contract.symbol}{suffix}"
 
     def _make_order(self, order: OrderRequest):
         """Convert OrderRequest to an ib_insync order object."""

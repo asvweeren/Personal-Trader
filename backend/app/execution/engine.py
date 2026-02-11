@@ -207,6 +207,15 @@ class TradingEngine:
                     await self._handle_sell_signal(signal, price, db_signal.id)
                     continue
 
+                # Skip duplicate BUY if we already have an open/pending trade for this symbol
+                if signal.symbol in self._open_trades:
+                    logger.info(
+                        "engine.signal_skipped_existing",
+                        symbol=signal.symbol,
+                        reason="Already have open/pending trade",
+                    )
+                    continue
+
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(signal, portfolio, price)
 
