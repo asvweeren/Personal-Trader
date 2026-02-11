@@ -217,10 +217,39 @@ class IBKRAdapter(BrokerAdapter):
         )
 
     async def subscribe_market_data(self, symbols: list[str], callback: callable) -> None:
+        async def _do_subscribe():
+            for symbol in symbols:
+                contract = self._make_contract(symbol)
+                self._ib.reqMktData(contract)
+                self._market_data_callbacks[symbol] = callback
+
+            # Wire up the pending-tickers event so prices flow to the callback
+            def _on_pending_tickers(tickers):
+                for ticker in tickers:
+                    sym = ticker.contract.symbol
+                    # Reverse-map bare symbol back to suffixed symbol
+                    matched_symbol = None
+                    for s in self._market_data_callbacks:
+                        if s == sym or s.split(".")[0].upper() == sym.upper():
+                            matched_symbol = s
+                            break
+                    if matched_symbol is None:
+                        continue
+                    price = ticker.marketPrice()
+                    if price and price > 0 and price == price:  # filters NaN
+                        cb = self._market_data_callbacks.get(matched_symbol)
+                        if cb:
+                            import asyncio
+                            asyncio.ensure_future(cb({
+                                "symbol": matched_symbol,
+                                "price": float(price),
+                                "volume": int(ticker.volume) if ticker.volume and ticker.volume == ticker.volume else 0,
+                            }))
+
+            self._ib.pendingTickersEvent += _on_pending_tickers
+
+        await self._run(_do_subscribe())
         for symbol in symbols:
-            contract = self._make_contract(symbol)
-            await self._sync(self._ib.reqMktData, contract)
-            self._market_data_callbacks[symbol] = callback
             logger.info("ibkr.subscribed_market_data", symbol=symbol)
 
     async def unsubscribe_market_data(self, symbols: list[str]) -> None:

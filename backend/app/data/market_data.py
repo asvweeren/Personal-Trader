@@ -258,6 +258,9 @@ class MarketDataService:
                     else:
                         df = recent_df
                 ohlcv[symbol] = df
+                # Fill missing streaming price from last OHLCV close
+                if (not prices.get(symbol)) and not df.empty:
+                    prices[symbol] = float(df["close"].iloc[-1])
             except Exception:
                 logger.warning("market_data.fetch_error", symbol=symbol)
 
