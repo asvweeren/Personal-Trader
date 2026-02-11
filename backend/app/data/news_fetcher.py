@@ -12,6 +12,18 @@ import structlog
 
 from app.config import settings
 
+# Exchange suffixes used in symbol notation (e.g. "ASML.AS" → "ASML")
+_EXCHANGE_SUFFIXES = (".AS", ".PA", ".BR", ".DE", ".L")
+
+
+def _bare_symbol(symbol: str) -> str:
+    """Strip exchange suffix from a symbol for use in search queries."""
+    upper = symbol.upper()
+    for suffix in _EXCHANGE_SUFFIXES:
+        if upper.endswith(suffix):
+            return symbol[: -len(suffix)]
+    return symbol
+
 logger = structlog.get_logger()
 
 
@@ -76,7 +88,9 @@ class NewsFetcher:
     CACHE_TTL = 300  # 5 minutes
 
     def __init__(self):
-        self._api_key = settings.news_api_key
+        key = settings.news_api_key
+        # Ignore placeholder keys
+        self._api_key = key if key and "your-" not in key.lower() else None
         self._http_client: httpx.AsyncClient | None = None
         self._redis: redis.Redis | None = None
 
@@ -84,6 +98,7 @@ class NewsFetcher:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=15.0,
+                follow_redirects=True,
                 headers={"User-Agent": "TraderBot/1.0"},
             )
         return self._http_client
@@ -182,11 +197,14 @@ class NewsFetcher:
         # If symbol-specific, prioritize relevant news
         if symbol:
             symbol_upper = symbol.upper()
+            bare_upper = _bare_symbol(symbol).upper()
             relevant = [
                 item
                 for item in items
                 if symbol_upper in (item.title or "").upper()
+                or bare_upper in (item.title or "").upper()
                 or symbol_upper in (item.description or "").upper()
+                or bare_upper in (item.description or "").upper()
             ]
             general = [item for item in items if item not in relevant]
             items = relevant + general
@@ -219,10 +237,13 @@ class NewsFetcher:
         # Also check general RSS for mentions
         rss_items = await self._fetch_all_rss()
         symbol_upper = symbol.upper()
+        bare_upper = _bare_symbol(symbol).upper()
         for item in rss_items:
             if (
                 symbol_upper in (item.title or "").upper()
+                or bare_upper in (item.title or "").upper()
                 or symbol_upper in (item.description or "").upper()
+                or bare_upper in (item.description or "").upper()
             ):
                 item.symbol = symbol
                 items.append(item)
@@ -265,14 +286,15 @@ class NewsFetcher:
 
     async def _fetch_symbol_rss(self, symbol: str) -> list[NewsItem]:
         """Fetch symbol-specific news from Yahoo Finance and Google News RSS."""
+        bare = _bare_symbol(symbol)
         tasks = [
             self._fetch_single_rss(
                 f"Yahoo Finance ({symbol})",
-                f"https://finance.yahoo.com/rss/headline?s={quote(symbol)}",
+                f"https://finance.yahoo.com/rss/headline?s={quote(bare)}",
             ),
             self._fetch_single_rss(
                 f"Google News ({symbol})",
-                f"https://news.google.com/rss/search?q={quote(symbol)}+stock&hl=en-US&gl=US&ceid=US:en",
+                f"https://news.google.com/rss/search?q={quote(bare)}+stock&hl=en-US&gl=US&ceid=US:en",
             ),
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -324,7 +346,8 @@ class NewsFetcher:
 
     async def _fetch_newsapi(self, symbol: str | None = None) -> list[NewsItem]:
         """Fetch from NewsAPI with symbol-specific query."""
-        query = f"{symbol} stock" if symbol else "stock market trading"
+        bare = _bare_symbol(symbol) if symbol else None
+        query = f"{bare} stock" if bare else "stock market trading"
         try:
             client = await self._get_client()
             resp = await client.get(

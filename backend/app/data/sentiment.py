@@ -14,7 +14,7 @@ from app.data.news_fetcher import NewsItem
 logger = structlog.get_logger()
 
 # Use Haiku for cost efficiency (fast + cheap)
-SENTIMENT_MODEL = "claude-haiku-4-5-20241022"
+SENTIMENT_MODEL = "claude-haiku-4-5-20251001"
 
 # Redis cache TTL for sentiment results
 SENTIMENT_CACHE_TTL = 900  # 15 minutes
@@ -247,9 +247,11 @@ class SentimentAnalyzer:
             if item.title.strip()
         )
 
+        # Strip exchange suffix for clearer prompt (e.g. "ASML.AS" → "ASML")
+        display_symbol = symbol.split(".")[0] if "." in symbol else symbol
         prompt = (
             f"You are a financial sentiment analyst. Analyze these news articles about "
-            f"{symbol} stock.\n\n"
+            f"{display_symbol} stock.\n\n"
             "Score the overall sentiment and your confidence in the assessment.\n\n"
             "Rules:\n"
             "- score: -1.0 (extremely bearish) to 1.0 (extremely bullish), 0.0 = neutral\n"
