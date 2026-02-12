@@ -202,13 +202,17 @@ def schedule_snapshot_cleanup() -> None:
 
 
 def schedule_broker_watchdog(broker) -> None:
-    """Monitor broker connection and trigger reconnect if needed.
+    """Monitor broker connection, trigger reconnect, and lazy-start engine.
 
     Runs every 30 seconds, independent of the trading cycle.
     The broker adapter handles the actual reconnect with exponential backoff;
     this job ensures the connection state is checked even when the engine
     is not running cycles (e.g. outside market hours).
+
+    When the broker comes online and the engine hasn't been initialized yet,
+    the watchdog will start the data pipeline and trading engine automatically.
     """
+    _initializing = {"active": False}
 
     async def broker_watchdog():
         try:
@@ -220,8 +224,55 @@ def schedule_broker_watchdog(broker) -> None:
                     logger.info("watchdog.broker_reconnected")
                 except Exception:
                     pass  # Adapter auto-reconnect handles retries
+                return
+
+            # Broker is connected — check if engine needs lazy initialization
+            if _initializing["active"]:
+                return
+            try:
+                from app.dependencies import get_trading_engine
+                get_trading_engine()  # Raises RuntimeError if not initialized
+                return  # Engine already running, nothing to do
+            except RuntimeError:
+                pass  # Engine not initialized — start it
+
+            _initializing["active"] = True
+            try:
+                await _lazy_init_engine()
+            finally:
+                _initializing["active"] = False
+
         except Exception:
             pass  # Don't let watchdog failures break the scheduler
+
+    async def _lazy_init_engine():
+        """Initialize pipeline + engine after broker becomes available."""
+        from app.config import settings
+        from app.dependencies import get_data_pipeline, init_trading_engine
+        from app.models.database import async_session as session_factory
+
+        logger.info("watchdog.lazy_init_starting")
+
+        # Start data pipeline
+        try:
+            pipeline = get_data_pipeline()
+            await pipeline.start(settings.symbols_list)
+            logger.info("watchdog.pipeline_started")
+            schedule_data_pipeline(pipeline)
+        except Exception as e:
+            logger.warning("watchdog.pipeline_error", error=str(e))
+
+        # Start trading engine
+        try:
+            db = session_factory()
+            engine = await init_trading_engine(db)
+            await engine.start()
+            logger.info("watchdog.engine_started")
+            schedule_trading_engine(engine)
+            schedule_daily_reset(engine)
+            schedule_eod_safety_close(engine)
+        except Exception as e:
+            logger.warning("watchdog.engine_error", error=str(e))
 
     scheduler.add_job(
         broker_watchdog,
