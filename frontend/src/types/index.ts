@@ -269,6 +269,23 @@ export interface BacktestComparison {
   assessment: string;
 }
 
+// ─── Strategy Performance Types ──────────────────────────────────────
+
+export interface StrategyPerformance {
+  strategy_name: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_pnl: number;
+  avg_pnl: number;
+  win_rate: number;
+  profit_factor: number | string;
+}
+
+export interface StrategyPerformanceResponse {
+  strategies: StrategyPerformance[];
+}
+
 // ─── Screener Types ─────────────────────────────────────────────────
 
 export interface ScreeningCandidate {

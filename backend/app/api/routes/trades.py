@@ -3,6 +3,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
+from app.models.order import Order
 from app.models.trade import Trade
 
 router = APIRouter()
@@ -54,6 +55,29 @@ async def get_trades(
         "total": total,
         "skip": skip,
         "limit": limit,
+    }
+
+
+@router.get("/trades/slippage")
+async def get_slippage_stats(db: AsyncSession = Depends(get_db)):
+    """Return slippage statistics across all orders with slippage data."""
+    query = select(
+        func.count(Order.id).label("total_orders"),
+        func.avg(Order.slippage).label("avg_slippage"),
+        func.min(Order.slippage).label("min_slippage"),
+        func.max(Order.slippage).label("max_slippage"),
+        func.sum(Order.slippage).label("total_slippage"),
+    ).where(Order.slippage.isnot(None))
+
+    result = await db.execute(query)
+    row = result.one()
+
+    return {
+        "total_orders": row.total_orders or 0,
+        "avg_slippage": round(float(row.avg_slippage or 0), 4),
+        "min_slippage": round(float(row.min_slippage or 0), 4),
+        "max_slippage": round(float(row.max_slippage or 0), 4),
+        "total_slippage": round(float(row.total_slippage or 0), 4),
     }
 
 

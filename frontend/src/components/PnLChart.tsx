@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -16,28 +16,36 @@ interface ChartPoint {
   date: string;
   value: number;
   pnl: number;
+  drawdown: number;
 }
 
 export function PnLChart() {
   const [data, setData] = useState<ChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"value" | "pnl">("value");
+  const [view, setView] = useState<"value" | "pnl" | "drawdown">("value");
 
   useEffect(() => {
     api
       .getPortfolioSnapshots(200)
       .then((snapshots) => {
-        const points: ChartPoint[] = snapshots.map((s) => ({
-          date: s.timestamp
-            ? new Date(s.timestamp).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-              })
-            : "",
-          value: s.total_value,
-          pnl: s.daily_pnl,
-        }));
+        // Compute running peak and drawdown
+        let peak = 0;
+        const points: ChartPoint[] = snapshots.map((s) => {
+          if (s.total_value > peak) peak = s.total_value;
+          const dd = peak > 0 ? ((s.total_value - peak) / peak) * 100 : 0;
+          return {
+            date: s.timestamp
+              ? new Date(s.timestamp).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                })
+              : "",
+            value: s.total_value,
+            pnl: s.daily_pnl,
+            drawdown: Math.round(dd * 100) / 100,
+          };
+        });
         setData(points);
       })
       .catch(() => {})
@@ -48,6 +56,10 @@ export function PnLChart() {
   const startValue = hasData ? data[0]!.value : 0;
   const endValue = hasData ? data[data.length - 1]!.value : 0;
   const totalReturn = startValue > 0 ? ((endValue - startValue) / startValue) * 100 : 0;
+  const maxDrawdown = useMemo(
+    () => (hasData ? Math.min(...data.map((d) => d.drawdown)) : 0),
+    [data, hasData],
+  );
 
   return (
     <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
@@ -83,6 +95,16 @@ export function PnLChart() {
             }`}
           >
             Daily P&L
+          </button>
+          <button
+            onClick={() => setView("drawdown")}
+            className={`text-xs px-2 py-1 rounded ${
+              view === "drawdown"
+                ? "bg-red-900/50 text-red-400"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            Drawdown
           </button>
         </div>
       </div>
@@ -125,7 +147,7 @@ export function PnLChart() {
                 borderRadius: "8px",
                 color: "#f3f4f6",
               }}
-              formatter={(value: number) => [`€${value.toFixed(2)}`, "Value"]}
+              formatter={(value: number) => [`\u20AC${value.toFixed(2)}`, "Value"]}
             />
             <Area
               type="monotone"
@@ -138,7 +160,7 @@ export function PnLChart() {
             />
           </AreaChart>
         </ResponsiveContainer>
-      ) : (
+      ) : view === "pnl" ? (
         <ResponsiveContainer width="100%" height={250}>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -160,7 +182,7 @@ export function PnLChart() {
                 color: "#f3f4f6",
               }}
               formatter={(value: number) => [
-                `${value >= 0 ? "+" : ""}€${value.toFixed(2)}`,
+                `${value >= 0 ? "+" : ""}\u20AC${value.toFixed(2)}`,
                 "Daily P&L",
               ]}
             />
@@ -174,6 +196,57 @@ export function PnLChart() {
             />
           </LineChart>
         </ResponsiveContainer>
+      ) : (
+        <>
+          {maxDrawdown < 0 && (
+            <div className="text-xs text-red-400 mb-2">
+              Max Drawdown: {maxDrawdown.toFixed(2)}%
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height={250}>
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="colorDrawdown" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: "#6b7280", fontSize: 11 }}
+                axisLine={{ stroke: "#374151" }}
+              />
+              <YAxis
+                tick={{ fill: "#6b7280", fontSize: 11 }}
+                axisLine={{ stroke: "#374151" }}
+                domain={["auto", 0]}
+                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#111827",
+                  border: "1px solid #374151",
+                  borderRadius: "8px",
+                  color: "#f3f4f6",
+                }}
+                formatter={(value: number) => [
+                  `Drawdown: ${value.toFixed(2)}%`,
+                  "",
+                ]}
+              />
+              <Area
+                type="monotone"
+                dataKey="drawdown"
+                stroke="#ef4444"
+                strokeWidth={2}
+                fill="url(#colorDrawdown)"
+                dot={false}
+                activeDot={{ r: 4, fill: "#ef4444" }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </>
       )}
     </div>
   );

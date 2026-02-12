@@ -44,5 +44,7 @@ class Order(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expected_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slippage: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     trade: Mapped["Trade"] = relationship(back_populates="orders")

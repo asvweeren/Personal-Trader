@@ -39,6 +39,7 @@ class OrderManager:
         order_type: OrderType = OrderType.MARKET,
         limit_price: float | None = None,
         stop_price: float | None = None,
+        expected_price: float | None = None,
     ) -> OrderResult:
         """Submit an order to the broker and record it in the database."""
         order_request = OrderRequest(
@@ -52,6 +53,11 @@ class OrderManager:
 
         result = await self._broker.place_order(order_request)
 
+        # Calculate slippage if we have both expected and filled price
+        slippage = None
+        if expected_price is not None and result.filled_price is not None:
+            slippage = result.filled_price - expected_price
+
         db_order = Order(
             trade_id=trade_id,
             broker_order_id=result.order_id,
@@ -64,6 +70,8 @@ class OrderManager:
             filled_price=result.filled_price,
             filled_quantity=result.filled_quantity,
             status=self._map_status(result.status),
+            expected_price=expected_price,
+            slippage=slippage,
         )
 
         mapped = self._map_status(result.status)
@@ -128,6 +136,8 @@ class OrderManager:
                     db_order.filled_price = result.filled_price
                     db_order.filled_quantity = result.filled_quantity
                     db_order.filled_at = datetime.now(timezone.utc)
+                    if db_order.expected_price is not None and result.filled_price is not None:
+                        db_order.slippage = result.filled_price - db_order.expected_price
                     to_remove.append(broker_id)
                     filled.append({
                         "trade_id": db_order.trade_id,

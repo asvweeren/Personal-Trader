@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
     min_take_profit_pct: float = 2.0         # Minimum 2% profit target as floor
 
+    # Order execution
+    order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
+    order_max_retries: int = 2               # Max retry attempts for failed market orders
+
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
 

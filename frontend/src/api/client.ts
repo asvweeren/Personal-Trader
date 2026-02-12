@@ -11,6 +11,7 @@ import type {
   StrategyConfig,
   StrategyStatusResponse,
   StrategyConfigUpdate,
+  StrategyPerformanceResponse,
   SystemHealth,
   EngineStatus,
   PortfolioSnapshot,
@@ -88,6 +89,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(config),
     }),
+  getStrategyPerformance: () =>
+    fetchApi<StrategyPerformanceResponse>("/strategy/performance"),
 
   // System
   getSystemHealth: () => fetchApi<SystemHealth>("/system/health"),

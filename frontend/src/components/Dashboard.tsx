@@ -9,6 +9,7 @@ import { RiskMetrics } from "./RiskMetrics";
 import { SignalFeed } from "./SignalFeed";
 import { SystemStatus } from "./SystemStatus";
 import { EngineControl } from "./EngineControl";
+import { StrategyPerformanceCard } from "./StrategyPerformanceCard";
 
 const TradeTable = lazy(() => import("./TradeTable").then(m => ({ default: m.TradeTable })));
 const BacktestPanel = lazy(() => import("./BacktestPanel").then(m => ({ default: m.BacktestPanel })));
@@ -119,6 +120,9 @@ export function Dashboard() {
               <EngineControl />
               <PositionList positions={portfolio?.positions ?? []} />
             </div>
+
+            {/* Strategy Performance */}
+            <StrategyPerformanceCard />
 
             {/* Bottom row: Signal Feed */}
             <SignalFeed lastMessage={ws.lastMessage} />

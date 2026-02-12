@@ -346,6 +346,7 @@ class TradingEngine:
             side="SELL",
             quantity=open_trade.quantity,
             order_type=OrderType.MARKET,
+            expected_price=price,
         )
 
         mapped_status = self._order_manager._map_status(result.status)
@@ -354,11 +355,22 @@ class TradingEngine:
                 open_trade, result.filled_price
             )
             self._open_trades.pop(signal.symbol, None)
+            pnl = open_trade.realized_pnl or 0.0
+            hold_mins = ""
+            if open_trade.created_at:
+                delta = datetime.now(timezone.utc) - open_trade.created_at
+                hold_mins = f" | Hold: {delta.total_seconds() / 60:.0f}min"
             logger.info(
                 "engine.position_closed",
                 symbol=signal.symbol,
                 exit_price=result.filled_price,
-                pnl=open_trade.realized_pnl,
+                pnl=pnl,
+            )
+            await send_alert(
+                "Trade Closed",
+                f"{signal.symbol}: SOLD {open_trade.quantity} @ {result.filled_price:.2f}\n"
+                f"P&L: {pnl:+.2f}{hold_mins}\n"
+                f"Exit reason: signal",
             )
 
     def _get_atr(self, symbol: str) -> float | None:
@@ -388,7 +400,7 @@ class TradingEngine:
     async def _execute_buy(
         self, signal: TradingSignal, quantity: int, price: float, signal_id: int
     ) -> None:
-        """Execute a BUY signal by placing orders."""
+        """Execute a BUY signal with retry logic and alerts."""
         # Create trade record
         trade = Trade(
             symbol=signal.symbol,
@@ -401,35 +413,69 @@ class TradingEngine:
         self._db.add(trade)
         await self._db.flush()
 
-        # Place the order
-        result = await self._order_manager.submit_order(
-            trade_id=trade.id,
-            symbol=signal.symbol,
-            side="BUY",
-            quantity=quantity,
-            order_type=OrderType.MARKET,
-        )
+        max_retries = settings.order_max_retries
+        timeout_secs = settings.order_fill_timeout_seconds
+        filled = False
 
-        mapped_status = self._order_manager._map_status(result.status)
+        for attempt in range(1, max_retries + 1):
+            # Place the order
+            result = await self._order_manager.submit_order(
+                trade_id=trade.id,
+                symbol=signal.symbol,
+                side="BUY",
+                quantity=quantity,
+                order_type=OrderType.MARKET,
+                expected_price=price,
+            )
 
-        # For market orders, IBKR often returns PendingSubmit first.
-        # Wait briefly for the fill to come through.
-        if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
-            for _ in range(5):
-                await asyncio.sleep(1)
+            mapped_status = self._order_manager._map_status(result.status)
+
+            # Wait for fill with configurable timeout
+            if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
+                for _ in range(timeout_secs):
+                    await asyncio.sleep(1)
+                    try:
+                        updated = await self._broker.get_order_status(result.order_id)
+                        mapped_status = self._order_manager._map_status(updated.status)
+                        if mapped_status == OrderStatus.FILLED:
+                            result = updated
+                            break
+                        if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                            result = updated
+                            break
+                    except Exception:
+                        break
+
+            if mapped_status == OrderStatus.FILLED:
+                filled = True
+                break
+
+            # Not filled — cancel pending order before retry
+            if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
                 try:
-                    updated = await self._broker.get_order_status(result.order_id)
-                    mapped_status = self._order_manager._map_status(updated.status)
-                    if mapped_status == OrderStatus.FILLED:
-                        result = updated
-                        break
-                    if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
-                        result = updated
-                        break
+                    await self._broker.cancel_order(result.order_id)
                 except Exception:
-                    break
+                    pass
 
-        if mapped_status == OrderStatus.FILLED:
+            if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                logger.info(
+                    "engine.buy_attempt_failed",
+                    symbol=signal.symbol,
+                    attempt=attempt,
+                    broker_status=result.status,
+                )
+            else:
+                logger.warning(
+                    "engine.buy_attempt_timeout",
+                    symbol=signal.symbol,
+                    attempt=attempt,
+                    timeout=timeout_secs,
+                )
+
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+
+        if filled:
             trade.status = TradeStatus.OPEN
             trade.entry_price = result.filled_price
             self._open_trades[signal.symbol] = trade
@@ -458,20 +504,26 @@ class TradingEngine:
                 trade.take_profit = calculate_take_profit(
                     result.filled_price, signal.symbol, atr_val
                 )
-        elif mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
-            trade.status = TradeStatus.CANCELLED
-            logger.info(
-                "engine.trade_rejected",
-                symbol=signal.symbol,
-                broker_status=result.status,
+
+            # Alert: Trade Opened
+            alert_msg = (
+                f"{signal.symbol}: BUY {quantity} @ {result.filled_price:.2f}\n"
+                f"Strategy: {signal.strategy_name} (confidence: {signal.confidence:.0%})"
             )
+            if trade.stop_loss and trade.take_profit:
+                alert_msg += f"\nStop: {trade.stop_loss:.2f} | Target: {trade.take_profit:.2f}"
+            await send_alert("Trade Opened", alert_msg)
         else:
             trade.status = TradeStatus.CANCELLED
             logger.warning(
-                "engine.trade_not_filled",
+                "engine.trade_cancelled_after_retries",
                 symbol=signal.symbol,
-                broker_status=result.status,
-                reason="Market order did not fill within 5 seconds",
+                attempts=max_retries,
+            )
+            await send_alert(
+                "Trade Cancelled",
+                f"{signal.symbol}: BUY {quantity} failed after {max_retries} attempt(s)\n"
+                f"Strategy: {signal.strategy_name} | Last status: {result.status}",
             )
 
         await self._db.flush()
@@ -531,10 +583,20 @@ class TradingEngine:
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
             self._open_trades.pop(symbol, None)
+            pnl = trade.realized_pnl or 0.0
+            hold_mins = ""
+            if trade.created_at:
+                delta = datetime.now(timezone.utc) - trade.created_at
+                hold_mins = f" | Hold: {delta.total_seconds() / 60:.0f}min"
             logger.info(
                 "engine.position_closed_on_fill",
                 symbol=symbol,
                 exit_price=filled_price,
+            )
+            await send_alert(
+                "Trade Closed",
+                f"{symbol}: SOLD {trade.quantity} @ {filled_price:.2f}\n"
+                f"P&L: {pnl:+.2f}{hold_mins}",
             )
 
         await self._db.flush()
@@ -608,6 +670,7 @@ class TradingEngine:
                     side="SELL",
                     quantity=trade.quantity,
                     order_type=OrderType.MARKET,
+                    expected_price=current_price,
                 )
                 mapped_status = self._order_manager._map_status(result.status)
                 if mapped_status == OrderStatus.FILLED and result.filled_price:
@@ -650,6 +713,7 @@ class TradingEngine:
                     side="SELL",
                     quantity=trade.quantity,
                     order_type=OrderType.MARKET,
+                    expected_price=current_price,
                 )
                 mapped_status = self._order_manager._map_status(result.status)
                 if mapped_status == OrderStatus.FILLED and result.filled_price:
@@ -692,6 +756,11 @@ class TradingEngine:
                     count=loaded,
                     stale_cancelled=cancelled,
                 )
+                if cancelled:
+                    await send_alert(
+                        "Stale Orders Cleaned",
+                        f"Cancelled {cancelled} stale PENDING trade(s) on startup.",
+                    )
             await self._db.flush()
         except Exception:
             logger.exception("engine.load_trades_error")

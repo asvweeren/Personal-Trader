@@ -36,28 +36,81 @@ EU_SYMBOLS: list[str] = [
     "LLOY.L", "BARC.L", "VOD.L",
 ]
 
-# ── Fallback S&P 500 list (top ~100 by market cap) ────────────────────────
-_SP500_FALLBACK: list[str] = [
-    "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B",
-    "UNH", "XOM", "JNJ", "JPM", "V", "PG", "MA", "HD", "CVX", "MRK",
-    "ABBV", "LLY", "PEP", "KO", "COST", "AVGO", "WMT", "MCD", "CSCO",
-    "TMO", "ACN", "ABT", "DHR", "CRM", "ADBE", "AMD", "NFLX", "CMCSA",
-    "TXN", "INTC", "QCOM", "NEE", "HON", "UPS", "PM", "LOW", "UNP",
-    "RTX", "SPGI", "GS", "BA", "CAT", "ISRG", "BLK", "AMAT", "AMGN",
-    "LMT", "BKNG", "MDLZ", "ELV", "GILD", "ADP", "PLD", "VRTX",
-    "SYK", "CI", "CB", "ADI", "REGN", "SO", "DUK", "MMC", "BDX",
-    "LRCX", "BSX", "ZTS", "PANW", "KLAC", "CL", "EOG", "ICE",
-    "HUM", "APD", "MO", "SLB", "PNC", "CME", "FDX", "ORLY",
-    "SNPS", "WM", "NOC", "GD", "MCK", "SHW", "CDNS", "EMR",
-    "PSA", "AJG", "MET", "AIG", "TGT", "APH", "MCHP", "FTNT",
-    "MSI", "GM", "F", "PYPL", "COIN", "SQ", "SHOP", "SNOW",
-    "DDOG", "CRWD", "NET", "ZS", "ABNB", "UBER", "DASH", "RBLX",
+# ── Full S&P 500 list (~503 tickers) + key ETFs ──────────────────────────
+_SP500_SYMBOLS: list[str] = [
+    "A", "AAPL", "ABBV", "ABNB", "ABT", "ACGL", "ACN", "ADBE",
+    "ADI", "ADM", "ADP", "ADSK", "AEE", "AEP", "AES", "AFL",
+    "AIG", "AIZ", "AJG", "AKAM", "ALB", "ALGN", "ALL", "ALLE",
+    "AMAT", "AMCR", "AMD", "AME", "AMGN", "AMP", "AMT", "AMZN",
+    "ANET", "AON", "AOS", "APA", "APD", "APH", "APO", "APP",
+    "APTV", "ARE", "ARES", "ATO", "AVB", "AVGO", "AVY", "AWK",
+    "AXON", "AXP", "AZO", "BA", "BAC", "BALL", "BAX", "BBY",
+    "BDX", "BEN", "BF-B", "BG", "BIIB", "BK", "BKNG", "BKR",
+    "BLDR", "BLK", "BMY", "BR", "BRK-B", "BRO", "BSX", "BX",
+    "BXP", "C", "CAG", "CAH", "CARR", "CAT", "CB", "CBOE",
+    "CBRE", "CCI", "CCL", "CDNS", "CDW", "CEG", "CF", "CFG",
+    "CHD", "CHRW", "CHTR", "CI", "CINF", "CL", "CLX",
+    "CMCSA", "CME", "CMG", "CMI", "CMS", "CNC", "CNP", "COF",
+    "COIN", "COO", "COP", "COR", "COST", "CPAY", "CPB", "CPRT",
+    "CPT", "CRH", "CRL", "CRM", "CRWD", "CSCO", "CSGP", "CSX",
+    "CTAS", "CTRA", "CTSH", "CTVA", "CVS", "CVX", "D",
+    "DAL", "DASH", "DD", "DDOG", "DE", "DECK", "DELL", "DG",
+    "DGX", "DHI", "DHR", "DIS", "DLR", "DLTR", "DOC", "DOV",
+    "DOW", "DPZ", "DRI", "DTE", "DUK", "DVA", "DVN", "DXCM",
+    "EA", "EBAY", "ECL", "ED", "EFX", "EG", "EIX", "EL",
+    "ELV", "EME", "EMR", "EOG", "EPAM", "EQIX", "EQR", "EQT",
+    "ERIE", "ES", "ESS", "ETN", "ETR", "EVRG", "EW", "EXC",
+    "EXPD", "EXPE", "EXR", "F", "FANG", "FAST", "FCX",
+    "FDS", "FDX", "FE", "FFIV", "FICO", "FIS", "FISV", "FITB",
+    "FOX", "FOXA", "FRT", "FSLR", "FTNT", "FTV", "GD",
+    "GDDY", "GE", "GEHC", "GEN", "GEV", "GILD", "GIS", "GL",
+    "GLW", "GM", "GNRC", "GOOG", "GOOGL", "GPC", "GPN", "GRMN",
+    "GS", "GWW", "HAL", "HAS", "HBAN", "HCA", "HD", "HIG",
+    "HII", "HLT", "HOLX", "HON", "HPE", "HPQ", "HRL",
+    "HSIC", "HST", "HSY", "HUBB", "HUM", "HWM", "IBM",
+    "ICE", "IDXX", "IEX", "IFF", "INCY", "INTC", "INTU", "INVH",
+    "IP", "IQV", "IR", "IRM", "ISRG", "IT", "ITW", "IVZ",
+    "J", "JBHT", "JBL", "JCI", "JKHY", "JNJ", "JPM", "KDP",
+    "KEY", "KEYS", "KHC", "KIM", "KKR", "KLAC", "KMB", "KMI",
+    "KO", "KR", "KVUE", "L", "LDOS", "LEN", "LH", "LHX",
+    "LII", "LIN", "LLY", "LMT", "LNT", "LOW", "LRCX", "LULU",
+    "LUV", "LVS", "LW", "LYB", "LYV", "MA", "MAA", "MAR",
+    "MAS", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET",
+    "META", "MGM", "MKC", "MLM", "MMM", "MNST", "MO", "MOH",
+    "MOS", "MPC", "MPWR", "MRK", "MRNA", "MS", "MSCI",
+    "MSFT", "MSI", "MTB", "MTCH", "MTD", "MU", "NCLH", "NDAQ",
+    "NDSN", "NEE", "NEM", "NFLX", "NI", "NKE", "NOC", "NOW",
+    "NRG", "NSC", "NTAP", "NTRS", "NUE", "NVDA", "NVR", "NWS",
+    "NWSA", "NXPI", "O", "ODFL", "OKE", "OMC", "ON", "ORCL",
+    "ORLY", "OTIS", "OXY", "PANW", "PAYC", "PAYX", "PCAR", "PCG",
+    "PEG", "PEP", "PFE", "PFG", "PG", "PGR", "PH", "PHM",
+    "PKG", "PLD", "PLTR", "PM", "PNC", "PNR", "PNW", "PODD",
+    "POOL", "PPG", "PPL", "PRU", "PSA", "PSX", "PTC",
+    "PWR", "PYPL", "QCOM", "RCL", "REG", "REGN", "RF",
+    "RJF", "RL", "RMD", "ROK", "ROL", "ROP", "ROST", "RSG",
+    "RTX", "RVTY", "SBAC", "SBUX", "SCHW", "SHW", "SJM", "SLB",
+    "SMCI", "SNA", "SNPS", "SO", "SOLV", "SPG", "SPGI",
+    "SRE", "STE", "STLD", "STT", "STX", "STZ", "SW", "SWK",
+    "SWKS", "SYF", "SYK", "SYY", "T", "TAP", "TDG", "TDY",
+    "TECH", "TEL", "TER", "TFC", "TGT", "TJX", "TMO",
+    "TMUS", "TPR", "TRGP", "TRMB", "TROW", "TRV", "TSCO",
+    "TSLA", "TSN", "TT", "TTD", "TTWO", "TXN", "TXT", "TYL",
+    "UAL", "UBER", "UDR", "UHS", "ULTA", "UNH", "UNP", "UPS",
+    "URI", "USB", "V", "VICI", "VLO", "VLTO", "VMC", "VRSK",
+    "VRSN", "VRTX", "VST", "VTR", "VTRS", "VZ", "WAB", "WAT",
+    "WBD", "WDAY", "WDC", "WEC", "WELL", "WFC", "WM", "WMB",
+    "WMT", "WRB", "WST", "WTW", "WY", "WYNN", "XEL",
+    "XOM", "XYL", "YUM", "ZBH", "ZBRA", "ZTS",
+    # Key ETFs for broad market coverage
     "SPY", "QQQ", "IWM", "DIA", "EFA", "VGK", "XLF", "XLE",
 ]
 
 
 def get_sp500_symbols() -> list[str]:
-    """Fetch S&P 500 tickers from Wikipedia, with fallback to hardcoded list."""
+    """Return S&P 500 tickers from hardcoded list, optionally enriched via Wikipedia."""
+    symbols = set(_SP500_SYMBOLS)
+
+    # Try to enrich with Wikipedia scrape (adds any new tickers we might be missing)
     try:
         tables = pd.read_html(
             "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
@@ -65,15 +118,17 @@ def get_sp500_symbols() -> list[str]:
         )
         if tables:
             df = tables[0]
-            symbols = df["Symbol"].str.replace(".", "-", regex=False).tolist()
-            if len(symbols) > 400:
-                logger.info("screener.sp500_fetched", count=len(symbols))
-                return symbols
+            wiki_symbols = df["Symbol"].str.replace(".", "-", regex=False).tolist()
+            if len(wiki_symbols) > 400:
+                added = set(wiki_symbols) - symbols
+                symbols |= set(wiki_symbols)
+                if added:
+                    logger.info("screener.sp500_enriched", added=len(added), total=len(symbols))
     except Exception:
-        logger.warning("screener.sp500_fetch_failed, using fallback")
+        logger.debug("screener.sp500_wiki_unavailable, using hardcoded list")
 
-    logger.info("screener.using_fallback_sp500", count=len(_SP500_FALLBACK))
-    return list(_SP500_FALLBACK)
+    logger.info("screener.sp500_symbols", count=len(symbols))
+    return sorted(symbols)
 
 
 def _compute_rsi(series: pd.Series, period: int = 14) -> float:

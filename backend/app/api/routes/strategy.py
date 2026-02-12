@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
 
 from app.dependencies import get_db
 from app.models.strategy_config import StrategyConfig
+from app.models.trade import Trade, TradeStatus
 
 logger = structlog.get_logger()
 
@@ -119,3 +120,51 @@ async def update_strategy_config(update: StrategyConfigUpdate, db: AsyncSession 
     await db.commit()
     await db.refresh(config)
     return _config_to_dict(config)
+
+
+@router.get("/strategy/performance")
+async def get_strategy_performance(db: AsyncSession = Depends(get_db)):
+    """Return performance metrics grouped by strategy."""
+    query = (
+        select(
+            Trade.strategy_name,
+            func.count(Trade.id).label("total_trades"),
+            func.sum(case((Trade.realized_pnl > 0, 1), else_=0)).label("winning_trades"),
+            func.sum(case((Trade.realized_pnl <= 0, 1), else_=0)).label("losing_trades"),
+            func.coalesce(func.sum(Trade.realized_pnl), 0).label("total_pnl"),
+            func.coalesce(func.avg(Trade.realized_pnl), 0).label("avg_pnl"),
+            func.coalesce(
+                func.sum(case((Trade.realized_pnl > 0, Trade.realized_pnl), else_=0)), 0
+            ).label("gross_profit"),
+            func.coalesce(
+                func.sum(case((Trade.realized_pnl < 0, func.abs(Trade.realized_pnl)), else_=0)), 0
+            ).label("gross_loss"),
+        )
+        .where(Trade.status == TradeStatus.CLOSED)
+        .group_by(Trade.strategy_name)
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    strategies = []
+    for row in rows:
+        total = row.total_trades or 0
+        winning = row.winning_trades or 0
+        gross_profit = float(row.gross_profit or 0)
+        gross_loss = float(row.gross_loss or 0)
+        win_rate = (winning / total * 100) if total > 0 else 0.0
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+
+        strategies.append({
+            "strategy_name": row.strategy_name,
+            "total_trades": total,
+            "winning_trades": winning,
+            "losing_trades": row.losing_trades or 0,
+            "total_pnl": round(float(row.total_pnl or 0), 2),
+            "avg_pnl": round(float(row.avg_pnl or 0), 2),
+            "win_rate": round(win_rate, 1),
+            "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else "Inf",
+        })
+
+    return {"strategies": strategies}
