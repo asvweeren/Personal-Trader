@@ -96,7 +96,8 @@ jobs:
           ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key root@"$SERVER_HOST" '
             cd /root/trader &&
-            git pull origin master &&
+            git fetch origin master &&
+            git reset --hard origin/master &&
             docker compose -f docker-compose.prod.yml up -d --build backend frontend-build &&
             docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head &&
             docker compose -f docker-compose.prod.yml restart nginx
