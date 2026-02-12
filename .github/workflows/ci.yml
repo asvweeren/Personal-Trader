@@ -85,20 +85,17 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
     steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
       - name: Deploy to production
-        env:
-          SSH_KEY_B64: ${{ secrets.SSH_PRIVATE_KEY_B64 }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY_B64" | base64 -d > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@"$SERVER_HOST" '
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.SERVER_HOST }} '
             cd /root/trader &&
             git pull origin master &&
             docker compose -f docker-compose.prod.yml up -d --build backend frontend-build &&
             docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head &&
             docker compose -f docker-compose.prod.yml restart nginx
           '
-          rm -f ~/.ssh/deploy_key
