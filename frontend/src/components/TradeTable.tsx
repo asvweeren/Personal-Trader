@@ -59,9 +59,10 @@ export function TradeTable() {
               <thead>
                 <tr className="text-gray-500 text-xs border-b border-gray-800">
                   <th className="text-left pb-2">Symbol</th>
-                  <th className="text-left pb-2">Side</th>
+                  <th className="text-left pb-2">Action</th>
                   <th className="text-right pb-2">Qty</th>
                   <th className="text-right pb-2">Entry</th>
+                  <th className="text-right pb-2">Exit</th>
                   <th className="text-right pb-2">P&L</th>
                   <th className="text-left pb-2">Status</th>
                   <th className="text-left pb-2">Strategy</th>
@@ -69,46 +70,66 @@ export function TradeTable() {
                 </tr>
               </thead>
               <tbody>
-                {trades.map((trade) => (
-                  <tr key={trade.id} className="border-b border-gray-800/50">
-                    <td className="py-2 font-medium text-white">{trade.symbol}</td>
-                    <td
-                      className={`py-2 ${trade.side === "BUY" ? "text-green-400" : "text-red-400"}`}
-                    >
-                      {trade.side}
-                    </td>
-                    <td className="py-2 text-right">{trade.quantity}</td>
-                    <td className="py-2 text-right">
-                      {trade.entry_price?.toFixed(2) ?? "-"}
-                    </td>
-                    <td
-                      className={`py-2 text-right ${(trade.realized_pnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}
-                    >
-                      {trade.realized_pnl != null
-                        ? `${trade.realized_pnl >= 0 ? "+" : ""}${trade.realized_pnl.toFixed(2)}`
-                        : "-"}
-                    </td>
-                    <td className="py-2">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded ${
-                          trade.status === "OPEN"
-                            ? "bg-blue-900/50 text-blue-400"
-                            : trade.status === "CLOSED"
-                              ? "bg-gray-800 text-gray-400"
-                              : "bg-yellow-900/50 text-yellow-400"
+                {trades.map((trade) => {
+                  const isClosed = trade.status === "CLOSED";
+                  const isCancelled = trade.status === "CANCELLED";
+                  const actionLabel = isClosed ? "BUY \u2192 SELL" : trade.side;
+                  const actionColor = isClosed
+                    ? "text-orange-400"
+                    : trade.side === "BUY"
+                      ? "text-green-400"
+                      : "text-red-400";
+
+                  return (
+                    <tr key={trade.id} className="border-b border-gray-800/50">
+                      <td className="py-2 font-medium text-white">{trade.symbol}</td>
+                      <td className={`py-2 ${actionColor}`}>
+                        {actionLabel}
+                      </td>
+                      <td className="py-2 text-right">{trade.quantity}</td>
+                      <td className="py-2 text-right">
+                        {trade.entry_price?.toFixed(2) ?? "-"}
+                      </td>
+                      <td className="py-2 text-right text-gray-400">
+                        {trade.exit_price?.toFixed(2) ?? "-"}
+                      </td>
+                      <td
+                        className={`py-2 text-right font-medium ${
+                          (trade.realized_pnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"
                         }`}
                       >
-                        {trade.status}
-                      </span>
-                    </td>
-                    <td className="py-2 text-gray-500 text-xs">{trade.strategy_name}</td>
-                    <td className="py-2 text-gray-500 text-xs">
-                      {trade.created_at
-                        ? new Date(trade.created_at).toLocaleDateString()
-                        : "-"}
-                    </td>
-                  </tr>
-                ))}
+                        {trade.realized_pnl != null
+                          ? `${trade.realized_pnl >= 0 ? "+" : ""}${trade.realized_pnl.toFixed(2)}`
+                          : "-"}
+                      </td>
+                      <td className="py-2">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded ${
+                            trade.status === "OPEN"
+                              ? "bg-blue-900/50 text-blue-400"
+                              : isClosed
+                                ? (trade.realized_pnl ?? 0) >= 0
+                                  ? "bg-green-900/30 text-green-400"
+                                  : "bg-red-900/30 text-red-400"
+                                : isCancelled
+                                  ? "bg-gray-800 text-gray-500"
+                                  : "bg-yellow-900/50 text-yellow-400"
+                          }`}
+                        >
+                          {trade.status}
+                        </span>
+                      </td>
+                      <td className="py-2 text-gray-500 text-xs">{trade.strategy_name}</td>
+                      <td className="py-2 text-gray-500 text-xs">
+                        {isClosed && trade.closed_at
+                          ? new Date(trade.closed_at).toLocaleDateString()
+                          : trade.created_at
+                            ? new Date(trade.created_at).toLocaleDateString()
+                            : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
