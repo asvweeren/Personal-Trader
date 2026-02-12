@@ -86,6 +86,24 @@ def check_market_hours(symbol: str, now: datetime | None = None) -> None:
         )
 
 
+def check_economic_events(symbol: str) -> None:
+    """Check if there's a high-impact economic event within 2 hours.
+
+    Blocks trading to avoid volatility around major events.
+    """
+    try:
+        from app.data.economic_calendar import get_economic_calendar
+        calendar = get_economic_calendar()
+        if calendar.has_high_impact_event(symbol, within_hours=2):
+            raise MarketClosedError(
+                f"High-impact economic event within 2 hours for {symbol}"
+            )
+    except MarketClosedError:
+        raise
+    except Exception:
+        pass  # Calendar not available, don't block trading
+
+
 def check_all_hard_limits(
     portfolio: Portfolio,
     daily_start_value: float,
@@ -105,6 +123,13 @@ def check_all_hard_limits(
     if check_hours and symbol:
         try:
             check_market_hours(symbol)
+        except MarketClosedError as e:
+            violations.append(str(e))
+
+    # Economic events check
+    if symbol:
+        try:
+            check_economic_events(symbol)
         except MarketClosedError as e:
             violations.append(str(e))
 

@@ -218,6 +218,8 @@ async def test_cycle_sell_signal_closes_position():
     mock_trade.quantity = 10
     mock_trade.entry_price = 145.0
     mock_trade.stop_loss = 140.0
+    mock_trade.strategy_name = "mock"
+    mock_trade.created_at = datetime.now(timezone.utc)
     engine._open_trades["AAPL"] = mock_trade
 
     await engine.run_cycle()

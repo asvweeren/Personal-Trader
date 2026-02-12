@@ -152,6 +152,8 @@ async def test_record_trade_close_buy():
     trade.side = TradeSide.BUY
     trade.quantity = 10
     trade.entry_price = 150.0
+    trade.strategy_name = "ml_xgboost"
+    trade.created_at = datetime.now(timezone.utc)
 
     pnl = await tracker.record_trade_close(trade, exit_price=160.0)
 
@@ -176,6 +178,8 @@ async def test_record_trade_close_with_commission():
     trade.side = TradeSide.BUY
     trade.quantity = 10
     trade.entry_price = 150.0
+    trade.strategy_name = "ml_xgboost"
+    trade.created_at = datetime.now(timezone.utc)
 
     pnl = await tracker.record_trade_close(trade, exit_price=160.0, commission=5.0)
 

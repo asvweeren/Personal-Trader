@@ -125,3 +125,38 @@ async def test_alert():
         critical=True,
     )
     return {"status": "sent", "channels": {"telegram": bool(settings.telegram_bot_token), "email": bool(settings.smtp_user)}}
+
+
+@router.get("/system/reconciliation")
+async def get_reconciliation():
+    """Get the latest position reconciliation result."""
+    from app.risk.reconciliation import get_last_result
+    result = get_last_result()
+    if result is None:
+        return {"status": "no_data", "message": "No reconciliation has run yet"}
+    return result.to_dict()
+
+
+@router.get("/system/regime")
+async def get_regime():
+    """Get the current market regime detection result."""
+    try:
+        engine = get_trading_engine()
+        regime = engine._regime_detector.current_regime
+        if regime:
+            return regime.to_dict()
+        return {"regime": "unknown", "message": "No regime detected yet"}
+    except RuntimeError:
+        return {"regime": "unknown", "message": "Engine not initialized"}
+
+
+@router.get("/system/calendar")
+async def get_calendar():
+    """Get upcoming economic events."""
+    from app.data.economic_calendar import get_economic_calendar
+    calendar = get_economic_calendar()
+    events = await calendar.fetch_events(days_ahead=7)
+    return {
+        "events": [e.to_dict() for e in events],
+        "total": len(events),
+    }

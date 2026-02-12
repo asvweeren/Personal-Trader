@@ -150,6 +150,28 @@ def schedule_heartbeat() -> None:
     logger.info("scheduler.job_added", job="ws_heartbeat", interval="30s")
 
 
+def schedule_economic_calendar() -> None:
+    """Refresh the economic event calendar daily at 06:00 UTC."""
+
+    async def refresh_calendar():
+        try:
+            from app.data.economic_calendar import get_economic_calendar
+            calendar = get_economic_calendar()
+            events = await calendar.fetch_events(days_ahead=7)
+            logger.info("calendar.refreshed", events=len(events))
+        except Exception:
+            logger.exception("calendar.refresh_error")
+
+    scheduler.add_job(
+        refresh_calendar,
+        CronTrigger(hour=6, minute=0),
+        id="refresh_economic_calendar",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="refresh_economic_calendar", trigger="cron(06:00)")
+
+
 def schedule_daily_screener() -> None:
     """Run the stock screener daily at 07:50 UTC Mon-Fri (before EU open).
 

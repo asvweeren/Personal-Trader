@@ -61,6 +61,36 @@ def vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -
     return (typical_price * volume).cumsum() / volume.cumsum()
 
 
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Average Directional Index (ADX) for trend strength measurement."""
+    # True Range
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Directional Movement
+    up_move = high - high.shift(1)
+    down_move = low.shift(1) - low
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    plus_dm = pd.Series(plus_dm, index=high.index)
+    minus_dm = pd.Series(minus_dm, index=high.index)
+
+    # Smoothed averages
+    atr_smooth = true_range.ewm(com=period - 1, min_periods=period).mean()
+    plus_di = 100 * plus_dm.ewm(com=period - 1, min_periods=period).mean() / atr_smooth
+    minus_di = 100 * minus_dm.ewm(com=period - 1, min_periods=period).mean() / atr_smooth
+
+    # ADX
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx_val = dx.ewm(com=period - 1, min_periods=period).mean()
+
+    return adx_val
+
+
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute all technical indicators for a DataFrame with OHLCV columns."""
     features = df.copy()
@@ -95,6 +125,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # ATR
     features["atr_14"] = atr(high, low, close, 14)
 
+    # ADX (trend strength)
+    features["adx_14"] = adx(high, low, close, 14)
+
     # Volume
     features["obv"] = obv(close, vol)
     features["vwap"] = vwap(high, low, close, vol)
@@ -126,5 +159,19 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # MACD divergence
     features["macd_divergence"] = features["macd"] - features["macd_signal"]
+
+    # --- Alternative Data Proxies ---
+
+    # Put/call proxy: bearish signal when RSI < 30 with high volume
+    rsi_val = features["rsi_14"]
+    vol_ratio = features["volume_ratio"]
+    features["put_call_proxy"] = np.where(
+        (rsi_val < 30) & (vol_ratio > 1.5), -1.0,
+        np.where((rsi_val > 70) & (vol_ratio > 1.5), 1.0, 0.0),
+    )
+
+    # Volatility regime: 20-day realized vol vs 60-day
+    vol_60d = close.pct_change().rolling(60).std()
+    features["volatility_regime"] = features["volatility_20d"] / vol_60d
 
     return features

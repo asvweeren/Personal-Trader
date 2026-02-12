@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
 
+    # Smart execution
+    smart_execution_enabled: bool = True
+    vwap_duration_minutes: int = 15
+    twap_slices: int = 4
+
     # Progressive trailing stop tiers: "gain%:trail%,..."
     trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
 

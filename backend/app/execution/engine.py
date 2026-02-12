@@ -14,6 +14,7 @@ from app.core.event_bus import event_bus, SIGNAL_GENERATED, RISK_DAILY_STOP, SYS
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
 from app.execution.portfolio_tracker import PortfolioTracker
+from app.execution.smart_execution import SmartExecutor, ExecutionAlgo
 from app.models.order import OrderStatus
 from app.models.signal import Signal as DBSignal, SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
@@ -27,7 +28,14 @@ from app.risk.position_sizer import (
     calculate_take_profit,
     calculate_trailing_stop,
 )
+from app.risk.reconciliation import (
+    reconcile,
+    auto_fix,
+    set_last_result,
+)
 from app.strategy.base import SignalAction, Strategy, TradingSignal
+from app.strategy.regime import RegimeDetector
+from app.strategy.multi_timeframe import MultiTimeframeFilter
 
 logger = structlog.get_logger()
 
@@ -64,6 +72,9 @@ class TradingEngine:
         self._trading_enabled = trading_enabled
         self._order_manager = OrderManager(broker, db)
         self._portfolio_tracker = PortfolioTracker(broker, db, performance)
+        self._smart_executor = SmartExecutor(broker, self._order_manager)
+        self._regime_detector = RegimeDetector()
+        self._mtf_filter = MultiTimeframeFilter()
         self._state = EngineState.STOPPED
         self._cycle_count = 0
         self._last_cycle_at: datetime | None = None
@@ -160,6 +171,32 @@ class TradingEngine:
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
 
+            # 2b. Reconciliation every 6th cycle (~30 min)
+            if self._cycle_count > 0 and self._cycle_count % 6 == 0:
+                try:
+                    portfolio_for_recon = await self._portfolio_tracker.get_current()
+                    recon_result = await reconcile(self._open_trades, portfolio_for_recon)
+                    set_last_result(recon_result)
+                    if not recon_result.is_clean:
+                        actions = await auto_fix(recon_result, self, self._db)
+                        if actions:
+                            await send_alert(
+                                "Position Reconciliation",
+                                "Mismatches detected and fixed:\n" + "\n".join(actions),
+                            )
+                        logger.warning("reconciliation.mismatches", result=recon_result.to_dict())
+                    else:
+                        logger.info("reconciliation.ok", matches=len(recon_result.matches))
+                except Exception:
+                    logger.debug("reconciliation.error", exc_info=True)
+
+            # 2c. Detect market regime
+            try:
+                regime_state = self._regime_detector.detect(snapshot)
+            except Exception:
+                logger.debug("regime.detection_error", exc_info=True)
+                regime_state = None
+
             # 3. EOD close — force-sell positions near market close (day trading)
             await self._check_eod_close(snapshot.prices)
 
@@ -182,6 +219,30 @@ class TradingEngine:
                 self._cycle_count += 1
                 self._last_cycle_at = datetime.now(timezone.utc)
                 return
+
+            # 6b. Multi-timeframe confirmation
+            confirmed_signals: list[TradingSignal] = []
+            for signal in all_signals:
+                if signal.action == SignalAction.HOLD:
+                    confirmed_signals.append(signal)
+                    continue
+                try:
+                    # Get daily features for MTF confirmation
+                    daily_df = await self._market_data.get_historical_data(
+                        signal.symbol, "60 D", "1 day"
+                    )
+                    if daily_df is not None and not daily_df.empty and len(daily_df) >= 20:
+                        from app.data.indicators import compute_features as _cf
+                        daily_features_df = _cf(daily_df)
+                        daily_feat = daily_features_df.iloc[-1].to_dict()
+                    else:
+                        daily_feat = {}
+                    hourly_feat = signal.features_snapshot or {}
+                    signal = self._mtf_filter.confirm_signal(signal, hourly_feat, daily_feat)
+                except Exception:
+                    pass  # Keep original signal on error
+                confirmed_signals.append(signal)
+            all_signals = confirmed_signals
 
             # 7. Get current portfolio for risk checks
             portfolio = await self._portfolio_tracker.get_current()
@@ -240,7 +301,9 @@ class TradingEngine:
 
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
-                    signal, portfolio, price, correlation_matrix=correlation_matrix
+                    signal, portfolio, price,
+                    correlation_matrix=correlation_matrix,
+                    regime=regime_state,
                 )
 
                 if not decision.approved:
@@ -408,6 +471,18 @@ class TradingEngine:
         else:
             stop_price = round(filled_price * 0.97, 2)
         return stop_price
+
+    def _get_avg_volume(self, symbol: str) -> float:
+        """Get average daily volume for smart execution algo selection."""
+        try:
+            cache = getattr(self._market_data, "_historical_cache", {})
+            for key, df in cache.items():
+                if key.startswith(f"{symbol}_") and df is not None and not df.empty:
+                    if "volume" in df.columns:
+                        return float(df["volume"].tail(20).mean())
+        except Exception:
+            pass
+        return 0.0
 
     async def _execute_buy(
         self, signal: TradingSignal, quantity: int, price: float, signal_id: int
@@ -789,6 +864,7 @@ class TradingEngine:
 
     def get_status(self) -> dict:
         """Return current engine status for the API."""
+        regime = self._regime_detector.current_regime
         return {
             "state": self._state.value,
             "trading_enabled": self._trading_enabled,
@@ -801,4 +877,5 @@ class TradingEngine:
             "symbols": self._symbols,
             "strategies": [s.name for s in self._strategies],
             "reconnect_attempts": self._reconnect_attempts,
+            "market_regime": regime.to_dict() if regime else None,
         }

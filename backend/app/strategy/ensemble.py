@@ -154,22 +154,46 @@ class EnsembleStrategy(Strategy):
                 self._signal_history[strategy_name][-self._max_history:]
             )
 
-    def update_weights_from_history(self) -> dict[str, float]:
-        """Recalculate weights based on recent accuracy of each strategy."""
+    def update_weights_from_history(self, performance_tracker=None) -> dict[str, float]:
+        """Recalculate weights based on recent accuracy of each strategy.
+
+        If a performance_tracker is provided, uses live attribution data.
+        Falls back to signal history otherwise.
+        """
         new_weights = {}
 
+        # Try live attribution data first
+        if performance_tracker is not None:
+            breakdown = performance_tracker.get_strategy_breakdown()
+            has_live_data = False
+            for strategy in self._strategies:
+                stats = breakdown.get(strategy.name)
+                if stats and stats.get("trades", 0) >= 10:
+                    has_live_data = True
+                    win_rate = stats.get("win_rate", 50.0) / 100.0
+                    pf = stats.get("profit_factor", 1.0)
+                    if isinstance(pf, str):
+                        pf = 2.0  # infinity
+                    # Weight from win rate and profit factor
+                    weight = max(0.1, win_rate * min(pf, 3.0) / 3.0)
+                    new_weights[strategy.name] = weight
+                else:
+                    new_weights[strategy.name] = self._weights.get(strategy.name, 1.0)
+
+            if has_live_data:
+                self._weights = new_weights
+                logger.info("ensemble.weights_updated_from_attribution", weights=new_weights)
+                return new_weights
+
+        # Fall back to signal history
         for strategy in self._strategies:
             history = self._signal_history.get(strategy.name, [])
             if len(history) < 10:
-                # Not enough data, keep existing weight
                 new_weights[strategy.name] = self._weights.get(strategy.name, 1.0)
                 continue
 
-            # Calculate recent accuracy
-            recent = history[-50:]  # Last 50 signals
+            recent = history[-50:]
             accuracy = sum(1 for h in recent if h["correct"]) / len(recent)
-
-            # Weight = accuracy squared (amplifies differences)
             new_weights[strategy.name] = max(0.1, accuracy ** 2)
 
         self._weights = new_weights

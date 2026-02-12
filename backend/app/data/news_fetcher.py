@@ -83,6 +83,9 @@ class NewsFetcher:
         ),
         ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
         ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
+        # Reddit financial communities
+        ("Reddit r/stocks", "https://www.reddit.com/r/stocks/.rss"),
+        ("Reddit r/wallstreetbets", "https://www.reddit.com/r/wallstreetbets/.rss"),
     ]
 
     CACHE_TTL = 300  # 5 minutes

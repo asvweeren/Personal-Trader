@@ -26,6 +26,22 @@ async def get_risk_metrics(
     try:
         portfolio = await broker.get_portfolio()
         health = await risk_manager.check_portfolio_health(portfolio)
+
+        # Calculate VaR if positions exist
+        var_data = {}
+        if portfolio.positions:
+            try:
+                from app.risk.var_calculator import VaRCalculator
+                from app.dependencies import get_data_pipeline
+                pipeline = get_data_pipeline()
+                var_calc = VaRCalculator()
+                var_result = await var_calc.calculate_portfolio_var(
+                    portfolio, pipeline._market_data
+                )
+                var_data = var_result.to_dict()
+            except Exception:
+                pass
+
         return {
             "health": {
                 "healthy": health.healthy,
@@ -38,9 +54,13 @@ async def get_risk_metrics(
                 "sector_exposure": health.sector_exposure,
                 "largest_position_pct": health.largest_position_pct,
                 "market_open": health.market_open,
+                "var_95": var_data.get("var_95", 0.0),
+                "var_99": var_data.get("var_99", 0.0),
+                "cvar_95": var_data.get("cvar_95", 0.0),
             },
             "limits": risk_manager.get_limits(),
             "daily_loss_triggered": risk_manager.daily_loss_triggered,
+            "var": var_data,
         }
     except Exception:
         return {

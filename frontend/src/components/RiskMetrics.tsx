@@ -156,6 +156,33 @@ export function RiskMetrics({ risk }: Props) {
           </div>
         )}
 
+        {/* VaR Metrics */}
+        {(health as Record<string, unknown>).var_95 != null && Number((health as Record<string, unknown>).var_95) > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-800">
+            <div className="text-xs text-gray-500 mb-2">Value at Risk</div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="text-center">
+                <div className="text-xs text-gray-500">VaR 95%</div>
+                <div className="text-sm text-red-400">
+                  ${Number((health as Record<string, unknown>).var_95 ?? 0).toFixed(0)}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-xs text-gray-500">VaR 99%</div>
+                <div className="text-sm text-red-400">
+                  ${Number((health as Record<string, unknown>).var_99 ?? 0).toFixed(0)}
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-xs text-gray-500">CVaR 95%</div>
+                <div className="text-sm text-red-400">
+                  ${Number((health as Record<string, unknown>).cvar_95 ?? 0).toFixed(0)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Warnings */}
         {health.warnings.length > 0 && (
           <div className="mt-3 pt-3 border-t border-gray-800">

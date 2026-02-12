@@ -87,8 +87,19 @@ class PortfolioTracker:
         trade.status = TradeStatus.CLOSED
         trade.closed_at = datetime.now(timezone.utc)
 
+        # Calculate hold duration
+        hold_duration_minutes = 0.0
+        if trade.created_at and trade.closed_at:
+            delta = trade.closed_at - trade.created_at
+            hold_duration_minutes = delta.total_seconds() / 60
+
         if self._performance:
-            self._performance.record_trade(pnl, commission)
+            self._performance.record_trade(
+                pnl,
+                commission,
+                strategy_name=trade.strategy_name,
+                hold_duration_minutes=hold_duration_minutes,
+            )
             if self._performance.should_alert_consecutive_losses(
                 settings.consecutive_loss_alert_threshold
             ):

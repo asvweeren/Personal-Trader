@@ -7,6 +7,48 @@ logger = structlog.get_logger()
 
 
 @dataclass
+class StrategyMetrics:
+    """Per-strategy performance metrics."""
+    trades: int = 0
+    wins: int = 0
+    losses: int = 0
+    pnl: float = 0.0
+    avg_confidence: float = 0.0
+    total_confidence: float = 0.0
+    trade_pnls: list[float] = field(default_factory=list)
+    hold_durations: list[float] = field(default_factory=list)  # minutes
+
+    @property
+    def win_rate(self) -> float:
+        return (self.wins / self.trades * 100) if self.trades > 0 else 0.0
+
+    @property
+    def profit_factor(self) -> float:
+        gross_profit = sum(p for p in self.trade_pnls if p > 0)
+        gross_loss = abs(sum(p for p in self.trade_pnls if p < 0))
+        if gross_loss == 0:
+            return float("inf") if gross_profit > 0 else 0.0
+        return gross_profit / gross_loss
+
+    @property
+    def avg_hold_time(self) -> float:
+        return sum(self.hold_durations) / len(self.hold_durations) if self.hold_durations else 0.0
+
+    def to_dict(self) -> dict:
+        pf = self.profit_factor
+        return {
+            "trades": self.trades,
+            "wins": self.wins,
+            "losses": self.losses,
+            "pnl": round(self.pnl, 2),
+            "win_rate": round(self.win_rate, 2),
+            "profit_factor": round(pf, 2) if pf != float("inf") else "∞",
+            "avg_confidence": round(self.avg_confidence, 3),
+            "avg_hold_time_minutes": round(self.avg_hold_time, 1),
+        }
+
+
+@dataclass
 class PerformanceTracker:
     """Tracks trading performance metrics in memory, periodically persisted to DB."""
 
@@ -24,6 +66,7 @@ class PerformanceTracker:
     trade_pnls: list[float] = field(default_factory=list)
     daily_start_value: float = 5000.0
     last_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    strategy_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
 
     @property
     def total_value(self) -> float:
@@ -55,7 +98,14 @@ class PerformanceTracker:
             return float("inf") if gross_profit > 0 else 0.0
         return gross_profit / gross_loss
 
-    def record_trade(self, pnl: float, commission: float = 0.0) -> None:
+    def record_trade(
+        self,
+        pnl: float,
+        commission: float = 0.0,
+        strategy_name: str | None = None,
+        confidence: float = 0.0,
+        hold_duration_minutes: float = 0.0,
+    ) -> None:
         self.trade_pnls.append(pnl)
         self.realized_pnl += pnl
         self.total_commission += commission
@@ -67,6 +117,23 @@ class PerformanceTracker:
         elif pnl < 0:
             self.losing_trades += 1
             self.consecutive_losses += 1
+
+        # Per-strategy attribution
+        if strategy_name:
+            if strategy_name not in self.strategy_metrics:
+                self.strategy_metrics[strategy_name] = StrategyMetrics()
+            sm = self.strategy_metrics[strategy_name]
+            sm.trades += 1
+            sm.pnl += pnl
+            sm.trade_pnls.append(pnl)
+            sm.total_confidence += confidence
+            sm.avg_confidence = sm.total_confidence / sm.trades
+            if hold_duration_minutes > 0:
+                sm.hold_durations.append(hold_duration_minutes)
+            if pnl > 0:
+                sm.wins += 1
+            elif pnl < 0:
+                sm.losses += 1
 
         self._update_drawdown()
 
@@ -92,6 +159,13 @@ class PerformanceTracker:
         if drawdown > self.max_drawdown:
             self.max_drawdown = drawdown
 
+    def get_strategy_breakdown(self) -> dict[str, dict]:
+        """Return per-strategy performance breakdown."""
+        return {
+            name: metrics.to_dict()
+            for name, metrics in self.strategy_metrics.items()
+        }
+
     def to_dict(self) -> dict:
         return {
             "total_value": round(self.total_value, 2),
@@ -108,4 +182,5 @@ class PerformanceTracker:
             "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float("inf") else "∞",
             "max_drawdown": round(self.max_drawdown, 2),
             "total_commission": round(self.total_commission, 2),
+            "strategy_breakdown": self.get_strategy_breakdown(),
         }

@@ -40,6 +40,9 @@ class HealthReport:
     sector_exposure: dict[str, float] = field(default_factory=dict)
     largest_position_pct: float = 0.0
     market_open: bool = False
+    var_95: float = 0.0
+    var_99: float = 0.0
+    cvar_95: float = 0.0
 
 
 class RiskManager:
@@ -86,6 +89,7 @@ class RiskManager:
         portfolio: Portfolio,
         estimated_price: float,
         correlation_matrix: dict[tuple[str, str], float] | None = None,
+        regime=None,
     ) -> RiskDecision:
         """Evaluate a trading signal against all risk rules."""
         # Update drawdown tracking
@@ -117,11 +121,23 @@ class RiskManager:
                 )
             return RiskDecision(approved=True, signal=signal)
 
+        # Regime-aware position sizing
+        effective_max_position_pct = self.max_position_pct
+        if regime is not None:
+            try:
+                from app.strategy.regime import MarketRegime
+                if regime.regime == MarketRegime.HIGH_VOLATILITY:
+                    effective_max_position_pct *= 0.6  # 40% reduction
+                elif regime.regime == MarketRegime.RANGING:
+                    effective_max_position_pct *= 0.8  # 20% reduction
+            except Exception:
+                pass
+
         # For BUY signals, run full risk checks
         quantity = calculate_position_size(
             portfolio=portfolio,
             price=estimated_price,
-            max_position_pct=self.max_position_pct,
+            max_position_pct=effective_max_position_pct,
             confidence=signal.confidence,
             symbol=signal.symbol,
             correlation_matrix=correlation_matrix,

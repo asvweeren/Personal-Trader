@@ -87,10 +87,30 @@ class MLStrategy(Strategy):
 
         logger.info("ml_strategy.model_saved", path=str(self._model_path))
 
+    def get_regime_threshold(self) -> float:
+        """Get confidence threshold adjusted for current market regime."""
+        try:
+            from app.strategy.regime import MarketRegime
+            from app.risk.reconciliation import get_last_result  # noqa: F401
+            # Access regime from engine's detector via module-level reference
+            regime = getattr(self, "_current_regime", None)
+            if regime is not None:
+                if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
+                    return 0.45  # More aggressive in trends
+                elif regime.regime == MarketRegime.RANGING:
+                    return 0.65  # More conservative in ranges
+                elif regime.regime == MarketRegime.HIGH_VOLATILITY:
+                    return 0.70  # Very conservative in high vol
+        except Exception:
+            pass
+        return self._confidence_threshold
+
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
         signals = []
         if self._model is None:
             return signals
+
+        confidence_threshold = self.get_regime_threshold()
 
         for symbol, df in market_data.ohlcv.items():
             if df.empty or len(df) < 50:
@@ -118,7 +138,7 @@ class MLStrategy(Strategy):
                 pred_class = int(np.argmax(proba))
                 confidence = float(proba[pred_class])
 
-                if confidence < self._confidence_threshold:
+                if confidence < confidence_threshold:
                     action = SignalAction.HOLD
                 elif pred_class == 2:
                     action = SignalAction.BUY

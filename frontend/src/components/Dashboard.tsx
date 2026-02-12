@@ -16,6 +16,8 @@ const BacktestPanel = lazy(() => import("./BacktestPanel").then(m => ({ default:
 const ValidationDashboard = lazy(() => import("./ValidationDashboard").then(m => ({ default: m.ValidationDashboard })));
 const SettingsPage = lazy(() => import("./SettingsPage").then(m => ({ default: m.SettingsPage })));
 const ScreenerPanel = lazy(() => import("./ScreenerPanel").then(m => ({ default: m.ScreenerPanel })));
+const WalkForwardPanel = lazy(() => import("./WalkForwardPanel").then(m => ({ default: m.WalkForwardPanel })));
+const MonteCarloPanel = lazy(() => import("./MonteCarloPanel").then(m => ({ default: m.MonteCarloPanel })));
 
 type Tab = "overview" | "trades" | "screener" | "backtest" | "validation" | "settings";
 
@@ -144,6 +146,10 @@ export function Dashboard() {
         {tab === "backtest" && (
           <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading backtest...</div>}>
             <BacktestPanel />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              <WalkForwardPanel />
+              <MonteCarloPanel />
+            </div>
           </Suspense>
         )}
 

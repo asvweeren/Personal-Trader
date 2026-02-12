@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router, get_current_user
-from app.api.routes import portfolio, trades, strategy, risk, backtest, system, validation, screener
+from app.api.routes import portfolio, trades, strategy, risk, backtest, system, validation, screener, models
 from app.api.websocket import router as ws_router, broadcast_update
 from app.config import settings
 from app.core.event_bus import (
@@ -28,6 +28,7 @@ from app.core.scheduler import (
     schedule_daily_screener,
     schedule_heartbeat,
     schedule_snapshot_cleanup,
+    schedule_economic_calendar,
 )
 from app.dependencies import get_broker, get_data_pipeline, get_startup_symbols, init_trading_engine
 from app.models.database import async_session as session_factory
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
     schedule_daily_screener()
     schedule_heartbeat()
     schedule_snapshot_cleanup()
+    schedule_economic_calendar()
 
     # Try to start broker, pipeline and trading engine (each step non-fatal)
     pipeline = None
@@ -155,6 +157,7 @@ app.include_router(backtest.router, prefix="/api", tags=["backtest"], dependenci
 app.include_router(system.router, prefix="/api", tags=["system"], dependencies=_auth)
 app.include_router(validation.router, prefix="/api", tags=["validation"], dependencies=_auth)
 app.include_router(screener.router, prefix="/api", tags=["screener"], dependencies=_auth)
+app.include_router(models.router, prefix="/api", tags=["models"], dependencies=_auth)
 
 # WebSocket (token validated inside the handler)
 app.include_router(ws_router)
