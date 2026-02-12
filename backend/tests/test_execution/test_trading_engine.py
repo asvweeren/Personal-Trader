@@ -276,21 +276,26 @@ async def test_reconnect_on_disconnect():
 
 
 @pytest.mark.asyncio
-async def test_reconnect_max_attempts():
+async def test_reconnect_never_gives_up():
+    """Engine keeps trying to reconnect — it never enters ERROR state on its own."""
     engine = make_engine()
     await engine.start()
 
     engine._broker.is_connected = AsyncMock(return_value=False)
     engine._broker.connect = AsyncMock(side_effect=Exception("Connection failed"))
-    engine._max_reconnect_attempts = 2
 
-    # First attempt
-    await engine._ensure_connected()
-    assert engine._reconnect_attempts == 1
+    # Multiple failed attempts should NOT put engine in ERROR
+    for _ in range(10):
+        await engine._ensure_connected()
 
-    # Second attempt
-    await engine._ensure_connected()
-    assert engine.state == EngineState.ERROR
+    assert engine._reconnect_attempts == 10
+    assert engine.state == EngineState.RUNNING  # Still running, waiting for reconnect
+
+    # When connection is restored, attempts reset
+    engine._broker.is_connected = AsyncMock(return_value=True)
+    result = await engine._ensure_connected()
+    assert result is True
+    assert engine._reconnect_attempts == 0
 
 
 # ── Trailing stop tests ─────────────────────────────────────

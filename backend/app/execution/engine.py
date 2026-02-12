@@ -278,35 +278,48 @@ class TradingEngine:
             })
 
     async def _ensure_connected(self) -> bool:
-        """Check broker connection and attempt reconnect if needed."""
+        """Check broker connection and attempt reconnect if needed.
+
+        Never gives up — the broker adapter handles auto-reconnect with
+        exponential backoff.  The engine just skips cycles while disconnected.
+        """
         if await self._broker.is_connected():
+            if self._reconnect_attempts > 0:
+                logger.info("engine.reconnected", after_attempts=self._reconnect_attempts)
+                await send_alert(
+                    "Engine Reconnected",
+                    f"Trading engine restored after {self._reconnect_attempts} cycle(s) offline.",
+                )
             self._reconnect_attempts = 0
+            if self._state == EngineState.ERROR:
+                self._state = EngineState.RUNNING
             return True
 
         self._reconnect_attempts += 1
 
-        if self._reconnect_attempts >= self._max_reconnect_attempts:
-            self._state = EngineState.ERROR
-            await send_alert(
-                "Broker Connection Lost",
-                f"Failed to reconnect after {self._max_reconnect_attempts} attempts. "
-                "Trading engine stopped.",
-                critical=True,
+        # Alert on first disconnect and then every 10 cycles (~50 min)
+        if self._reconnect_attempts == 1 or self._reconnect_attempts % 10 == 0:
+            logger.warning(
+                "engine.broker_offline",
+                attempt=self._reconnect_attempts,
             )
-            return False
-        logger.warning(
-            "engine.reconnecting",
-            attempt=self._reconnect_attempts,
-            max=self._max_reconnect_attempts,
-        )
+            if self._reconnect_attempts == 1:
+                await send_alert(
+                    "Broker Disconnected",
+                    "IBKR connection lost. Auto-reconnect is active — "
+                    "trading will resume when connection is restored.",
+                )
 
+        # Try reconnect from the engine side as well (belt and suspenders)
         try:
             await self._broker.connect()
             self._reconnect_attempts = 0
+            if self._state == EngineState.ERROR:
+                self._state = EngineState.RUNNING
             logger.info("engine.reconnected")
             return True
         except Exception:
-            logger.exception("engine.reconnect_failed", attempt=self._reconnect_attempts)
+            logger.debug("engine.reconnect_pending", attempt=self._reconnect_attempts)
             return False
 
     async def _handle_sell_signal(

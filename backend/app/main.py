@@ -19,6 +19,7 @@ from app.core.event_bus import (
 from app.core.scheduler import (
     start_scheduler,
     stop_scheduler,
+    schedule_broker_watchdog,
     schedule_data_pipeline,
     schedule_trading_engine,
     schedule_daily_reset,
@@ -72,6 +73,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("startup.broker_unavailable", error=str(e))
         logger.info("app.running_without_broker", hint="Configure IBKR credentials and restart")
+
+    # Always schedule the broker watchdog (reconnects even when engine is not running)
+    if broker:
+        schedule_broker_watchdog(broker)
 
     # Step 2: Start data pipeline (requires broker)
     if broker and await broker.is_connected():

@@ -201,6 +201,38 @@ def schedule_snapshot_cleanup() -> None:
     logger.info("scheduler.job_added", job="snapshot_cleanup", trigger="cron(02:00)")
 
 
+def schedule_broker_watchdog(broker) -> None:
+    """Monitor broker connection and trigger reconnect if needed.
+
+    Runs every 30 seconds, independent of the trading cycle.
+    The broker adapter handles the actual reconnect with exponential backoff;
+    this job ensures the connection state is checked even when the engine
+    is not running cycles (e.g. outside market hours).
+    """
+
+    async def broker_watchdog():
+        try:
+            connected = await broker.is_connected()
+            if not connected:
+                logger.warning("watchdog.broker_offline")
+                try:
+                    await broker.connect()
+                    logger.info("watchdog.broker_reconnected")
+                except Exception:
+                    pass  # Adapter auto-reconnect handles retries
+        except Exception:
+            pass  # Don't let watchdog failures break the scheduler
+
+    scheduler.add_job(
+        broker_watchdog,
+        IntervalTrigger(seconds=30),
+        id="broker_watchdog",
+        replace_existing=True,
+        max_instances=1,
+    )
+    logger.info("scheduler.job_added", job="broker_watchdog", interval="30s")
+
+
 def schedule_daily_reset(engine) -> None:
     """Reset daily counters at 08:30 UTC Mon-Fri (before EU market open)."""
 

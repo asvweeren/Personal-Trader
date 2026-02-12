@@ -36,7 +36,8 @@ class IBKRAdapter(BrokerAdapter):
     """Interactive Brokers adapter using ib_insync.
 
     Runs ib_insync on a dedicated background thread with its own event loop
-    to avoid conflicts with uvicorn's asyncio loop.
+    to avoid conflicts with uvicorn's asyncio loop.  Automatically reconnects
+    on disconnection using exponential backoff.
     """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 1):
@@ -47,6 +48,8 @@ class IBKRAdapter(BrokerAdapter):
         self._ib_loop: asyncio.AbstractEventLoop | None = None
         self._ib_thread: threading.Thread | None = None
         self._market_data_callbacks: dict[str, callable] = {}
+        self._auto_reconnect = True
+        self._reconnecting = False
 
     def _start_ib_loop(self):
         """Start a dedicated event loop thread for ib_insync."""
@@ -114,11 +117,82 @@ class IBKRAdapter(BrokerAdapter):
                 raise last_err
 
             await self._run(_do_connect())
+            self._wire_disconnect_handler()
             logger.info("ibkr.connected", host=self._host, port=self._port)
         except Exception as e:
             raise BrokerConnectionError(f"Failed to connect to IBKR: {e}") from e
 
+    def _wire_disconnect_handler(self) -> None:
+        """Subscribe to ib_insync disconnect event for auto-reconnect."""
+        if self._ib is None:
+            return
+
+        def _on_disconnect():
+            logger.warning("ibkr.disconnected_event", auto_reconnect=self._auto_reconnect)
+            if self._auto_reconnect and not self._reconnecting:
+                asyncio.run_coroutine_threadsafe(
+                    self._auto_reconnect_loop(), self._ib_loop
+                )
+
+        # Clear existing handlers to avoid duplicates on re-connect
+        self._ib.disconnectedEvent.clear()
+        self._ib.disconnectedEvent += _on_disconnect
+
+    async def _auto_reconnect_loop(self) -> None:
+        """Reconnect with exponential backoff (5s → 10s → 20s → ... max 300s)."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        delay = 5
+        max_delay = 300
+        attempt = 0
+
+        try:
+            while self._auto_reconnect:
+                attempt += 1
+                logger.info("ibkr.auto_reconnect", attempt=attempt, delay=delay)
+                await asyncio.sleep(delay)
+
+                try:
+                    self._ib = IB()
+                    await self._ib.connectAsync(
+                        self._host, self._port,
+                        clientId=self._client_id,
+                        timeout=30,
+                    )
+                    self._ib.reqMarketDataType(3)
+                    self._wire_disconnect_handler()
+                    logger.info("ibkr.auto_reconnected", attempt=attempt)
+
+                    # Re-subscribe market data if we had subscriptions
+                    if self._market_data_callbacks:
+                        symbols = list(self._market_data_callbacks.keys())
+                        for symbol in symbols:
+                            try:
+                                contract = self._make_contract(symbol)
+                                self._ib.reqMktData(contract)
+                            except Exception:
+                                logger.warning("ibkr.resubscribe_failed", symbol=symbol)
+
+                    # Send recovery alert
+                    try:
+                        from app.monitoring.alerts import send_alert
+                        await send_alert(
+                            "Broker Reconnected",
+                            f"IBKR connection restored after {attempt} attempt(s).",
+                        )
+                    except Exception:
+                        pass
+
+                    return  # Success
+                except Exception as e:
+                    logger.warning("ibkr.auto_reconnect_failed", attempt=attempt, error=str(e))
+                    delay = min(delay * 2, max_delay)
+        finally:
+            self._reconnecting = False
+
     async def disconnect(self) -> None:
+        self._auto_reconnect = False  # Prevent reconnect during intentional shutdown
         if self._ib and self._ib.isConnected():
             await self._sync(self._ib.disconnect)
             logger.info("ibkr.disconnected")
