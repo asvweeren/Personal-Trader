@@ -40,11 +40,30 @@ export function PortfolioCard({ portfolio, performance }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-800">
+        <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-800">
           <div>
             <div className="text-xs text-gray-500">Cash</div>
-            <div className="text-sm font-medium">{formatCurrency(portfolio.cash)}</div>
+            <div className="text-sm font-medium">
+              {formatCurrency(portfolio.cash)}
+            </div>
           </div>
+          <div>
+            <div className="text-xs text-gray-500">Positions Value</div>
+            <div
+              className={`text-sm font-medium ${(portfolio.total_value - portfolio.cash) >= 0 ? "text-green-400" : "text-red-400"}`}
+            >
+              {formatCurrency(portfolio.total_value - portfolio.cash)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Positions</div>
+            <div className="text-sm font-medium">
+              {portfolio.positions.length}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-800">
           <div>
             <div className="text-xs text-gray-500">Unrealized P&L</div>
             <div
@@ -60,10 +79,6 @@ export function PortfolioCard({ portfolio, performance }: Props) {
             >
               {formatCurrency(portfolio.realized_pnl)}
             </div>
-          </div>
-          <div>
-            <div className="text-xs text-gray-500">Positions</div>
-            <div className="text-sm font-medium">{portfolio.positions.length}</div>
           </div>
         </div>
 
