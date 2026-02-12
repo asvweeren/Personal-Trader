@@ -66,7 +66,8 @@ export function TradeTable() {
                   <th className="text-right pb-2">P&L</th>
                   <th className="text-left pb-2">Status</th>
                   <th className="text-left pb-2">Strategy</th>
-                  <th className="text-left pb-2">Date</th>
+                  <th className="text-left pb-2">Opened</th>
+                  <th className="text-left pb-2">Closed</th>
                 </tr>
               </thead>
               <tbody>
@@ -79,6 +80,16 @@ export function TradeTable() {
                     : trade.side === "BUY"
                       ? "text-green-400"
                       : "text-red-400";
+
+                  const fmtDateTime = (iso: string | null) => {
+                    if (!iso) return "-";
+                    const d = new Date(iso);
+                    return (
+                      d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit" }) +
+                      " " +
+                      d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+                    );
+                  };
 
                   return (
                     <tr key={trade.id} className="border-b border-gray-800/50">
@@ -120,12 +131,11 @@ export function TradeTable() {
                         </span>
                       </td>
                       <td className="py-2 text-gray-500 text-xs">{trade.strategy_name}</td>
-                      <td className="py-2 text-gray-500 text-xs">
-                        {isClosed && trade.closed_at
-                          ? new Date(trade.closed_at).toLocaleDateString()
-                          : trade.created_at
-                            ? new Date(trade.created_at).toLocaleDateString()
-                            : "-"}
+                      <td className="py-2 text-gray-500 text-xs whitespace-nowrap">
+                        {fmtDateTime(trade.created_at)}
+                      </td>
+                      <td className="py-2 text-gray-500 text-xs whitespace-nowrap">
+                        {isClosed ? fmtDateTime(trade.closed_at) : "-"}
                       </td>
                     </tr>
                   );
