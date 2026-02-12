@@ -42,9 +42,9 @@ export function PortfolioCard({ portfolio, performance }: Props) {
 
         <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-800">
           <div>
-            <div className="text-xs text-gray-500">Cash</div>
+            <div className="text-xs text-gray-500">Buying Power</div>
             <div className="text-sm font-medium">
-              {formatCurrency(portfolio.cash)}
+              {formatCurrency(portfolio.buying_power)}
             </div>
           </div>
           <div>
