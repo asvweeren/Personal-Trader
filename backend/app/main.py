@@ -5,7 +5,10 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router, get_current_user
-from app.api.routes import portfolio, trades, strategy, risk, backtest, system, validation, screener, models
+from app.api.routes import (
+    portfolio, trades, strategy, risk, backtest,
+    system, validation, screener, models,
+)
 from app.api.websocket import router as ws_router, broadcast_update
 from app.config import settings
 from app.core.event_bus import (
@@ -52,7 +55,10 @@ async def lifespan(app: FastAPI):
     )
 
     # Subscribe event bus to WS broadcasting
-    for evt in (SIGNAL_GENERATED, ORDER_FILLED, PORTFOLIO_UPDATED, RISK_DAILY_STOP, POSITION_CLOSED):
+    for evt in (
+        SIGNAL_GENERATED, ORDER_FILLED, PORTFOLIO_UPDATED,
+        RISK_DAILY_STOP, POSITION_CLOSED,
+    ):
         event_bus.subscribe(evt, _ws_forward)
 
     # Start scheduler

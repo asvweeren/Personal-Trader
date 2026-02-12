@@ -7,7 +7,7 @@ volume, and volatility, then returns the top N candidates.
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -144,7 +144,10 @@ def _compute_rsi(series: pd.Series, period: int = 14) -> float:
     return 100 - (100 / (1 + rs))
 
 
-def _compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float:
+def _compute_atr(
+    high: pd.Series, low: pd.Series,
+    close: pd.Series, period: int = 14,
+) -> float:
     """Compute ATR for the last value."""
     prev_close = close.shift(1)
     tr = pd.concat([
@@ -174,10 +177,22 @@ class StockScreener:
         """
         max_candidates = max_candidates or settings.screener_max_candidates
         min_avg_volume = min_avg_volume or settings.screener_min_avg_volume
-        momentum_weight = momentum_weight if momentum_weight is not None else settings.screener_momentum_weight
-        volume_weight = volume_weight if volume_weight is not None else settings.screener_volume_weight
-        volatility_weight = volatility_weight if volatility_weight is not None else settings.screener_volatility_weight
-        include_eu = include_eu if include_eu is not None else settings.screener_include_eu
+        momentum_weight = (
+            momentum_weight if momentum_weight is not None
+            else settings.screener_momentum_weight
+        )
+        volume_weight = (
+            volume_weight if volume_weight is not None
+            else settings.screener_volume_weight
+        )
+        volatility_weight = (
+            volatility_weight if volatility_weight is not None
+            else settings.screener_volatility_weight
+        )
+        include_eu = (
+            include_eu if include_eu is not None
+            else settings.screener_include_eu
+        )
 
         config = {
             "max_candidates": max_candidates,
@@ -318,7 +333,10 @@ class StockScreener:
             return None
 
         # ── Momentum score (0–1) ───────────────────────────────────────
-        ret_5d = float((close.iloc[-1] / close.iloc[-5] - 1) * 100) if len(close) >= 5 else 0.0
+        ret_5d = (
+            float((close.iloc[-1] / close.iloc[-5] - 1) * 100)
+            if len(close) >= 5 else 0.0
+        )
         ret_20d = float((close.iloc[-1] / close.iloc[0] - 1) * 100)
         rsi = _compute_rsi(close)
 

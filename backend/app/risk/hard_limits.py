@@ -14,7 +14,7 @@ from app.core.exceptions import (
     MaxPositionsExceeded,
     PositionSizeLimitExceeded,
 )
-from app.risk.market_hours import Exchange, get_exchange_for_symbol, is_market_open
+from app.risk.market_hours import get_exchange_for_symbol, is_market_open
 
 
 @dataclass

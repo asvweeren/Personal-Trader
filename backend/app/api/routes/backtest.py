@@ -51,13 +51,15 @@ async def _run_backtest_task(
     db: AsyncSession,
 ):
     """Background task to run the actual backtest."""
-    from app.dependencies import get_broker
 
     try:
         # Get strategy
         factory = _STRATEGY_REGISTRY.get(request.strategy_name)
         if not factory:
-            await _update_result(db, backtest_id, error=f"Unknown strategy: {request.strategy_name}")
+            await _update_result(
+                db, backtest_id,
+                error=f"Unknown strategy: {request.strategy_name}",
+            )
             return
 
         strategy = factory(request.params or {})
@@ -124,7 +126,11 @@ async def _run_backtest_task(
                 return
 
         if data is None or data.empty or len(data) < 50:
-            await _update_result(db, backtest_id, error="Insufficient historical data. Check symbol and date range.")
+            await _update_result(
+                db, backtest_id,
+                error="Insufficient historical data. "
+                "Check symbol and date range.",
+            )
             return
 
         # Run backtest

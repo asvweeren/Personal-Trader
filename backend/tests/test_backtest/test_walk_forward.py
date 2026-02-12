@@ -3,7 +3,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from app.backtest.walk_forward import (
     WalkForwardConfig,
@@ -11,7 +11,6 @@ from app.backtest.walk_forward import (
     WalkForwardResult,
     WindowResult,
 )
-from app.strategy.base import TrainResult
 
 
 def _make_data(days: int = 365) -> pd.DataFrame:

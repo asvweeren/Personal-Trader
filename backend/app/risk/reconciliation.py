@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import Portfolio
 from app.models.trade import Trade, TradeStatus
-from app.monitoring.alerts import send_alert
 
 logger = structlog.get_logger()
 

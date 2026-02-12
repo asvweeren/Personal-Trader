@@ -1,7 +1,5 @@
 """Tests for model experiment tracking model."""
 
-import pytest
-from datetime import datetime
 
 from app.models.model_experiment import ModelExperiment
 

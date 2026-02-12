@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.database import Base
+
+if TYPE_CHECKING:
+    from app.models.trade import Trade
 
 
 class OrderType(str, enum.Enum):

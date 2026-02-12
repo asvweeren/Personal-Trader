@@ -109,9 +109,15 @@ def calculate_benchmark_comparison(
     shares = initial_capital / first_price if first_price > 0 else 0
     benchmark_equity = shares * np.array(price_series, dtype=float)
 
-    benchmark_return = (benchmark_equity[-1] - initial_capital) / initial_capital if initial_capital > 0 else 0
+    benchmark_return = (
+        (benchmark_equity[-1] - initial_capital) / initial_capital
+        if initial_capital > 0 else 0
+    )
     strategy_equity = np.array(equity_curve, dtype=float)
-    strategy_return = (strategy_equity[-1] - initial_capital) / initial_capital if initial_capital > 0 else 0
+    strategy_return = (
+        (strategy_equity[-1] - initial_capital) / initial_capital
+        if initial_capital > 0 else 0
+    )
 
     # Strategy returns (align lengths)
     strategy_vals = strategy_equity[1:]  # Skip initial capital
@@ -120,8 +126,14 @@ def calculate_benchmark_comparison(
     benchmark_vals = benchmark_equity[:min_len]
 
     # Returns
-    strat_returns = np.diff(strategy_vals) / strategy_vals[:-1] if len(strategy_vals) > 1 else np.array([])
-    bench_returns = np.diff(benchmark_vals) / benchmark_vals[:-1] if len(benchmark_vals) > 1 else np.array([])
+    strat_returns = (
+        np.diff(strategy_vals) / strategy_vals[:-1]
+        if len(strategy_vals) > 1 else np.array([])
+    )
+    bench_returns = (
+        np.diff(benchmark_vals) / benchmark_vals[:-1]
+        if len(benchmark_vals) > 1 else np.array([])
+    )
 
     # Alpha and Beta (CAPM)
     alpha, beta = 0.0, 1.0
@@ -139,7 +151,12 @@ def calculate_benchmark_comparison(
         min_r = min(len(strat_returns), len(bench_returns))
         tracking_error = np.std(strat_returns[:min_r] - bench_returns[:min_r])
         if tracking_error > 0:
-            info_ratio = float(np.mean(strat_returns[:min_r] - bench_returns[:min_r])) / tracking_error * np.sqrt(periods_per_year)
+            excess = strat_returns[:min_r] - bench_returns[:min_r]
+            info_ratio = (
+                float(np.mean(excess))
+                / tracking_error
+                * np.sqrt(periods_per_year)
+            )
 
     # Benchmark max drawdown
     bm_dd, _ = _max_drawdown_with_duration(benchmark_vals)
@@ -220,7 +237,7 @@ def _max_drawdown_with_duration(equity: np.ndarray) -> tuple[float, int]:
 
     peak = equity[0]
     max_dd = 0.0
-    dd_start = 0
+    _dd_start = 0
     max_dd_duration = 0
     current_dd_start = 0
     in_drawdown = False

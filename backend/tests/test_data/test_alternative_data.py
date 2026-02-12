@@ -1,6 +1,5 @@
 """Tests for alternative data features in indicators."""
 
-import pytest
 import pandas as pd
 import numpy as np
 

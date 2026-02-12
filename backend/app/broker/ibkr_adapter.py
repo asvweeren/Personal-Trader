@@ -253,7 +253,11 @@ class IBKRAdapter(BrokerAdapter):
                         order_id=order_id,
                         status=trade.orderStatus.status,
                         filled_price=trade.orderStatus.avgFillPrice or None,
-                        filled_quantity=int(trade.orderStatus.filled) if trade.orderStatus.filled else None,
+                        filled_quantity=(
+                            int(trade.orderStatus.filled)
+                            if trade.orderStatus.filled
+                            else None
+                        ),
                     )
             return OrderResult(order_id=order_id, status="UNKNOWN")
 
@@ -328,7 +332,12 @@ class IBKRAdapter(BrokerAdapter):
                             asyncio.ensure_future(cb({
                                 "symbol": matched_symbol,
                                 "price": float(price),
-                                "volume": int(ticker.volume) if ticker.volume and ticker.volume == ticker.volume else 0,
+                                "volume": (
+                                    int(ticker.volume)
+                                    if ticker.volume
+                                    and ticker.volume == ticker.volume
+                                    else 0
+                                ),
                             }))
 
             self._ib.pendingTickersEvent += _on_pending_tickers

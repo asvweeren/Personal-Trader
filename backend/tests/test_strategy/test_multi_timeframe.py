@@ -1,6 +1,5 @@
 """Tests for multi-timeframe confirmation filter."""
 
-import pytest
 
 from app.strategy.base import TradingSignal, SignalAction
 from app.strategy.multi_timeframe import MultiTimeframeFilter

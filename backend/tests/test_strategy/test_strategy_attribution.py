@@ -1,6 +1,5 @@
 """Tests for per-strategy performance attribution."""
 
-import pytest
 
 from app.monitoring.performance import PerformanceTracker, StrategyMetrics
 

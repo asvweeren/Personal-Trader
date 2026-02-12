@@ -1,10 +1,9 @@
-from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from app.backtest.engine import BacktestConfig, BacktestEngine, BacktestTrade
+from app.backtest.engine import BacktestConfig, BacktestEngine
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TradingSignal
 

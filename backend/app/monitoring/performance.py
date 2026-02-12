@@ -179,7 +179,11 @@ class PerformanceTracker:
             "winning_trades": self.winning_trades,
             "losing_trades": self.losing_trades,
             "win_rate": round(self.win_rate, 2),
-            "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float("inf") else "∞",
+            "profit_factor": (
+                round(self.profit_factor, 2)
+                if self.profit_factor != float("inf")
+                else "\u221e"
+            ),
             "max_drawdown": round(self.max_drawdown, 2),
             "total_commission": round(self.total_commission, 2),
             "strategy_breakdown": self.get_strategy_breakdown(),

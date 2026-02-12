@@ -1,7 +1,6 @@
-from datetime import datetime, time, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from app.risk.market_hours import (
     Exchange,

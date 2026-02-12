@@ -1,7 +1,5 @@
 """PyTorch LSTM neural network strategy for sequence-based prediction."""
 
-import pickle
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -12,14 +10,12 @@ from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TradingSignal, TrainResult
 from app.strategy.feature_pipeline import (
-    FeaturePipelineConfig,
     select_feature_columns,
     remove_low_variance,
     remove_highly_correlated,
     create_target,
     normalize_features,
     time_based_split,
-    NON_FEATURE_COLS,
 )
 
 logger = structlog.get_logger()
@@ -126,8 +122,14 @@ class NNStrategy(Strategy):
                 # Normalize using training statistics
                 values = recent.values.astype(np.float32)
                 if self._norm_stats:
-                    means = np.array([self._norm_stats["mean"].get(c, 0) for c in self._feature_columns])
-                    stds = np.array([self._norm_stats["std"].get(c, 1) for c in self._feature_columns])
+                    means = np.array([
+                        self._norm_stats["mean"].get(c, 0)
+                        for c in self._feature_columns
+                    ])
+                    stds = np.array([
+                        self._norm_stats["std"].get(c, 1)
+                        for c in self._feature_columns
+                    ])
                     stds[stds == 0] = 1
                     values = (values - means) / stds
 
@@ -358,7 +360,6 @@ class _LSTMClassifier:
     """
 
     def __new__(cls, n_features: int, hidden_size: int, num_layers: int, dropout: float):
-        import torch
         import torch.nn as nn
 
         class LSTMModule(nn.Module):

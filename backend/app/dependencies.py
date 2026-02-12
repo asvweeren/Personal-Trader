@@ -149,7 +149,11 @@ async def get_startup_symbols() -> list[str]:
             if row and row.candidates:
                 symbols = [c["symbol"] for c in row.candidates if "symbol" in c]
                 if symbols:
-                    logger.info("startup.symbols_from_screener", count=len(symbols), date=str(row.screening_date))
+                    logger.info(
+                        "startup.symbols_from_screener",
+                        count=len(symbols),
+                        date=str(row.screening_date),
+                    )
                     return symbols
     except Exception:
         logger.warning("startup.screener_symbols_failed")

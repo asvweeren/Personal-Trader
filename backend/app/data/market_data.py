@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
@@ -314,7 +314,11 @@ class MarketDataService:
         """Persist a DataFrame of bars to the database."""
         if not self._db:
             return
-        size_map = {"1 min": "1m", "5 mins": "5m", "15 mins": "15m", "1 hour": "1h", "4 hours": "4h", "1 day": "1d"}
+        size_map = {
+            "1 min": "1m", "5 mins": "5m",
+            "15 mins": "15m", "1 hour": "1h",
+            "4 hours": "4h", "1 day": "1d",
+        }
         db_size = size_map.get(bar_size, bar_size)
 
         count = 0
@@ -360,7 +364,11 @@ class MarketDataService:
         else:
             start_date = datetime.now(timezone.utc) - timedelta(days=amount)
 
-        size_map = {"1 min": "1m", "5 mins": "5m", "15 mins": "15m", "1 hour": "1h", "4 hours": "4h", "1 day": "1d"}
+        size_map = {
+            "1 min": "1m", "5 mins": "5m",
+            "15 mins": "15m", "1 hour": "1h",
+            "4 hours": "4h", "1 day": "1d",
+        }
         db_size = size_map.get(bar_size, bar_size)
 
         result = await self._db.execute(

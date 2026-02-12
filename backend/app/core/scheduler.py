@@ -18,7 +18,11 @@ def _on_job_event(event) -> None:
     job_id = getattr(event, "job_id", "unknown")
 
     if hasattr(event, "exception") and event.exception:
-        tb = "".join(traceback.format_exception(type(event.exception), event.exception, event.exception.__traceback__))
+        tb = "".join(traceback.format_exception(
+            type(event.exception),
+            event.exception,
+            event.exception.__traceback__,
+        ))
         logger.error(
             "scheduler.job_error",
             job_id=job_id,
@@ -451,7 +455,6 @@ def schedule_eod_safety_close(engine) -> None:
 
     async def eod_safety_check():
         from app.risk.market_hours import is_any_market_open
-        from app.config import settings
 
         try:
             if engine.state.value != "RUNNING" or not engine.trading_enabled:
@@ -490,7 +493,6 @@ def schedule_weekly_model_retrain() -> None:
 
     async def retrain_model():
         import json
-        from pathlib import Path
 
         import pandas as pd
 
@@ -568,7 +570,11 @@ def schedule_weekly_model_retrain() -> None:
                         f"Old accuracy: {current_accuracy:.4f}\n"
                         f"New accuracy: {candidate_accuracy:.4f}"
                     )
-                    logger.info("scheduler.retrain_swapped", old=current_accuracy, new=candidate_accuracy)
+                    logger.info(
+                        "scheduler.retrain_swapped",
+                        old=current_accuracy,
+                        new=candidate_accuracy,
+                    )
                     await send_alert("Model Retrain Success", msg)
                 else:
                     await send_alert(
@@ -582,7 +588,11 @@ def schedule_weekly_model_retrain() -> None:
                     f"Candidate: {candidate_accuracy:.4f}\n"
                     f"Threshold (95%): {threshold:.4f}"
                 )
-                logger.info("scheduler.retrain_rejected", current=current_accuracy, candidate=candidate_accuracy)
+                logger.info(
+                    "scheduler.retrain_rejected",
+                    current=current_accuracy,
+                    candidate=candidate_accuracy,
+                )
                 await send_alert("Model Retrain Skipped", msg)
 
         except Exception:

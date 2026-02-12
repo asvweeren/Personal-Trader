@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import structlog
 
-from app.backtest.engine import BacktestConfig, BacktestEngine, BacktestResult
+from app.backtest.engine import BacktestConfig, BacktestEngine
 from app.backtest.metrics import calculate_metrics
 
 logger = structlog.get_logger()

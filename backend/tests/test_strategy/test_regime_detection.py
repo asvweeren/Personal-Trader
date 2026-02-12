@@ -1,6 +1,5 @@
 """Tests for market regime detection."""
 
-import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
@@ -9,7 +8,10 @@ from app.data.market_data import MarketSnapshot
 from app.strategy.regime import RegimeDetector, MarketRegime, RegimeState
 
 
-def _make_snapshot(trend: str = "up", volatility: str = "normal", n_symbols: int = 5) -> MarketSnapshot:
+def _make_snapshot(
+    trend: str = "up", volatility: str = "normal",
+    n_symbols: int = 5,
+) -> MarketSnapshot:
     """Create a synthetic market snapshot for testing regime detection."""
     ohlcv = {}
     prices = {}

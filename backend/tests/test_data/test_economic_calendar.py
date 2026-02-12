@@ -1,8 +1,6 @@
 """Tests for economic event calendar."""
 
-import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.data.economic_calendar import (
     EconomicCalendar,

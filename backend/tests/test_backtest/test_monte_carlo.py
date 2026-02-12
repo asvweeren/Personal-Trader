@@ -1,6 +1,5 @@
 """Tests for Monte Carlo simulation."""
 
-import pytest
 
 from app.backtest.monte_carlo import MonteCarloSimulator, MonteCarloConfig, MonteCarloResult
 

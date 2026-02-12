@@ -1,14 +1,14 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.broker.base import (
-    AccountSummary, BrokerAdapter, OrderResult, OrderType, Portfolio, Position,
+    AccountSummary, BrokerAdapter, OrderResult, Portfolio,
 )
 from app.data.market_data import MarketSnapshot
 from app.execution.engine import EngineState, TradingEngine
-from app.models.trade import Trade, TradeSide, TradeStatus
+from app.models.trade import Trade, TradeSide
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskDecision, RiskManager
 from app.strategy.base import SignalAction, Strategy, TradingSignal

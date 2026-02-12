@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np

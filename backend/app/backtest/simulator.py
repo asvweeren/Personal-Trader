@@ -1,9 +1,8 @@
 """Market simulator for backtesting with realistic execution modeling."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
-import numpy as np
 
 
 class FillStatus(str, Enum):
@@ -174,6 +173,10 @@ class MarketSimulator:
     ) -> FillResult:
         """Simulate a take-profit fill. Price may gap through the target."""
         # If bar opened above target (gap up), fill at open price (better)
-        fill_ref = max(take_profit_price, bar_open) if bar_open > take_profit_price else take_profit_price
+        fill_ref = (
+            max(take_profit_price, bar_open)
+            if bar_open > take_profit_price
+            else take_profit_price
+        )
 
         return self.simulate_fill(fill_ref, "SELL", quantity)

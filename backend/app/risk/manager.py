@@ -1,7 +1,6 @@
 """Risk management engine combining hard limits with AI-driven decisions."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.broker.base import Portfolio
 from app.models.risk_event import RiskEvent, RiskEventType, RiskEventSeverity
 from app.risk.hard_limits import check_all_hard_limits, HardLimitCheck
-from app.risk.market_hours import is_market_open, get_exchange_for_symbol, next_market_open
+from app.risk.market_hours import is_market_open, get_exchange_for_symbol
 from app.risk.position_sizer import (
     calculate_position_size,
-    calculate_sector_factor,
     get_sector,
 )
 from app.strategy.base import SignalAction, TradingSignal

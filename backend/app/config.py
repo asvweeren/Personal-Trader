@@ -60,7 +60,12 @@ class Settings(BaseSettings):
     screener_include_eu: bool = True
 
     # Trading Configuration
-    trading_symbols: str = "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,TSLA,AMD,NFLX,CRM,AVGO,JPM,BAC,GS,JNJ,UNH,LLY,XOM,CVX,WMT,HD,KO,COST,IWM,EFA,VGK,DIA,XLF,XLE"
+    trading_symbols: str = (
+        "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,"
+        "TSLA,AMD,NFLX,CRM,AVGO,JPM,BAC,GS,"
+        "JNJ,UNH,LLY,XOM,CVX,WMT,HD,KO,COST,"
+        "IWM,EFA,VGK,DIA,XLF,XLE"
+    )
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 7.0
     max_position_pct: float = 20.0

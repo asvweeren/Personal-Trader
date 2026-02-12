@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func, case, and_
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
@@ -154,7 +154,11 @@ async def get_strategy_performance(db: AsyncSession = Depends(get_db)):
         gross_profit = float(row.gross_profit or 0)
         gross_loss = float(row.gross_loss or 0)
         win_rate = (winning / total * 100) if total > 0 else 0.0
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+        profit_factor = (
+            (gross_profit / gross_loss) if gross_loss > 0
+            else float("inf") if gross_profit > 0
+            else 0.0
+        )
 
         strategies.append({
             "strategy_name": row.strategy_name,

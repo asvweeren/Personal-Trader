@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pandas as pd
 
 from app.broker.base import Portfolio, AccountSummary, Position

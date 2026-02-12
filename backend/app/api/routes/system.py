@@ -9,12 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.broker.base import BrokerAdapter
 from app.config import settings
 from app.data.pipeline import DataPipeline
-from app.execution.engine import TradingEngine
 from app.dependencies import get_broker, get_data_pipeline, get_trading_engine, get_db
 from app.models.strategy_config import StrategyConfig
 from app.monitoring.alerts import send_alert
-from app.monitoring.performance import PerformanceTracker
-from app.dependencies import get_performance_tracker
 
 router = APIRouter()
 
@@ -121,10 +118,19 @@ async def test_alert():
     """Send a test alert via all configured channels."""
     await send_alert(
         title="Test Alert",
-        message="Dit is een test alert vanuit het AI Trading systeem. Als je dit ontvangt, werken de alerts correct.",
+        message=(
+            "Dit is een test alert vanuit het AI Trading systeem. "
+            "Als je dit ontvangt, werken de alerts correct."
+        ),
         critical=True,
     )
-    return {"status": "sent", "channels": {"telegram": bool(settings.telegram_bot_token), "email": bool(settings.smtp_user)}}
+    return {
+        "status": "sent",
+        "channels": {
+            "telegram": bool(settings.telegram_bot_token),
+            "email": bool(settings.smtp_user),
+        },
+    }
 
 
 @router.get("/system/reconciliation")

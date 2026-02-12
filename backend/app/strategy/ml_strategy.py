@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import structlog
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import accuracy_score
 
 from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot

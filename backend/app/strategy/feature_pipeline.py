@@ -243,7 +243,11 @@ def get_feature_importance(
     if hasattr(model, "feature_importances_"):
         importances = model.feature_importances_
     elif hasattr(model, "coef_"):
-        importances = np.abs(model.coef_).mean(axis=0) if model.coef_.ndim > 1 else np.abs(model.coef_)
+        importances = (
+            np.abs(model.coef_).mean(axis=0)
+            if model.coef_.ndim > 1
+            else np.abs(model.coef_)
+        )
     else:
         return {}
 

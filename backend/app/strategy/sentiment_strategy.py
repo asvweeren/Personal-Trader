@@ -4,7 +4,6 @@ Uses Claude API to analyze financial news and generate trading signals.
 Includes cost tracking and confidence calibration.
 """
 
-from datetime import datetime, timezone
 
 import structlog
 

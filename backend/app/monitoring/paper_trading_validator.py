@@ -334,7 +334,11 @@ class PaperTradingValidator:
                 passed=sharpe > MIN_SHARPE_RATIO,
                 required=f"> {MIN_SHARPE_RATIO}",
                 actual=f"{sharpe:.3f}",
-                detail="Risk-adjusted return is acceptable." if sharpe > MIN_SHARPE_RATIO else "Risk-adjusted return is too low.",
+                detail=(
+                    "Risk-adjusted return is acceptable."
+                    if sharpe > MIN_SHARPE_RATIO
+                    else "Risk-adjusted return is too low."
+                ),
             )
         )
 
@@ -345,7 +349,11 @@ class PaperTradingValidator:
                 passed=max_dd < MAX_DRAWDOWN_PCT,
                 required=f"< {MAX_DRAWDOWN_PCT}%",
                 actual=f"{max_dd:.2f}%",
-                detail="Drawdown within acceptable limits." if max_dd < MAX_DRAWDOWN_PCT else "Drawdown exceeds acceptable limits.",
+                detail=(
+                    "Drawdown within acceptable limits."
+                    if max_dd < MAX_DRAWDOWN_PCT
+                    else "Drawdown exceeds acceptable limits."
+                ),
             )
         )
 
@@ -356,7 +364,11 @@ class PaperTradingValidator:
                 passed=win_rate > MIN_WIN_RATE,
                 required=f"> {MIN_WIN_RATE}%",
                 actual=f"{win_rate:.2f}%",
-                detail="Win rate is acceptable." if win_rate > MIN_WIN_RATE else "Win rate is too low.",
+                detail=(
+                    "Win rate is acceptable."
+                    if win_rate > MIN_WIN_RATE
+                    else "Win rate is too low."
+                ),
             )
         )
 
@@ -367,7 +379,11 @@ class PaperTradingValidator:
                 passed=pf > MIN_PROFIT_FACTOR,
                 required=f"> {MIN_PROFIT_FACTOR}",
                 actual=f"{pf:.3f}",
-                detail="Profit factor is acceptable." if pf > MIN_PROFIT_FACTOR else "Profit factor is too low.",
+                detail=(
+                    "Profit factor is acceptable."
+                    if pf > MIN_PROFIT_FACTOR
+                    else "Profit factor is too low."
+                ),
             )
         )
 
@@ -456,7 +472,11 @@ class PaperTradingValidator:
         # Build narrative summary
         narrative_parts = [
             f"Paper Trading Daily Report - {report_date.isoformat()}",
-            f"Trades: {summary.total_trades} (W:{summary.winning_trades} / L:{summary.losing_trades})",
+            (
+                f"Trades: {summary.total_trades} "
+                f"(W:{summary.winning_trades} / "
+                f"L:{summary.losing_trades})"
+            ),
             f"Daily P&L: ${summary.daily_pnl:,.2f}",
             f"Cumulative P&L: ${summary.cumulative_pnl:,.2f}",
             f"Portfolio Value: ${summary.portfolio_value:,.2f}",
@@ -604,7 +624,7 @@ class PaperTradingValidator:
             cumulative_pnl += daily_pnl
 
             total = len(day_trades)
-            wr = (len(winning) / total * 100) if total > 0 else 0.0
+            _wr = (len(winning) / total * 100) if total > 0 else 0.0
 
             # Collect P&Ls for cumulative metrics
             for t in day_trades:
@@ -639,7 +659,13 @@ class PaperTradingValidator:
             max_dd = cum_metrics.get("max_drawdown_pct", 0.0)
             gross_profit = sum(p for p in all_trade_pnls if p > 0)
             gross_loss = abs(sum(p for p in all_trade_pnls if p < 0))
-            pf = (gross_profit / gross_loss) if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
+            pf = (
+                (gross_profit / gross_loss) if gross_loss > 0
+                else (
+                    float("inf") if gross_profit > 0
+                    else 0.0
+                )
+            )
             cumulative_wr = (
                 (len([p for p in all_trade_pnls if p > 0]) / len(all_trade_pnls) * 100)
                 if all_trade_pnls
@@ -759,7 +785,10 @@ class PaperTradingValidator:
 
         # Paper trading return %
         paper_pnl = cumulative_metrics.get("cumulative_pnl", 0.0)
-        paper_return = (paper_pnl / self._initial_capital) * 100 if self._initial_capital > 0 else 0.0
+        paper_return = (
+            (paper_pnl / self._initial_capital) * 100
+            if self._initial_capital > 0 else 0.0
+        )
 
         if bt_return == 0:
             return abs(paper_return) * 100  # Large deviation if backtest was zero

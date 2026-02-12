@@ -7,7 +7,7 @@ database through :class:`PaperTradingValidator`.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import structlog
@@ -170,8 +170,8 @@ class DailyReporter:
             }
 
         daily_pnls = [r.daily_pnl for r in reports]
-        cumulative_pnls = [r.cumulative_pnl for r in reports]
-        win_rates = [r.win_rate for r in reports if r.total_trades > 0]
+        _cumulative_pnls = [r.cumulative_pnl for r in reports]
+        _win_rates = [r.win_rate for r in reports if r.total_trades > 0]
         total_trades = sum(r.total_trades for r in reports)
         total_winning = sum(r.winning_trades for r in reports)
         total_anomalies = sum(len(r.anomalies) if r.anomalies else 0 for r in reports)
@@ -225,7 +225,14 @@ class DailyReporter:
         profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
 
         # Volatility (annualised daily return std)
-        volatility = round(float(np.std(daily_returns, ddof=1) * np.sqrt(252) * 100), 2) if len(daily_returns) >= 2 else 0.0
+        volatility = (
+            round(
+                float(np.std(daily_returns, ddof=1)
+                      * np.sqrt(252) * 100),
+                2,
+            )
+            if len(daily_returns) >= 2 else 0.0
+        )
 
         # Calmar ratio
         calmar_ratio = round(rolling_sharpe / max_dd, 2) if max_dd > 0 else 0.0
@@ -342,11 +349,11 @@ class DailyReporter:
 
         lines = [
             f"Date: {report.report_date}",
-            f"",
+            "",
             f"{pnl_emoji} Daily P&L: \u20ac{report.daily_pnl:,.2f}",
             f"{cum_emoji} Cumulative P&L: \u20ac{report.cumulative_pnl:,.2f}",
             f"Portfolio Value: \u20ac{report.portfolio_value:,.2f}",
-            f"",
+            "",
             f"Trades: {report.total_trades} ({report.winning_trades}W / {report.losing_trades}L)",
             f"Win Rate: {report.win_rate:.1f}%",
             f"Max Drawdown: {report.max_drawdown_pct:.2f}%",
@@ -355,7 +362,7 @@ class DailyReporter:
         if anomaly_count:
             lines.append(f"\u26a0\ufe0f Anomalies: {anomaly_count}")
 
-        lines.append(f"")
+        lines.append("")
         lines.append(f"Readiness: {passed}/{total} checks passed")
         lines.append(f"Trading days: {readiness.trading_days}")
 

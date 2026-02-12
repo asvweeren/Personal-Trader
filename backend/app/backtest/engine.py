@@ -1,9 +1,8 @@
 """Event-driven backtesting engine using the same Strategy interface as live trading."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 import structlog
 
@@ -14,7 +13,7 @@ from app.backtest.simulator import (
     SimulatedPosition,
 )
 from app.data.market_data import MarketSnapshot
-from app.strategy.base import SignalAction, Strategy, TradingSignal
+from app.strategy.base import SignalAction, Strategy
 
 logger = structlog.get_logger()
 

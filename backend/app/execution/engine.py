@@ -14,7 +14,7 @@ from app.core.event_bus import event_bus, SIGNAL_GENERATED, RISK_DAILY_STOP, SYS
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
 from app.execution.portfolio_tracker import PortfolioTracker
-from app.execution.smart_execution import SmartExecutor, ExecutionAlgo
+from app.execution.smart_execution import SmartExecutor
 from app.models.order import OrderStatus
 from app.models.signal import Signal as DBSignal, SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
@@ -527,7 +527,11 @@ class TradingEngine:
                         if mapped_status == OrderStatus.FILLED:
                             result = updated
                             break
-                        if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                        if mapped_status in (
+                            OrderStatus.CANCELLED,
+                            OrderStatus.REJECTED,
+                            OrderStatus.ERROR,
+                        ):
                             result = updated
                             break
                     except Exception:

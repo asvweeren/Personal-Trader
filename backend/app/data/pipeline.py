@@ -1,6 +1,5 @@
 """Data pipeline orchestrator - coordinates data collection, feature computation, and caching."""
 
-from datetime import datetime, timezone
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,7 +67,11 @@ class DataPipeline:
         for s in removed:
             self._latest_features.pop(s, None)
             self._latest_sentiment.pop(s, None)
-        logger.info("pipeline.symbols_updated", old=len(old), new=len(symbols), added=len(added), removed=len(removed))
+        logger.info(
+            "pipeline.symbols_updated",
+            old=len(old), new=len(symbols),
+            added=len(added), removed=len(removed),
+        )
 
     async def stop(self) -> None:
         """Stop the pipeline and clean up."""
@@ -91,7 +94,11 @@ class DataPipeline:
             try:
                 df = await self._market_data.get_historical_data(symbol)
                 if df.empty or len(df) < 50:
-                    logger.debug("pipeline.skip_features", symbol=symbol, reason="insufficient_data")
+                    logger.debug(
+                        "pipeline.skip_features",
+                        symbol=symbol,
+                        reason="insufficient_data",
+                    )
                     continue
 
                 features_df = compute_features(df)
@@ -173,8 +180,12 @@ class DataPipeline:
                 cached = await self._feature_store.get_sentiment(symbol)
                 if cached:
                     snapshot.features.setdefault(symbol, {})
-                    snapshot.features[symbol]["sentiment_score"] = cached.get("score", 0.0)
-                    snapshot.features[symbol]["sentiment_confidence"] = cached.get("confidence", 0.0)
+                    snapshot.features[symbol]["sentiment_score"] = (
+                        cached.get("score", 0.0)
+                    )
+                    snapshot.features[symbol]["sentiment_confidence"] = (
+                        cached.get("confidence", 0.0)
+                    )
             elif sentiment:
                 snapshot.features.setdefault(symbol, {})
                 snapshot.features[symbol]["sentiment_score"] = sentiment.score
