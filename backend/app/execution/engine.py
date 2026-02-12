@@ -411,6 +411,24 @@ class TradingEngine:
         )
 
         mapped_status = self._order_manager._map_status(result.status)
+
+        # For market orders, IBKR often returns PendingSubmit first.
+        # Wait briefly for the fill to come through.
+        if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
+            for _ in range(5):
+                await asyncio.sleep(1)
+                try:
+                    updated = await self._broker.get_order_status(result.order_id)
+                    mapped_status = self._order_manager._map_status(updated.status)
+                    if mapped_status == OrderStatus.FILLED:
+                        result = updated
+                        break
+                    if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                        result = updated
+                        break
+                except Exception:
+                    break
+
         if mapped_status == OrderStatus.FILLED:
             trade.status = TradeStatus.OPEN
             trade.entry_price = result.filled_price
@@ -440,18 +458,21 @@ class TradingEngine:
                 trade.take_profit = calculate_take_profit(
                     result.filled_price, signal.symbol, atr_val
                 )
-        elif mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
-            # Order accepted but not yet filled — track for fill polling
-            trade.status = TradeStatus.PENDING
-            self._open_trades[signal.symbol] = trade
+        elif mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+            trade.status = TradeStatus.CANCELLED
             logger.info(
-                "engine.trade_pending_fill",
+                "engine.trade_rejected",
                 symbol=signal.symbol,
-                quantity=quantity,
                 broker_status=result.status,
             )
         else:
             trade.status = TradeStatus.CANCELLED
+            logger.warning(
+                "engine.trade_not_filled",
+                symbol=signal.symbol,
+                broker_status=result.status,
+                reason="Market order did not fill within 5 seconds",
+            )
 
         await self._db.flush()
 
@@ -644,16 +665,34 @@ class TradingEngine:
                     )
 
     async def _load_open_trades(self) -> None:
-        """Load open trades from database on startup for recovery."""
+        """Load open trades from database on startup for recovery.
+
+        Only loads OPEN trades (with entry_price).  Stale PENDING trades
+        (no entry_price, never filled) are cancelled to avoid blocking
+        new trades for those symbols.
+        """
         try:
             result = await self._db.execute(
                 select(Trade).where(Trade.status.in_([TradeStatus.OPEN, TradeStatus.PENDING]))
             )
             trades = result.scalars().all()
+            loaded = 0
+            cancelled = 0
             for trade in trades:
-                self._open_trades[trade.symbol] = trade
-            if trades:
-                logger.info("engine.loaded_open_trades", count=len(trades))
+                if trade.status == TradeStatus.OPEN and trade.entry_price is not None:
+                    self._open_trades[trade.symbol] = trade
+                    loaded += 1
+                elif trade.status == TradeStatus.PENDING:
+                    # Stale pending — never filled, cancel it
+                    trade.status = TradeStatus.CANCELLED
+                    cancelled += 1
+            if loaded or cancelled:
+                logger.info(
+                    "engine.loaded_open_trades",
+                    count=loaded,
+                    stale_cancelled=cancelled,
+                )
+            await self._db.flush()
         except Exception:
             logger.exception("engine.load_trades_error")
 
