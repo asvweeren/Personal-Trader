@@ -56,7 +56,7 @@ trader/
 │   ├── Dockerfile
 │   ├── pyproject.toml           ← Dependencies (uv)
 │   ├── alembic.ini
-│   ├── alembic/versions/        ← DB migrations (4 versions)
+│   ├── alembic/versions/        ← DB migrations (6 versions)
 │   └── app/
 │       ├── main.py              ← FastAPI app + lifespan
 │       ├── config.py            ← Settings (pydantic-settings, reads .env)
@@ -71,7 +71,8 @@ trader/
 │       │       ├── risk.py      ← GET /risk/metrics, PUT /risk/limits
 │       │       ├── backtest.py  ← POST /backtest/run (yfinance fallback)
 │       │       ├── system.py    ← GET /health, /engine, POST /test-alert
-│       │       └── validation.py← Paper trading validation endpoints
+│       │       ├── validation.py← Paper trading validation endpoints
+│       │       └── screener.py ← Stock screener endpoints
 │       ├── broker/
 │       │   ├── base.py          ← Abstract BrokerAdapter interface
 │       │   ├── ibkr_adapter.py  ← Interactive Brokers implementation
@@ -82,7 +83,8 @@ trader/
 │       │   ├── news_fetcher.py  ← RSS feeds + NewsAPI
 │       │   ├── sentiment.py     ← Claude API sentiment scoring
 │       │   ├── feature_store.py ← Redis-cached feature store
-│       │   └── pipeline.py      ← Orchestrates data refresh
+│       │   ├── pipeline.py      ← Orchestrates data refresh
+│       │   └── screener.py      ← Daily stock screener (S&P 500 + EU)
 │       ├── strategy/
 │       │   ├── base.py          ← Abstract Strategy interface
 │       │   ├── ml_strategy.py   ← XGBoost classifier
@@ -113,7 +115,8 @@ trader/
 │       │   ├── database.py, trade.py, order.py, signal.py
 │       │   ├── portfolio_snapshot.py, backtest_result.py
 │       │   ├── risk_event.py, market_data_bar.py
-│       │   └── validation_report.py
+│       │   ├── validation_report.py
+│       │   └── screening_result.py
 │       └── core/
 │           ├── event_bus.py     ← Async pub/sub for internal events
 │           ├── scheduler.py     ← APScheduler jobs
@@ -145,6 +148,7 @@ trader/
 │           ├── SystemStatus.tsx  ← Status indicators in header
 │           ├── BacktestPanel.tsx ← Run & view backtests
 │           ├── ValidationDashboard.tsx ← Paper trading validation
+│           ├── ScreenerPanel.tsx ← Daily stock screener results
 │           └── SettingsPage.tsx  ← Risk limits, strategy config, alerts
 │
 ├── ml/
@@ -171,7 +175,7 @@ trader/
 
 ### Production Server
 - **Host**: 161.97.72.153 (Contabo VPS, Ubuntu 24.04)
-- **SSH**: `ssh root@161.97.72.153` (password in local .env or ask owner)
+- **SSH**: `ssh trader-server` (uses key `~/.ssh/trader_server`, configured in `~/.ssh/config`)
 - **Domain**: trader.edgedigital.nl (SSL via Let's Encrypt)
 - **Install dir**: `/root/trader`
 
@@ -183,51 +187,48 @@ All credentials are stored in `/root/trader/.env` on the server. Do NOT commit s
 - **Email**: Resend SMTP on smtp.resend.com:465, from trader@edgedigital.nl to info@edgedigital.nl (SMTP_* in .env)
 - **IBKR**: NOT YET CONFIGURED - waiting on user's credentials
 
+### SSH Config (macOS)
+An SSH key pair is configured at `~/.ssh/trader_server` with a host alias in `~/.ssh/config`:
+```
+Host trader-server
+    HostName 161.97.72.153
+    User root
+    IdentityFile ~/.ssh/trader_server
+```
+Usage: `ssh trader-server "command"` — no password needed.
+
 ### Common Server Commands
 ```bash
-cd /root/trader
+# Run commands remotely via SSH
+ssh trader-server "cd /root/trader && git pull origin master"
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml up -d --build backend frontend-build"
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml restart nginx"
 
-# Pull and rebuild
-git pull origin master
-docker compose -f docker-compose.prod.yml up -d --build backend frontend-build
-docker compose -f docker-compose.prod.yml restart nginx
+# Run Alembic migrations
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head"
 
 # View logs
-docker compose -f docker-compose.prod.yml logs -f backend
-docker compose -f docker-compose.prod.yml logs --tail 50 backend
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml logs -f backend"
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml logs --tail 50 backend"
 
 # Service status
-docker compose -f docker-compose.prod.yml ps
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml ps"
 
 # Restart everything
-docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d"
 
 # DB shell
-docker compose -f docker-compose.prod.yml exec postgres psql -U trader -d trader
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml exec -T postgres psql -U trader -d trader"
 ```
 
-### SSH from macOS
-macOS doesn't have `sshpass`, so use `expect` for automated SSH:
+### Full deploy (one-liner)
 ```bash
-expect -c '
-spawn ssh -o StrictHostKeyChecking=no root@161.97.72.153
-expect "password:"
-send "YOUR_SSH_PASSWORD\r"
-expect "# "
-send "your-command-here\r"
-expect "# "
-send "exit\r"
-expect eof
-'
+git push origin master && ssh trader-server "cd /root/trader && git pull origin master && docker compose -f docker-compose.prod.yml up -d --build backend frontend-build && docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head && docker compose -f docker-compose.prod.yml restart nginx"
 ```
-For file uploads, use `scp` with expect:
+
+### File uploads
 ```bash
-expect -c '
-spawn scp -o StrictHostKeyChecking=no localfile root@161.97.72.153:/remote/path
-expect "password:"
-send "YOUR_SSH_PASSWORD\r"
-expect eof
-'
+scp -i ~/.ssh/trader_server localfile root@161.97.72.153:/root/trader/path
 ```
 
 ---
@@ -315,7 +316,7 @@ When IBKR is not connected, backtests download historical data from yfinance ins
 ## Current State (Feb 2026)
 
 ### What's Working
-- Full dashboard with all tabs (Overview, Trades, Backtest, Validation, Settings)
+- Full dashboard with all tabs (Overview, Trades, Screener, Backtest, Validation, Settings)
 - JWT authentication with login/logout
 - Portfolio view, risk metrics, engine control (all gracefully handle missing broker)
 - Backtests with yfinance data (11 symbols tested: SPY, QQQ, AAPL, MSFT, GOOGL, NVDA, AMZN, META, IWM, EFA, VGK)
@@ -325,6 +326,7 @@ When IBKR is not connected, backtests download historical data from yfinance ins
 - Trained XGBoost model deployed
 - SSL certificate on trader.edgedigital.nl
 - Daily validation report scheduler (21:00 UTC)
+- Daily stock screener: S&P 500 + EU blue chips, scored on momentum/volume/volatility (07:50 UTC)
 
 ### What's NOT Working / TODO
 - **IBKR credentials not configured** - waiting on user. Once provided:
@@ -364,6 +366,9 @@ When IBKR is not connected, backtests download historical data from yfinance ins
 | PUT | `/api/system/engine/trading` | Enable/disable trading |
 | POST | `/api/system/test-alert` | Send test alert |
 | GET | `/api/validation/*` | Validation endpoints |
+| GET | `/api/screener/latest` | Latest screening result + candidates |
+| GET | `/api/screener/history?days=7` | Historical screenings |
+| POST | `/api/screener/run` | Manual screening trigger |
 | WS | `/ws/live?token=...` | Real-time updates |
 
 ---
@@ -379,6 +384,7 @@ Tables managed by Alembic (4 migrations):
 - **backtest_results** - Backtest configs + results (JSONB metrics, equity curve)
 - **market_data_bars** - OHLCV bar data
 - **validation_reports** - Paper trading validation reports
+- **screening_results** - Daily stock screener results (JSONB candidates, config)
 
 ---
 
