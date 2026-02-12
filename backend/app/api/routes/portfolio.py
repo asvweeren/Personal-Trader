@@ -69,8 +69,46 @@ async def get_positions(broker: BrokerAdapter = Depends(get_broker)):
 
 
 @router.get("/performance")
-async def get_performance(tracker: PerformanceTracker = Depends(get_performance_tracker)):
-    return tracker.to_dict()
+async def get_performance(
+    broker: BrokerAdapter = Depends(get_broker),
+    tracker: PerformanceTracker = Depends(get_performance_tracker),
+):
+    data = tracker.to_dict()
+    # Override with actual broker values for accuracy
+    try:
+        portfolio = await broker.get_portfolio()
+        actual_value = portfolio.account_summary.total_value
+        initial = tracker.initial_capital
+        data["total_value"] = round(actual_value, 2)
+        data["unrealized_pnl"] = round(
+            portfolio.account_summary.unrealized_pnl, 2
+        )
+        data["realized_pnl"] = round(
+            portfolio.account_summary.realized_pnl, 2
+        )
+        if initial > 0:
+            data["total_return_pct"] = round(
+                (actual_value - initial) / initial * 100, 2
+            )
+            data["daily_pnl"] = round(
+                actual_value - tracker.daily_start_value, 2
+            )
+            data["daily_return_pct"] = round(
+                (actual_value - tracker.daily_start_value)
+                / tracker.daily_start_value * 100, 2
+            ) if tracker.daily_start_value > 0 else 0.0
+        # Update drawdown from actual value
+        if actual_value > tracker.peak_value:
+            tracker.peak_value = actual_value
+        dd = (
+            (tracker.peak_value - actual_value)
+            / tracker.peak_value * 100
+            if tracker.peak_value > 0 else 0.0
+        )
+        data["max_drawdown"] = round(max(dd, tracker.max_drawdown), 2)
+    except Exception:
+        logger.warning("performance.broker_unavailable_for_metrics")
+    return data
 
 
 @router.get("/portfolio/snapshots")

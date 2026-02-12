@@ -61,12 +61,18 @@ class PerformanceTracker:
     losing_trades: int = 0
     total_commission: float = 0.0
     max_drawdown: float = 0.0
-    peak_value: float = 5000.0
+    peak_value: float = 0.0
     consecutive_losses: int = 0
     trade_pnls: list[float] = field(default_factory=list)
-    daily_start_value: float = 5000.0
+    daily_start_value: float = 0.0
     last_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     strategy_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.peak_value == 0.0:
+            self.peak_value = self.initial_capital
+        if self.daily_start_value == 0.0:
+            self.daily_start_value = self.initial_capital
 
     @property
     def total_value(self) -> float:
