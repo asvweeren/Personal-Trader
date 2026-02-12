@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +11,7 @@ from app.config import settings
 from app.core.event_bus import event_bus, EventBus
 from app.data.pipeline import DataPipeline
 from app.execution.engine import TradingEngine
-from app.models.database import get_session
+from app.models.database import get_session, async_session as _session_factory
 from app.models.strategy_config import StrategyConfig
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
@@ -129,6 +131,31 @@ def load_strategies() -> list[Strategy]:
     return strategies
 
 
+async def get_startup_symbols() -> list[str]:
+    """Load symbols from the latest screener result (max 3 days old), fallback to config."""
+    if not settings.screener_enabled:
+        return settings.symbols_list
+    try:
+        from app.models.screening_result import ScreeningResult
+        cutoff = date.today() - timedelta(days=3)
+        async with _session_factory() as session:
+            result = await session.execute(
+                select(ScreeningResult)
+                .where(ScreeningResult.screening_date >= cutoff)
+                .order_by(ScreeningResult.created_at.desc())
+                .limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if row and row.candidates:
+                symbols = [c["symbol"] for c in row.candidates if "symbol" in c]
+                if symbols:
+                    logger.info("startup.symbols_from_screener", count=len(symbols), date=str(row.screening_date))
+                    return symbols
+    except Exception:
+        logger.warning("startup.screener_symbols_failed")
+    return settings.symbols_list
+
+
 async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     """Initialize the trading engine with all dependencies."""
     global _trading_engine
@@ -152,6 +179,8 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     except Exception:
         logger.warning("engine.trading_restore_failed")
 
+    symbols = await get_startup_symbols()
+
     _trading_engine = TradingEngine(
         broker=broker,
         strategies=strategies,
@@ -159,7 +188,7 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
         market_data=pipeline._market_data,
         performance=performance,
         db=db,
-        symbols=settings.symbols_list,
+        symbols=symbols,
         trading_enabled=trading_enabled,
     )
 

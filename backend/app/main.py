@@ -29,7 +29,7 @@ from app.core.scheduler import (
     schedule_heartbeat,
     schedule_snapshot_cleanup,
 )
-from app.dependencies import get_broker, get_data_pipeline, init_trading_engine
+from app.dependencies import get_broker, get_data_pipeline, get_startup_symbols, init_trading_engine
 from app.models.database import async_session as session_factory
 from app.monitoring.logger import setup_logging
 
@@ -83,9 +83,10 @@ async def lifespan(app: FastAPI):
     # Step 2: Start data pipeline (requires broker)
     if broker and await broker.is_connected():
         try:
+            symbols = await get_startup_symbols()
             pipeline = get_data_pipeline()
-            await pipeline.start(settings.symbols_list)
-            logger.info("pipeline.started")
+            await pipeline.start(symbols)
+            logger.info("pipeline.started", symbols=len(symbols))
             schedule_data_pipeline(pipeline)
         except Exception as e:
             logger.warning("startup.pipeline_error", error=str(e))
