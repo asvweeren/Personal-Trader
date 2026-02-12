@@ -87,12 +87,11 @@ jobs:
     steps:
       - name: Deploy to production
         env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KEY_B64: ${{ secrets.SSH_KEY_B64 }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          install -m 600 /dev/null ~/.ssh/deploy_key
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          echo "$SSH_KEY_B64" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key root@"$SERVER_HOST" '
