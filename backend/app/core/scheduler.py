@@ -108,6 +108,81 @@ def schedule_heartbeat() -> None:
     logger.info("scheduler.job_added", job="ws_heartbeat", interval="30s")
 
 
+def schedule_daily_screener() -> None:
+    """Run the stock screener daily at 07:50 UTC Mon-Fri (before EU open).
+
+    Selects top candidates from a broad universe and updates the engine/pipeline
+    symbols so the system trades the best opportunities each day.
+    """
+
+    async def run_daily_screener():
+        from datetime import date as date_type
+
+        from app.config import settings as cfg
+        from app.data.screener import StockScreener
+        from app.models.database import async_session as session_factory
+        from app.models.screening_result import ScreeningResult
+
+        if not cfg.screener_enabled:
+            logger.info("screener.disabled")
+            return
+
+        logger.info("screener.daily_run_starting")
+        screener = StockScreener()
+
+        try:
+            data = await screener.run_screening()
+        except Exception:
+            logger.exception("screener.daily_run_failed")
+            return
+
+        # Persist to DB
+        try:
+            async with session_factory() as session:
+                row = ScreeningResult(
+                    screening_date=date_type.today(),
+                    total_scanned=data["total_scanned"],
+                    candidates=data["candidates"],
+                    config=data["config"],
+                )
+                session.add(row)
+                await session.commit()
+        except Exception:
+            logger.exception("screener.db_save_failed")
+
+        # Update engine + pipeline with new symbols
+        if data["candidates"]:
+            symbols = [c["symbol"] for c in data["candidates"]]
+            try:
+                from app.dependencies import get_trading_engine
+                engine = get_trading_engine()
+                engine.update_symbols(symbols)
+                logger.info("screener.engine_updated", symbols=len(symbols))
+            except RuntimeError:
+                logger.debug("screener.engine_not_initialized")
+            try:
+                from app.dependencies import get_data_pipeline
+                pipeline = get_data_pipeline()
+                await pipeline.update_symbols(symbols)
+                logger.info("screener.pipeline_updated", symbols=len(symbols))
+            except Exception:
+                logger.warning("screener.pipeline_update_failed")
+
+    scheduler.add_job(
+        run_daily_screener,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=50),
+        id="daily_screener",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+    logger.info(
+        "scheduler.job_added",
+        job="daily_screener",
+        trigger="cron(mon-fri 07:50)",
+    )
+
+
 def schedule_daily_validation_report() -> None:
     """Schedule the daily paper-trading validation report.
 

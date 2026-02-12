@@ -52,6 +52,24 @@ class DataPipeline:
         await self._market_data.start_streaming(symbols)
         logger.info("pipeline.started", symbols=symbols)
 
+    async def update_symbols(self, symbols: list[str]) -> None:
+        """Update the active symbol list and restart streaming."""
+        old = self._symbols
+        # Stop streaming old symbols that are no longer in the list
+        removed = [s for s in old if s not in symbols]
+        if removed:
+            await self._market_data.stop_streaming(removed)
+        # Start streaming new symbols
+        added = [s for s in symbols if s not in old]
+        if added:
+            await self._market_data.start_streaming(added)
+        self._symbols = list(symbols)
+        # Clear stale feature/sentiment caches for removed symbols
+        for s in removed:
+            self._latest_features.pop(s, None)
+            self._latest_sentiment.pop(s, None)
+        logger.info("pipeline.symbols_updated", old=len(old), new=len(symbols), added=len(added), removed=len(removed))
+
     async def stop(self) -> None:
         """Stop the pipeline and clean up."""
         await self._market_data.stop_streaming(self._symbols)

@@ -23,6 +23,7 @@ import type {
   ValidationReportSummary,
   RollingMetrics,
   BacktestComparison,
+  ScreeningResult,
 } from "../types";
 
 const API_BASE = "/api";
@@ -132,4 +133,11 @@ export const api = {
     fetchApi<ValidationReport>("/validation/report/generate", {
       method: "POST",
     }),
+
+  // Screener
+  getScreenerLatest: () => fetchApi<ScreeningResult>("/screener/latest"),
+  getScreenerHistory: (days = 7) =>
+    fetchApi<ScreeningResult[]>(`/screener/history?days=${days}`),
+  runScreener: () =>
+    fetchApi<ScreeningResult>("/screener/run", { method: "POST" }),
 };

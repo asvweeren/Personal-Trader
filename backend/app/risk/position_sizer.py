@@ -44,8 +44,26 @@ SECTOR_MAP: dict[str, str] = {
     "SAN.PA": "healthcare", "AZN.L": "healthcare",
 }
 
+# Dynamic sector cache for symbols discovered by the screener
+_sector_cache: dict[str, str] = {}
+
 DEFAULT_SECTOR = "unknown"
 MAX_SECTOR_CONCENTRATION_PCT = 40.0  # Max 40% in one sector
+
+# yfinance sector → our sector mapping
+_YF_SECTOR_MAP: dict[str, str] = {
+    "technology": "technology",
+    "communication services": "technology",
+    "consumer cyclical": "consumer",
+    "consumer defensive": "consumer",
+    "financial services": "finance",
+    "healthcare": "healthcare",
+    "energy": "energy",
+    "industrials": "industrials",
+    "basic materials": "materials",
+    "real estate": "real_estate",
+    "utilities": "utilities",
+}
 
 
 @dataclass
@@ -59,7 +77,28 @@ class PositionSizeResult:
 
 
 def get_sector(symbol: str) -> str:
-    return SECTOR_MAP.get(symbol.upper(), DEFAULT_SECTOR)
+    """Get sector for a symbol. Checks hardcoded map first, then dynamic cache."""
+    upper = symbol.upper()
+    # 1. Hardcoded map (fast)
+    sector = SECTOR_MAP.get(upper)
+    if sector:
+        return sector
+    # 2. Dynamic cache (populated by screener or yfinance lookup)
+    sector = _sector_cache.get(upper)
+    if sector:
+        return sector
+    # 3. Infer from exchange suffix
+    if "." in symbol:
+        suffix = symbol.split(".")[-1]
+        if suffix in ("AS", "DE", "PA", "L"):
+            return "eu_equity"
+    return DEFAULT_SECTOR
+
+
+def cache_sector(symbol: str, sector: str) -> None:
+    """Add a symbol→sector mapping to the dynamic cache."""
+    normalized = _YF_SECTOR_MAP.get(sector.lower(), sector.lower())
+    _sector_cache[symbol.upper()] = normalized
 
 
 def calculate_kelly_fraction(

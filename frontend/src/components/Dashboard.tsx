@@ -14,12 +14,14 @@ const TradeTable = lazy(() => import("./TradeTable").then(m => ({ default: m.Tra
 const BacktestPanel = lazy(() => import("./BacktestPanel").then(m => ({ default: m.BacktestPanel })));
 const ValidationDashboard = lazy(() => import("./ValidationDashboard").then(m => ({ default: m.ValidationDashboard })));
 const SettingsPage = lazy(() => import("./SettingsPage").then(m => ({ default: m.SettingsPage })));
+const ScreenerPanel = lazy(() => import("./ScreenerPanel").then(m => ({ default: m.ScreenerPanel })));
 
-type Tab = "overview" | "trades" | "backtest" | "validation" | "settings";
+type Tab = "overview" | "trades" | "screener" | "backtest" | "validation" | "settings";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "trades", label: "Trades" },
+  { id: "screener", label: "Screener" },
   { id: "backtest", label: "Backtest" },
   { id: "validation", label: "Validation" },
   { id: "settings", label: "Settings" },
@@ -126,6 +128,12 @@ export function Dashboard() {
         {tab === "trades" && (
           <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading trades...</div>}>
             <TradeTable />
+          </Suspense>
+        )}
+
+        {tab === "screener" && (
+          <Suspense fallback={<div className="animate-pulse text-gray-400 py-8 text-center">Loading screener...</div>}>
+            <ScreenerPanel />
           </Suspense>
         )}
 

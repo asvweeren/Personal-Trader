@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
+    # Stock Screener
+    screener_enabled: bool = True
+    screener_max_candidates: int = 40
+    screener_min_avg_volume: int = 500_000
+    screener_momentum_weight: float = 0.4
+    screener_volume_weight: float = 0.3
+    screener_volatility_weight: float = 0.3
+    screener_include_eu: bool = True
+
     # Trading Configuration
     trading_symbols: str = "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,TSLA,AMD,NFLX,CRM,AVGO,JPM,BAC,GS,JNJ,UNH,LLY,XOM,CVX,WMT,HD,KO,COST,IWM,EFA,VGK,DIA,XLF,XLE"
     initial_capital: float = 5000.0

@@ -269,6 +269,29 @@ export interface BacktestComparison {
   assessment: string;
 }
 
+// ─── Screener Types ─────────────────────────────────────────────────
+
+export interface ScreeningCandidate {
+  symbol: string;
+  score: number;
+  momentum_score: number;
+  volume_score: number;
+  volatility_score: number;
+  sector: string;
+  price: number;
+  change_5d_pct: number;
+  avg_volume: number;
+}
+
+export interface ScreeningResult {
+  id?: number;
+  screening_date: string | null;
+  total_scanned: number;
+  candidates: ScreeningCandidate[];
+  config?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
 // ─── Settings Types ─────────────────────────────────────────────────
 
 export interface RiskLimits {
