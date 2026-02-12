@@ -143,4 +143,24 @@ export const api = {
     fetchApi<ScreeningResult[]>(`/screener/history?days=${days}`),
   runScreener: () =>
     fetchApi<ScreeningResult>("/screener/run", { method: "POST" }),
+
+  // Walk-Forward
+  runWalkForward: (params: {
+    strategy_name: string;
+    symbol: string;
+    train_days: number;
+    test_days: number;
+    step_days: number;
+  }) =>
+    fetchApi<{ id: number; status: string }>("/backtest/walk-forward", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+
+  // Monte Carlo
+  runMonteCarlo: (params: { backtest_id: number; num_simulations: number }) =>
+    fetchApi<{ result: Record<string, unknown> }>("/backtest/monte-carlo", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
 };

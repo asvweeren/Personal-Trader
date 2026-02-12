@@ -70,6 +70,9 @@ export interface RiskHealth {
   sector_exposure: Record<string, number>;
   largest_position_pct: number;
   market_open: boolean;
+  var_95?: number;
+  var_99?: number;
+  cvar_95?: number;
 }
 
 export interface RiskMetricsData {

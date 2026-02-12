@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchApi } from "../api/client";
+import { api } from "../api/client";
 
 interface WindowResult {
   window_num: number;
@@ -31,30 +31,29 @@ export function WalkForwardPanel() {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetchApi("/api/backtest/walk-forward", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          strategy_name: "ml_xgboost",
-          symbol,
-          train_days: 180,
-          test_days: 30,
-          step_days: 30,
-        }),
+      const data = await api.runWalkForward({
+        strategy_name: "ml_xgboost",
+        symbol,
+        train_days: 180,
+        test_days: 30,
+        step_days: 30,
       });
-      const data = await resp.json();
-      // Poll for result
       if (data.id) {
         const poll = async () => {
-          const r = await fetchApi(`/api/backtest/${data.id}`);
-          const bt = await r.json();
-          if (bt.metrics?.status === "running") {
-            setTimeout(poll, 3000);
-          } else if (bt.metrics?.windows) {
-            setResult(bt.metrics as WFResult);
-            setLoading(false);
-          } else {
-            setError(bt.metrics?.error || "Walk-forward failed");
+          try {
+            const bt = await api.getBacktest(data.id);
+            const metrics = bt.metrics as Record<string, unknown>;
+            if (metrics?.status === "running") {
+              setTimeout(poll, 3000);
+            } else if (metrics?.windows) {
+              setResult(metrics as unknown as WFResult);
+              setLoading(false);
+            } else {
+              setError((metrics?.error as string) || "Walk-forward failed");
+              setLoading(false);
+            }
+          } catch (e) {
+            setError(String(e));
             setLoading(false);
           }
         };

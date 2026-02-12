@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchApi } from "../api/client";
+import { api } from "../api/client";
 
 interface MCResult {
   percentiles: Record<string, number>;
@@ -28,16 +28,11 @@ export function MonteCarloPanel({ backtestId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetchApi("/api/backtest/monte-carlo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ backtest_id: id, num_simulations: 1000 }),
-      });
-      const data = await resp.json();
+      const data = await api.runMonteCarlo({ backtest_id: id, num_simulations: 1000 });
       if (data.result) {
-        setResult(data.result);
+        setResult(data.result as unknown as MCResult);
       } else {
-        setError(data.detail || "Monte Carlo failed");
+        setError("Monte Carlo failed");
       }
     } catch (e) {
       setError(String(e));
