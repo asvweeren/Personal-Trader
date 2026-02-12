@@ -1,3 +1,7 @@
+import asyncio
+import traceback
+
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -9,8 +13,46 @@ logger = structlog.get_logger()
 scheduler = AsyncIOScheduler()
 
 
+def _on_job_event(event) -> None:
+    """Handle scheduler job errors and missed executions."""
+    job_id = getattr(event, "job_id", "unknown")
+
+    if hasattr(event, "exception") and event.exception:
+        tb = "".join(traceback.format_exception(type(event.exception), event.exception, event.exception.__traceback__))
+        logger.error(
+            "scheduler.job_error",
+            job_id=job_id,
+            error=str(event.exception),
+            traceback=tb[:500],
+        )
+        try:
+            from app.monitoring.alerts import send_alert
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(send_alert(
+                    "Scheduler Job Failed",
+                    f"Job: {job_id}\nError: {str(event.exception)[:300]}",
+                    critical=True,
+                ))
+        except Exception:
+            logger.warning("scheduler.alert_send_failed", job_id=job_id)
+    else:
+        logger.warning("scheduler.job_missed", job_id=job_id)
+        try:
+            from app.monitoring.alerts import send_alert
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(send_alert(
+                    "Scheduler Job Missed",
+                    f"Job '{job_id}' missed its scheduled execution window.",
+                ))
+        except Exception:
+            logger.warning("scheduler.alert_send_failed", job_id=job_id)
+
+
 def start_scheduler() -> None:
     if not scheduler.running:
+        scheduler.add_listener(_on_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
         scheduler.start()
         logger.info("scheduler.started")
 
@@ -96,7 +138,7 @@ def schedule_heartbeat() -> None:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         except Exception:
-            pass  # Don't let heartbeat failures break the scheduler
+            logger.warning("scheduler.heartbeat_error", exc_info=True)
 
     scheduler.add_job(
         send_heartbeat,
@@ -298,7 +340,7 @@ def schedule_broker_watchdog(broker) -> None:
                     await broker.connect()
                     logger.info("watchdog.broker_reconnected")
                 except Exception:
-                    pass  # Adapter auto-reconnect handles retries
+                    logger.warning("watchdog.reconnect_failed", exc_info=True)
                 return
 
             # Broker is connected — check if engine needs lazy initialization
@@ -318,7 +360,7 @@ def schedule_broker_watchdog(broker) -> None:
                 _initializing["active"] = False
 
         except Exception:
-            pass  # Don't let watchdog failures break the scheduler
+            logger.warning("scheduler.watchdog_error", exc_info=True)
 
     async def _lazy_init_engine():
         """Initialize pipeline + engine after broker becomes available."""

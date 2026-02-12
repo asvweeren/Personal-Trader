@@ -17,6 +17,7 @@ from app.execution.portfolio_tracker import PortfolioTracker
 from app.models.order import OrderStatus
 from app.models.signal import Signal as DBSignal, SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
+from app.data.correlation import get_correlation_matrix
 from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
@@ -185,6 +186,15 @@ class TradingEngine:
             # 7. Get current portfolio for risk checks
             portfolio = await self._portfolio_tracker.get_current()
 
+            # 7b. Compute correlation matrix for position sizing
+            try:
+                correlation_matrix = await get_correlation_matrix(
+                    self._symbols, self._market_data
+                )
+            except Exception:
+                logger.debug("engine.correlation_compute_failed", exc_info=True)
+                correlation_matrix = None
+
             # 8. Evaluate each signal through risk management
             for signal in all_signals:
                 if signal.action == SignalAction.HOLD:
@@ -229,7 +239,9 @@ class TradingEngine:
                     continue
 
                 # For BUY signals, run risk evaluation
-                decision = await self._risk_manager.evaluate_signal(signal, portfolio, price)
+                decision = await self._risk_manager.evaluate_signal(
+                    signal, portfolio, price, correlation_matrix=correlation_matrix
+                )
 
                 if not decision.approved:
                     logger.info(

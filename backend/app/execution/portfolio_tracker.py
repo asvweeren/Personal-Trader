@@ -6,9 +6,11 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, Portfolio
+from app.config import settings
 from app.core.event_bus import event_bus, PORTFOLIO_UPDATED, POSITION_CLOSED
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.trade import Trade, TradeStatus
+from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 
 logger = structlog.get_logger()
@@ -87,6 +89,16 @@ class PortfolioTracker:
 
         if self._performance:
             self._performance.record_trade(pnl, commission)
+            if self._performance.should_alert_consecutive_losses(
+                settings.consecutive_loss_alert_threshold
+            ):
+                await send_alert(
+                    "Consecutive Loss Alert",
+                    f"{self._performance.consecutive_losses} consecutive losing trades.\n"
+                    f"Total realized P&L: {self._performance.realized_pnl:+.2f}\n"
+                    f"Win rate: {self._performance.win_rate:.1f}%",
+                    critical=True,
+                )
 
         await event_bus.publish(POSITION_CLOSED, {
             "trade_id": trade.id,

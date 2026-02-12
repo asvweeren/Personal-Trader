@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter
@@ -19,7 +20,10 @@ router = APIRouter()
 
 
 @router.get("/system/health")
-async def health_check(broker: BrokerAdapter = Depends(get_broker)):
+async def health_check(
+    broker: BrokerAdapter = Depends(get_broker),
+    db: AsyncSession = Depends(get_db),
+):
     try:
         broker_connected = await broker.is_connected()
     except Exception:
@@ -32,12 +36,32 @@ async def health_check(broker: BrokerAdapter = Depends(get_broker)):
     except RuntimeError:
         engine_status = "not_initialized"
 
+    # Database check
+    db_connected = False
+    try:
+        await db.execute(text("SELECT 1"))
+        db_connected = True
+    except Exception:
+        pass
+
+    # Redis check
+    redis_connected = False
+    try:
+        r = aioredis.from_url(settings.redis_url, socket_connect_timeout=2)
+        await r.ping()
+        await r.aclose()
+        redis_connected = True
+    except Exception:
+        pass
+
+    all_ok = broker_connected and db_connected and redis_connected
     return {
-        "status": "healthy" if broker_connected else "degraded",
+        "status": "healthy" if all_ok else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "components": {
             "broker": {"status": "connected" if broker_connected else "disconnected"},
-            "database": {"status": "connected"},
+            "database": {"status": "connected" if db_connected else "disconnected"},
+            "redis": {"status": "connected" if redis_connected else "disconnected"},
             "trading_engine": {"status": engine_status},
             "environment": settings.app_env,
             "paper_trading": settings.ibkr_paper_trading,

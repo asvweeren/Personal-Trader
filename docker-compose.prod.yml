@@ -22,7 +22,7 @@ services:
   # ── Cache ────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save 300 1 --save 60 100 --appendonly yes --appendfsync everysec
     volumes:
       - redis_data:/data
     healthcheck:
@@ -51,6 +51,11 @@ services:
       - "4002:4002"   # IB Gateway API port (paper)
     volumes:
       - ib_gateway_data:/home/ibgateway/Jts
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     restart: always
     deploy:
       resources:
@@ -102,6 +107,17 @@ services:
         condition: service_healthy
     volumes:
       - ./ml/models:/app/ml/models:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',8000)); s.close()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     restart: always
     deploy:
       resources:
@@ -124,7 +140,12 @@ services:
       frontend-build:
         condition: service_completed_successfully
       backend:
-        condition: service_started
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     restart: always
     deploy:
       resources:

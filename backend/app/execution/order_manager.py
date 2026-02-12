@@ -7,6 +7,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide, OrderType
+from app.config import settings
 from app.core.event_bus import event_bus, ORDER_PLACED, ORDER_FILLED, ORDER_CANCELLED
 from app.models.order import Order, OrderStatus
 from app.models.order import OrderType as DBOrderType
@@ -57,6 +58,27 @@ class OrderManager:
         slippage = None
         if expected_price is not None and result.filled_price is not None:
             slippage = result.filled_price - expected_price
+            # Alert on high slippage
+            slippage_pct = abs(slippage) / expected_price * 100
+            if slippage_pct > settings.max_slippage_pct:
+                logger.warning(
+                    "order.high_slippage",
+                    symbol=symbol,
+                    slippage=round(slippage, 4),
+                    slippage_pct=round(slippage_pct, 2),
+                    expected=expected_price,
+                    filled=result.filled_price,
+                )
+                try:
+                    from app.monitoring.alerts import send_alert
+                    asyncio.get_event_loop().create_task(send_alert(
+                        "High Slippage Alert",
+                        f"{symbol}: {slippage_pct:.2f}% slippage\n"
+                        f"Expected: {expected_price:.2f} | Filled: {result.filled_price:.2f}\n"
+                        f"Slippage: {slippage:+.4f}",
+                    ))
+                except Exception:
+                    pass
 
         db_order = Order(
             trade_id=trade_id,

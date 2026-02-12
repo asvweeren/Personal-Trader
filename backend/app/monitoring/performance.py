@@ -20,6 +20,7 @@ class PerformanceTracker:
     total_commission: float = 0.0
     max_drawdown: float = 0.0
     peak_value: float = 5000.0
+    consecutive_losses: int = 0
     trade_pnls: list[float] = field(default_factory=list)
     daily_start_value: float = 5000.0
     last_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -62,8 +63,10 @@ class PerformanceTracker:
 
         if pnl > 0:
             self.winning_trades += 1
+            self.consecutive_losses = 0
         elif pnl < 0:
             self.losing_trades += 1
+            self.consecutive_losses += 1
 
         self._update_drawdown()
 
@@ -76,6 +79,10 @@ class PerformanceTracker:
         self.daily_pnl = 0.0
         self.last_reset = datetime.now(timezone.utc)
         logger.info("performance.daily_reset", start_value=self.daily_start_value)
+
+    def should_alert_consecutive_losses(self, threshold: int) -> bool:
+        """Return True if consecutive losses just hit the threshold (exact match to alert once)."""
+        return self.consecutive_losses == threshold
 
     def _update_drawdown(self) -> None:
         current = self.total_value

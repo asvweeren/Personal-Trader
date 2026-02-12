@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
     order_max_retries: int = 2               # Max retry attempts for failed market orders
+    max_slippage_pct: float = 0.5            # Alert when slippage exceeds this %
+    consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close

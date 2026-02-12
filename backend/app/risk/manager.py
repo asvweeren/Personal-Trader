@@ -81,7 +81,11 @@ class RiskManager:
                 self._max_drawdown_pct = drawdown
 
     async def evaluate_signal(
-        self, signal: TradingSignal, portfolio: Portfolio, estimated_price: float
+        self,
+        signal: TradingSignal,
+        portfolio: Portfolio,
+        estimated_price: float,
+        correlation_matrix: dict[tuple[str, str], float] | None = None,
     ) -> RiskDecision:
         """Evaluate a trading signal against all risk rules."""
         # Update drawdown tracking
@@ -120,6 +124,7 @@ class RiskManager:
             max_position_pct=self.max_position_pct,
             confidence=signal.confidence,
             symbol=signal.symbol,
+            correlation_matrix=correlation_matrix,
         )
         order_value = quantity * estimated_price
 
