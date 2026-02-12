@@ -73,18 +73,22 @@ class Settings(BaseSettings):
     min_cash_reserve_pct: float = 20.0
 
     # ATR-based stop-loss
-    atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
-    min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
+    atr_stop_multiplier: float = 2.5       # ATR multiplier for stop-loss distance
+    min_stop_loss_pct: float = 3.0         # Minimum stop-loss percentage as floor
 
     # Take-profit
-    atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
-    min_take_profit_pct: float = 2.0         # Minimum 2% profit target as floor
+    atr_take_profit_multiplier: float = 4.0  # Take-profit at 4x ATR above entry
+    min_take_profit_pct: float = 5.0         # Minimum 5% profit target as floor
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
     order_max_retries: int = 2               # Max retry attempts for failed market orders
     max_slippage_pct: float = 0.5            # Alert when slippage exceeds this %
     consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
+
+    # Trade management
+    min_hold_minutes: int = 30               # Min hold time before SELL signal can close
+    reentry_cooldown_minutes: int = 60       # Min wait time before re-entering same symbol
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
@@ -95,7 +99,8 @@ class Settings(BaseSettings):
     twap_slices: int = 4
 
     # Progressive trailing stop tiers: "gain%:trail%,..."
-    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
+    # Only start trailing after 3% gain, with generous trail widths
+    trailing_stop_tiers: str = "3.0:1.5,5.0:2.0,8.0:2.5,10.0:3.0"
 
     @property
     def trailing_stop_tiers_parsed(self) -> list[tuple[float, float]]:

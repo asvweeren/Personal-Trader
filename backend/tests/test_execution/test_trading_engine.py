@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -219,7 +219,7 @@ async def test_cycle_sell_signal_closes_position():
     mock_trade.entry_price = 145.0
     mock_trade.stop_loss = 140.0
     mock_trade.strategy_name = "mock"
-    mock_trade.created_at = datetime.now(timezone.utc)
+    mock_trade.created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
     engine._open_trades["AAPL"] = mock_trade
 
     await engine.run_cycle()

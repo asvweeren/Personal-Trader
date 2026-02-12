@@ -28,7 +28,7 @@ class EnsembleStrategy(Strategy):
         self,
         strategies: list[Strategy],
         weights: dict[str, float] | None = None,
-        agreement_threshold: float = 0.3,
+        agreement_threshold: float = 0.5,
         min_strategies: int = 1,
     ):
         self._strategies = strategies
@@ -118,9 +118,11 @@ class EnsembleStrategy(Strategy):
         conflict = has_buy and has_sell
 
         if conflict:
-            confidence *= 0.7  # Reduce confidence when strategies disagree
+            # When strategies disagree, force HOLD — no conviction to trade
+            action = SignalAction.HOLD
+            confidence = 0.0
             logger.debug(
-                "ensemble.conflict",
+                "ensemble.conflict_forced_hold",
                 symbol=symbol,
                 votes=strategy_votes,
                 net_score=round(net_score, 3),

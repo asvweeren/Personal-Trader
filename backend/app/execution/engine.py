@@ -82,6 +82,8 @@ class TradingEngine:
         self._max_reconnect_attempts = 5
         # Track open trades by symbol for close logic
         self._open_trades: dict[str, Trade] = {}
+        # Track last close time per symbol for re-entry cooldown
+        self._last_close_time: dict[str, datetime] = {}
 
     @property
     def state(self) -> EngineState:
@@ -299,6 +301,21 @@ class TradingEngine:
                     )
                     continue
 
+                # Re-entry cooldown: don't re-buy a symbol too soon after closing
+                last_close = self._last_close_time.get(signal.symbol)
+                if last_close and settings.reentry_cooldown_minutes > 0:
+                    mins_since = (
+                        datetime.now(timezone.utc) - last_close
+                    ).total_seconds() / 60
+                    if mins_since < settings.reentry_cooldown_minutes:
+                        logger.info(
+                            "engine.signal_skipped_cooldown",
+                            symbol=signal.symbol,
+                            mins_since_close=round(mins_since, 1),
+                            cooldown=settings.reentry_cooldown_minutes,
+                        )
+                    continue
+
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
                     signal, portfolio, price,
@@ -414,6 +431,20 @@ class TradingEngine:
             )
             return
 
+        # Enforce minimum hold time before allowing signal-based close
+        if open_trade.created_at and settings.min_hold_minutes > 0:
+            held_minutes = (
+                datetime.now(timezone.utc) - open_trade.created_at
+            ).total_seconds() / 60
+            if held_minutes < settings.min_hold_minutes:
+                logger.info(
+                    "engine.sell_signal_too_early",
+                    symbol=signal.symbol,
+                    held_minutes=round(held_minutes, 1),
+                    min_hold=settings.min_hold_minutes,
+                )
+                return
+
         # Place sell order for the full position
         result = await self._order_manager.submit_order(
             trade_id=open_trade.id,
@@ -430,6 +461,7 @@ class TradingEngine:
                 open_trade, result.filled_price
             )
             self._open_trades.pop(signal.symbol, None)
+            self._last_close_time[signal.symbol] = datetime.now(timezone.utc)
             pnl = open_trade.realized_pnl or 0.0
             hold_mins = ""
             if open_trade.created_at:
@@ -674,6 +706,7 @@ class TradingEngine:
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
             self._open_trades.pop(symbol, None)
+            self._last_close_time[symbol] = datetime.now(timezone.utc)
             pnl = trade.realized_pnl or 0.0
             hold_mins = ""
             if trade.created_at:
@@ -769,6 +802,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
+                    self._last_close_time[symbol] = datetime.now(timezone.utc)
                     await send_alert(
                         "Take-Profit Hit",
                         f"{symbol}: sold at {result.filled_price:.2f} "
@@ -812,6 +846,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
+                    self._last_close_time[symbol] = datetime.now(timezone.utc)
                     pnl = trade.realized_pnl or 0.0
                     await send_alert(
                         "EOD Close",

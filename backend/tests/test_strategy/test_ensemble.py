@@ -130,7 +130,23 @@ async def test_custom_weights():
     s2 = MockStrategy("strat2", [make_signal(
         action=SignalAction.SELL, confidence=0.7, strategy="strat2",
     )])
-    # strat1 has much higher weight → BUY should win
+    # Conflict (BUY vs SELL) → forced HOLD regardless of weights
+    ensemble = EnsembleStrategy([s1, s2], weights={"strat1": 3.0, "strat2": 1.0})
+
+    signals = await ensemble.generate_signals(make_snapshot())
+    assert len(signals) == 1
+    assert signals[0].action == SignalAction.HOLD
+
+
+@pytest.mark.asyncio
+async def test_custom_weights_no_conflict():
+    """When strategies agree on direction, weights determine confidence."""
+    s1 = MockStrategy("strat1", [make_signal(
+        action=SignalAction.BUY, confidence=0.7, strategy="strat1",
+    )])
+    s2 = MockStrategy("strat2", [make_signal(
+        action=SignalAction.BUY, confidence=0.6, strategy="strat2",
+    )])
     ensemble = EnsembleStrategy([s1, s2], weights={"strat1": 3.0, "strat2": 1.0})
 
     signals = await ensemble.generate_signals(make_snapshot())

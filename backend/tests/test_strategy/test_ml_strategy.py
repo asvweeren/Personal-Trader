@@ -63,7 +63,7 @@ async def test_signals_with_mock_model():
 
     # Create mock model
     mock_model = MagicMock()
-    mock_model.predict_proba.return_value = np.array([[0.1, 0.2, 0.7]])  # BUY
+    mock_model.predict_proba.return_value = np.array([[0.05, 0.1, 0.85]])  # BUY
     strategy._model = mock_model
 
     # Set feature columns to match what compute_features produces
@@ -82,7 +82,7 @@ async def test_signals_with_mock_model():
     assert len(signals) == 1
     assert signals[0].symbol == "AAPL"
     assert signals[0].action == SignalAction.BUY
-    assert signals[0].confidence > 0.6
+    assert signals[0].confidence > 0.75
 
 
 @pytest.mark.asyncio

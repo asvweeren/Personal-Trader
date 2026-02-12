@@ -43,7 +43,7 @@ class MLStrategy(Strategy):
 
     def __init__(
         self,
-        confidence_threshold: float = 0.6,
+        confidence_threshold: float = 0.75,
         model_path: str | None = None,
     ):
         self._model = None
@@ -96,11 +96,11 @@ class MLStrategy(Strategy):
             regime = getattr(self, "_current_regime", None)
             if regime is not None:
                 if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                    return 0.45  # More aggressive in trends
+                    return 0.65  # Slightly relaxed in clear trends
                 elif regime.regime == MarketRegime.RANGING:
-                    return 0.65  # More conservative in ranges
+                    return 0.80  # Conservative in ranges
                 elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                    return 0.70  # Very conservative in high vol
+                    return 0.85  # Very conservative in high vol
         except Exception:
             pass
         return self._confidence_threshold
