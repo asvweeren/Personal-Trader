@@ -76,7 +76,8 @@ class TestSmartExecutor:
         assert order_manager.submit_order.call_count == 4
 
     @pytest.mark.asyncio
-    async def test_execute_vwap(self):
+    @patch("app.execution.smart_execution.asyncio.sleep", new_callable=AsyncMock)
+    async def test_execute_vwap(self, mock_sleep):
         broker = MagicMock()
         order_manager = AsyncMock()
         order_manager.submit_order = AsyncMock(return_value=OrderResult(
