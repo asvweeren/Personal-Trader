@@ -46,6 +46,14 @@ services:
       TWS_ACCEPT_INCOMING: "accept"
       READ_ONLY_API: "no"
       VNC_SERVER_PASSWORD: ${VNC_PASSWORD:-trader123}
+      # Auto-restart after IBKR's daily maintenance (~23:45 UTC)
+      # Gateway restarts at 12:05 AM ET = 05:05 UTC, before markets open
+      AUTO_RESTART_TIME: "12:05 AM"
+      # Cold restart on Sundays (full re-auth) before weekly market open
+      TWS_COLD_RESTART: "07:00"
+      # Auto re-login after 2FA timeout instead of exiting
+      RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
+      TWOFA_TIMEOUT_ACTION: "restart"
     ports:
       - "5900:5900"   # VNC for manual login / 2FA if needed
       - "4002:4002"   # IB Gateway API port (paper)
