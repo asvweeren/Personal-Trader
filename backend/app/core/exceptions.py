@@ -30,6 +30,10 @@ class PositionSizeLimitExceeded(RiskLimitExceeded):
     """Position would exceed maximum portfolio percentage."""
 
 
+class MaxLeverageExceeded(RiskLimitExceeded):
+    """Total positions value would exceed maximum leverage ratio."""
+
+
 class MarketClosedError(TraderError):
     """Attempted to trade outside market hours."""
 

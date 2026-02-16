@@ -11,10 +11,15 @@ from app.core.exceptions import (
     DailyLossLimitExceeded,
     InsufficientCashReserve,
     MarketClosedError,
+    MaxLeverageExceeded,
     MaxPositionsExceeded,
     PositionSizeLimitExceeded,
 )
 from app.risk.market_hours import get_exchange_for_symbol, is_market_open
+
+# Maximum ratio of total positions value to equity (net liquidation).
+# 2.0 = max 2x leverage (e.g. $200k positions on $100k equity).
+MAX_LEVERAGE_RATIO = 2.0
 
 
 @dataclass
@@ -65,15 +70,48 @@ def check_max_positions(
 def check_cash_reserve(
     portfolio: Portfolio, order_value: float, min_cash_reserve_pct: float
 ) -> None:
-    """Check if cash reserve would drop below minimum. Raises if violated."""
+    """Check if cash reserve would drop below minimum. Raises if violated.
+
+    On margin accounts, uses buying_power instead of cash (which can be
+    negative due to margin loans).
+    """
     total_value = portfolio.account_summary.total_value
-    cash_after = portfolio.account_summary.cash - order_value
     if total_value <= 0:
         raise InsufficientCashReserve("Portfolio value is zero")
+    cash = portfolio.account_summary.cash
+    # On margin accounts cash is negative; use buying_power instead
+    if cash < 0:
+        available = portfolio.account_summary.buying_power
+        if available < order_value:
+            raise InsufficientCashReserve(
+                f"Insufficient buying power (${available:,.0f}) for ${order_value:,.0f} order"
+            )
+        return
+    cash_after = cash - order_value
     reserve_pct = (cash_after / total_value) * 100
     if reserve_pct < min_cash_reserve_pct:
         raise InsufficientCashReserve(
             f"Cash reserve would be {reserve_pct:.2f}% (min: {min_cash_reserve_pct}%)"
+        )
+
+
+def check_leverage(portfolio: Portfolio, order_value: float) -> None:
+    """Check if total leverage would exceed maximum. Raises if violated.
+
+    Prevents the account from becoming overleveraged on margin accounts.
+    Total positions value (including the new order) must not exceed
+    MAX_LEVERAGE_RATIO × equity (net liquidation value).
+    """
+    equity = portfolio.account_summary.total_value
+    if equity <= 0:
+        raise MaxLeverageExceeded("Portfolio equity is zero")
+    total_positions = sum(abs(p.market_value) for p in portfolio.positions)
+    new_total = total_positions + order_value
+    leverage = new_total / equity
+    if leverage > MAX_LEVERAGE_RATIO:
+        raise MaxLeverageExceeded(
+            f"Leverage would be {leverage:.1f}x (max: {MAX_LEVERAGE_RATIO}x). "
+            f"Positions: ${new_total:,.0f} on ${equity:,.0f} equity"
         )
 
 
@@ -152,6 +190,11 @@ def check_all_hard_limits(
     try:
         check_cash_reserve(portfolio, order_value, min_cash_reserve_pct)
     except InsufficientCashReserve as e:
+        violations.append(str(e))
+
+    try:
+        check_leverage(portfolio, order_value)
+    except MaxLeverageExceeded as e:
         violations.append(str(e))
 
     return HardLimitCheck(passed=len(violations) == 0, violations=violations)
