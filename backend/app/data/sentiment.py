@@ -311,6 +311,17 @@ class SentimentAnalyzer:
             return self._neutral_result(
                 symbol, batch, reason="Invalid Anthropic API key"
             )
+        except anthropic.BadRequestError as e:
+            error_msg = str(e)
+            if "usage limits" in error_msg or "rate" in error_msg.lower():
+                logger.warning("sentiment.api_budget_exhausted", detail=error_msg[:200])
+                # Disable client until next restart to avoid hammering the API
+                self._client = None
+            else:
+                logger.error("sentiment.api_bad_request", symbol=symbol, error=error_msg[:200])
+            return self._neutral_result(
+                symbol, batch, reason="API budget/rate limit reached"
+            )
         except Exception:
             logger.exception("sentiment.api_error", symbol=symbol)
             return self._neutral_result(

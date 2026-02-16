@@ -213,11 +213,21 @@ def calculate_position_size(
 
     Uses Kelly criterion scaled by confidence, volatility, correlation, and sector.
     Always respects the max_position_pct limit.
+
+    Supports margin accounts: when cash is negative (margin loan), buying_power
+    is used to determine available funds for new positions.
     """
     total_value = portfolio.account_summary.total_value
     cash = portfolio.account_summary.cash
+    buying_power = portfolio.account_summary.buying_power
 
-    if price <= 0 or total_value <= 0 or cash <= 0:
+    if price <= 0 or total_value <= 0:
+        return 0
+
+    # For margin accounts, cash can be negative (margin loan).
+    # Use buying_power as the available funds limit instead.
+    available_funds = buying_power if cash <= 0 else cash
+    if available_funds <= 0:
         return 0
 
     # Maximum allowed allocation for this position
@@ -259,8 +269,8 @@ def calculate_position_size(
         max_allocation * kelly_fraction * vol_factor * corr_factor * sector_factor
     )
 
-    # Never exceed available cash (keep 10% buffer)
-    target_allocation = min(target_allocation, cash * 0.9)
+    # Never exceed available funds (keep 10% buffer)
+    target_allocation = min(target_allocation, available_funds * 0.9)
 
     quantity = math.floor(target_allocation / price)
 
