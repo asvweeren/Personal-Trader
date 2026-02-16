@@ -51,8 +51,10 @@ class IBKRAdapter(BrokerAdapter):
         self._auto_reconnect = True
         self._reconnecting = False
 
-    def _start_ib_loop(self):
-        """Start a dedicated event loop thread for ib_insync."""
+    def _ensure_ib_loop(self):
+        """Ensure the dedicated ib_insync event loop is running (idempotent)."""
+        if self._ib_loop and self._ib_loop.is_running():
+            return  # Already running, reuse it
         self._ib_loop = asyncio.new_event_loop()
         nest_asyncio.apply(self._ib_loop)
 
@@ -80,10 +82,24 @@ class IBKRAdapter(BrokerAdapter):
         return await self._run(_wrapper())
 
     async def connect(self) -> None:
+        # If auto-reconnect loop is already working, don't compete with it
+        if self._reconnecting:
+            logger.debug("ibkr.connect_skipped", reason="reconnect_in_progress")
+            return
+
         try:
-            self._start_ib_loop()
+            self._ensure_ib_loop()
 
             async def _do_connect():
+                # Cleanly disconnect old instance before creating a new one
+                if self._ib is not None:
+                    try:
+                        if self._ib.isConnected():
+                            self._ib.disconnect()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)  # Let gateway release the client ID
+
                 self._ib = IB()
                 logger.info(
                     "ibkr.connecting",
@@ -154,6 +170,15 @@ class IBKRAdapter(BrokerAdapter):
                 await asyncio.sleep(delay)
 
                 try:
+                    # Cleanly disconnect old instance so gateway releases the client ID
+                    if self._ib is not None:
+                        try:
+                            if self._ib.isConnected():
+                                self._ib.disconnect()
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1)
+
                     self._ib = IB()
                     await self._ib.connectAsync(
                         self._host, self._port,

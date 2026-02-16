@@ -361,12 +361,17 @@ def schedule_broker_watchdog(broker) -> None:
         try:
             connected = await broker.is_connected()
             if not connected:
-                logger.warning("watchdog.broker_offline")
-                try:
-                    await broker.connect()
-                    logger.info("watchdog.broker_reconnected")
-                except Exception:
-                    logger.warning("watchdog.reconnect_failed", exc_info=True)
+                # If the adapter's auto-reconnect loop is already running, don't
+                # compete by calling connect() — that causes clientId conflicts.
+                if getattr(broker, "_reconnecting", False):
+                    logger.debug("watchdog.broker_offline", reconnect_active=True)
+                else:
+                    logger.warning("watchdog.broker_offline")
+                    try:
+                        await broker.connect()
+                        logger.info("watchdog.broker_reconnected")
+                    except Exception:
+                        logger.warning("watchdog.reconnect_failed", exc_info=True)
                 return
 
             # Broker is connected — check if engine needs lazy initialization
