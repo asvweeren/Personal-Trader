@@ -34,6 +34,10 @@ class MaxLeverageExceeded(RiskLimitExceeded):
     """Total positions value would exceed maximum leverage ratio."""
 
 
+class ShortPositionError(RiskLimitExceeded):
+    """Sell order would create a short position (not allowed)."""
+
+
 class MarketClosedError(TraderError):
     """Attempted to trade outside market hours."""
 

@@ -232,6 +232,30 @@ class IBKRAdapter(BrokerAdapter):
         return self._ib.isConnected()
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
+        # Safety net: prevent SELL orders from exceeding current position
+        if order.side == OrderSide.SELL:
+            try:
+                positions = await self.get_positions()
+                held_qty = 0
+                for pos in positions:
+                    if pos.symbol == order.symbol:
+                        held_qty = max(pos.quantity, 0)
+                        break
+                if order.quantity > held_qty:
+                    raise BrokerOrderError(
+                        f"SELL {order.quantity} {order.symbol} rejected: "
+                        f"would exceed position of {held_qty} and create a short"
+                    )
+            except BrokerOrderError:
+                raise
+            except Exception:
+                logger.warning(
+                    "ibkr.short_check_failed",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                )
+                # Don't block the order if position check fails
+
         try:
             contract = self._make_contract(order.symbol)
             ib_order = self._make_order(order)

@@ -120,6 +120,61 @@ async def test_auto_fix_orphaned_internal():
     assert "AAPL" not in engine._open_trades
 
 
+@pytest.mark.asyncio
+async def test_reconcile_detects_short_position():
+    """A negative broker quantity should be detected as a short to close."""
+    trades = {}
+    portfolio = _make_portfolio([])
+    # Manually add a short position (negative qty)
+    portfolio.positions.append(
+        Position(
+            symbol="APH",
+            quantity=-50,
+            avg_cost=100.0,
+            market_price=100.0,
+            market_value=-5000.0,
+            unrealized_pnl=0.0,
+        )
+    )
+    result = await reconcile(trades, portfolio)
+    assert not result.is_clean
+    assert len(result.orphaned_broker) == 1
+    assert result.orphaned_broker[0]["symbol"] == "APH"
+    assert result.orphaned_broker[0]["broker_qty"] == -50
+    assert result.orphaned_broker[0]["action"] == "close_short"
+    assert result.orphaned_broker[0]["severity"] == "critical"
+
+
+@pytest.mark.asyncio
+async def test_auto_fix_closes_short():
+    """Auto-fix should place a BUY order to flatten a short position."""
+    engine = MagicMock()
+    engine._open_trades = {}
+    order_mgr = MagicMock()
+    order_mgr.submit_order = AsyncMock()
+    engine._order_manager = order_mgr
+    db = AsyncMock()
+
+    result = ReconciliationResult(
+        orphaned_broker=[{
+            "symbol": "APH",
+            "broker_qty": -50,
+            "action": "close_short",
+            "severity": "critical",
+        }],
+    )
+    actions = await auto_fix(result, engine, db)
+    assert len(actions) == 1
+    assert "CRITICAL" in actions[0]
+    assert "APH" in actions[0]
+    assert "50" in actions[0]
+    order_mgr.submit_order.assert_awaited_once()
+    call_kwargs = order_mgr.submit_order.call_args
+    assert call_kwargs.kwargs["symbol"] == "APH"
+    assert call_kwargs.kwargs["side"] == "BUY"
+    assert call_kwargs.kwargs["quantity"] == 50
+
+
 def test_result_to_dict():
     result = ReconciliationResult(
         matches=["AAPL"],

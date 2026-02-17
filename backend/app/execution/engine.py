@@ -445,6 +445,9 @@ class TradingEngine:
                 )
                 return
 
+        # Cancel any pending SELL orders (e.g. stop-loss) before placing new sell
+        await self._cancel_pending_sells(signal.symbol)
+
         # Place sell order for the full position
         result = await self._order_manager.submit_order(
             trade_id=open_trade.id,
@@ -479,6 +482,21 @@ class TradingEngine:
                 f"P&L: {pnl:+.2f}{hold_mins}\n"
                 f"Exit reason: signal",
             )
+
+    async def _cancel_pending_sells(self, symbol: str) -> int:
+        """Cancel all pending SELL orders for a symbol before placing a new sell.
+
+        This prevents the old stop-loss from triggering after a position is
+        already closed, which would create an unintended short position.
+        """
+        cancelled = await self._order_manager.cancel_orders_for_symbol(symbol, side="SELL")
+        if cancelled:
+            logger.info(
+                "engine.cancelled_pending_sells",
+                symbol=symbol,
+                count=cancelled,
+            )
+        return cancelled
 
     def _get_atr(self, symbol: str) -> float | None:
         """Get ATR value for a symbol from cached market data features."""
@@ -703,6 +721,8 @@ class TradingEngine:
                         filled_price, symbol, atr_val
                     )
         elif side == "SELL":
+            # Cancel any remaining pending SELL orders (e.g. stop-loss) for this symbol
+            await self._cancel_pending_sells(symbol)
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
             self._open_trades.pop(symbol, None)
@@ -788,6 +808,9 @@ class TradingEngine:
                     take_profit=trade.take_profit,
                     entry_price=trade.entry_price,
                 )
+                # Cancel pending SELL orders (stop-loss) before closing
+                await self._cancel_pending_sells(symbol)
+
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
                     symbol=symbol,
@@ -832,6 +855,9 @@ class TradingEngine:
                     minutes_left=round(mins_left, 1),
                     current_price=current_price,
                 )
+                # Cancel pending SELL orders (stop-loss) before EOD close
+                await self._cancel_pending_sells(symbol)
+
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
                     symbol=symbol,

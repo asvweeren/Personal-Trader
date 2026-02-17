@@ -230,3 +230,105 @@ async def test_submit_ibkr_pending_submit_goes_pending():
 
     assert result.status == "PendingSubmit"
     assert om.pending_count == 1  # Should be tracked for polling
+
+
+# ── Quantity validation tests ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_submit_order_zero_quantity_raises():
+    broker = make_mock_broker()
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    with pytest.raises(ValueError, match="quantity must be positive"):
+        await om.submit_order(
+            trade_id=1, symbol="AAPL", side="BUY", quantity=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_order_negative_quantity_raises():
+    broker = make_mock_broker()
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    with pytest.raises(ValueError, match="quantity must be positive"):
+        await om.submit_order(
+            trade_id=1, symbol="AAPL", side="SELL", quantity=-5,
+        )
+
+
+# ── Cancel orders for symbol tests ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancel_orders_for_symbol():
+    """Cancel all pending orders for a specific symbol."""
+    broker = make_mock_broker()
+    broker.place_order.side_effect = [
+        OrderResult(order_id="ord-a1", status="SUBMITTED"),
+        OrderResult(order_id="ord-a2", status="SUBMITTED"),
+        OrderResult(order_id="ord-b1", status="SUBMITTED"),
+    ]
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    await om.submit_order(trade_id=1, symbol="AAPL", side="BUY", quantity=10)
+    await om.submit_order(trade_id=1, symbol="AAPL", side="SELL", quantity=10)
+    await om.submit_order(trade_id=2, symbol="MSFT", side="BUY", quantity=5)
+    assert om.pending_count == 3
+
+    cancelled = await om.cancel_orders_for_symbol("AAPL")
+    assert cancelled == 2
+    assert om.pending_count == 1  # Only MSFT remains
+
+
+@pytest.mark.asyncio
+async def test_cancel_orders_for_symbol_by_side():
+    """Cancel only SELL orders for a symbol, keep BUY."""
+    broker = make_mock_broker()
+    broker.place_order.side_effect = [
+        OrderResult(order_id="ord-c1", status="SUBMITTED"),
+        OrderResult(order_id="ord-c2", status="SUBMITTED"),
+    ]
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    await om.submit_order(trade_id=1, symbol="AAPL", side="BUY", quantity=10)
+    await om.submit_order(trade_id=1, symbol="AAPL", side="SELL", quantity=10)
+    assert om.pending_count == 2
+
+    cancelled = await om.cancel_orders_for_symbol("AAPL", side="SELL")
+    assert cancelled == 1
+    assert om.pending_count == 1  # BUY order remains
+
+
+@pytest.mark.asyncio
+async def test_cancel_orders_for_symbol_none_pending():
+    """No orders for the symbol — returns 0."""
+    broker = make_mock_broker()
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    cancelled = await om.cancel_orders_for_symbol("AAPL")
+    assert cancelled == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_by_symbol_cleaned_on_poll():
+    """Verify _pending_by_symbol is cleaned when orders complete via polling."""
+    broker = make_mock_broker()
+    broker.place_order.return_value = OrderResult(order_id="ord-d1", status="SUBMITTED")
+    broker.get_order_status.return_value = OrderResult(
+        order_id="ord-d1", status="FILLED", filled_price=150.0, filled_quantity=10
+    )
+    db = make_mock_db()
+    om = OrderManager(broker, db)
+
+    await om.submit_order(trade_id=1, symbol="AAPL", side="SELL", quantity=10)
+    assert "AAPL" in om._pending_by_symbol
+
+    await om.poll_pending_orders()
+    assert om.pending_count == 0
+    assert "AAPL" not in om._pending_by_symbol

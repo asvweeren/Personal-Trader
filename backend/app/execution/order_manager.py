@@ -26,6 +26,8 @@ class OrderManager:
         self._db = db
         # Track pending orders by broker_order_id for polling
         self._pending_orders: dict[str, Order] = {}
+        # Secondary index: symbol -> set of broker_order_ids (for cancel by symbol)
+        self._pending_by_symbol: dict[str, set[str]] = {}
 
     @property
     def pending_count(self) -> int:
@@ -43,6 +45,9 @@ class OrderManager:
         expected_price: float | None = None,
     ) -> OrderResult:
         """Submit an order to the broker and record it in the database."""
+        if quantity <= 0:
+            raise ValueError(f"Order quantity must be positive, got {quantity}")
+
         order_request = OrderRequest(
             symbol=symbol,
             side=OrderSide(side),
@@ -119,6 +124,7 @@ class OrderManager:
             await event_bus.publish(ORDER_FILLED, event_data)
         elif mapped in _ACTIVE_STATUSES:
             self._pending_orders[result.order_id] = db_order
+            self._pending_by_symbol.setdefault(symbol, set()).add(result.order_id)
 
         logger.info(
             "order.submitted",
@@ -214,7 +220,13 @@ class OrderManager:
                 logger.exception("order.poll_error", order_id=broker_id)
 
         for broker_id in to_remove:
-            self._pending_orders.pop(broker_id, None)
+            order = self._pending_orders.pop(broker_id, None)
+            if order:
+                sym_set = self._pending_by_symbol.get(order.symbol)
+                if sym_set:
+                    sym_set.discard(broker_id)
+                    if not sym_set:
+                        del self._pending_by_symbol[order.symbol]
 
         if filled:
             await self._db.flush()
@@ -228,6 +240,11 @@ class OrderManager:
             db_order = self._pending_orders.pop(broker_order_id, None)
             if db_order:
                 db_order.status = OrderStatus.CANCELLED
+                sym_set = self._pending_by_symbol.get(db_order.symbol)
+                if sym_set:
+                    sym_set.discard(broker_order_id)
+                    if not sym_set:
+                        del self._pending_by_symbol[db_order.symbol]
                 await self._db.flush()
             await event_bus.publish(ORDER_CANCELLED, {"order_id": broker_order_id})
             logger.info("order.cancelled", order_id=broker_order_id)
@@ -244,6 +261,45 @@ class OrderManager:
             except Exception:
                 logger.exception("order.cancel_error", order_id=broker_id)
         logger.info("order.cancel_all", total=len(broker_ids), cancelled=cancelled)
+        return cancelled
+
+    async def cancel_orders_for_symbol(
+        self, symbol: str, side: str | None = None
+    ) -> int:
+        """Cancel all pending orders for a symbol, optionally filtered by side.
+
+        Args:
+            symbol: The symbol to cancel orders for.
+            side: If provided, only cancel orders with this side (e.g. "SELL").
+
+        Returns:
+            Number of successfully cancelled orders.
+        """
+        broker_ids = list(self._pending_by_symbol.get(symbol, set()))
+        if not broker_ids:
+            return 0
+
+        cancelled = 0
+        for broker_id in broker_ids:
+            db_order = self._pending_orders.get(broker_id)
+            if db_order and side and db_order.side != side:
+                continue
+            try:
+                if await self.cancel_order(broker_id):
+                    cancelled += 1
+            except Exception:
+                logger.exception(
+                    "order.cancel_for_symbol_error",
+                    order_id=broker_id,
+                    symbol=symbol,
+                )
+        if cancelled:
+            logger.info(
+                "order.cancelled_for_symbol",
+                symbol=symbol,
+                side=side,
+                cancelled=cancelled,
+            )
         return cancelled
 
     def _map_status(self, broker_status: str) -> OrderStatus:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.broker.base import Portfolio
+from app.broker.base import OrderType, Portfolio
 from app.models.trade import Trade, TradeStatus
 
 logger = structlog.get_logger()
@@ -49,10 +49,10 @@ async def reconcile(
     """
     result = ReconciliationResult()
 
-    # Build broker positions map: symbol -> quantity
+    # Build broker positions map: symbol -> quantity (include shorts)
     broker_positions: dict[str, int] = {}
     for pos in portfolio.positions:
-        if pos.quantity > 0:
+        if pos.quantity != 0:
             broker_positions[pos.symbol] = pos.quantity
 
     internal_symbols = set(engine_trades.keys())
@@ -74,11 +74,21 @@ async def reconcile(
 
     # Orphaned in broker (broker has position, engine doesn't know about it)
     for symbol in broker_symbols - internal_symbols:
-        result.orphaned_broker.append({
-            "symbol": symbol,
-            "broker_qty": broker_positions[symbol],
-            "action": "add_to_internal",
-        })
+        broker_qty = broker_positions[symbol]
+        if broker_qty < 0:
+            # Short position detected — engine doesn't track shorts
+            result.orphaned_broker.append({
+                "symbol": symbol,
+                "broker_qty": broker_qty,
+                "action": "close_short",
+                "severity": "critical",
+            })
+        else:
+            result.orphaned_broker.append({
+                "symbol": symbol,
+                "broker_qty": broker_qty,
+                "action": "add_to_internal",
+            })
 
     # Orphaned in engine (engine thinks it has a position, broker doesn't)
     for symbol in internal_symbols - broker_symbols:
@@ -115,6 +125,40 @@ async def auto_fix(
                 old=old_qty,
                 new=broker_qty,
             )
+
+    # Close short positions: place BUY order to flatten
+    for orphan in result.orphaned_broker:
+        if orphan.get("action") == "close_short":
+            symbol = orphan["symbol"]
+            short_qty = abs(orphan["broker_qty"])
+            try:
+                order_mgr = engine._order_manager
+                # Use a dummy trade_id of 0 — this is an emergency fix
+                await order_mgr.submit_order(
+                    trade_id=0,
+                    symbol=symbol,
+                    side="BUY",
+                    quantity=short_qty,
+                    order_type=OrderType.MARKET,
+                )
+                actions.append(
+                    f"CRITICAL: Closed short position {symbol}: "
+                    f"bought {short_qty} shares to flatten"
+                )
+                logger.critical(
+                    "reconciliation.short_position_closed",
+                    symbol=symbol,
+                    quantity=short_qty,
+                )
+            except Exception:
+                logger.exception(
+                    "reconciliation.close_short_failed",
+                    symbol=symbol,
+                    quantity=short_qty,
+                )
+                actions.append(
+                    f"FAILED to close short {symbol} ({short_qty} shares)"
+                )
 
     # Orphaned internal: mark as closed (broker doesn't have them)
     for symbol in result.orphaned_internal:

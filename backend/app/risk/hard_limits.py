@@ -14,6 +14,7 @@ from app.core.exceptions import (
     MaxLeverageExceeded,
     MaxPositionsExceeded,
     PositionSizeLimitExceeded,
+    ShortPositionError,
 )
 from app.risk.market_hours import get_exchange_for_symbol, is_market_open
 
@@ -112,6 +113,26 @@ def check_leverage(portfolio: Portfolio, order_value: float) -> None:
         raise MaxLeverageExceeded(
             f"Leverage would be {leverage:.1f}x (max: {MAX_LEVERAGE_RATIO}x). "
             f"Positions: ${new_total:,.0f} on ${equity:,.0f} equity"
+        )
+
+
+def check_no_short_position(
+    portfolio: Portfolio, symbol: str, sell_qty: int
+) -> None:
+    """Check if a SELL order would create a short position. Raises if so.
+
+    Looks up the current position for *symbol* in the broker portfolio.
+    If the sell quantity exceeds the held quantity, the order is rejected.
+    """
+    held_qty = 0
+    for pos in portfolio.positions:
+        if pos.symbol == symbol:
+            held_qty = max(pos.quantity, 0)  # Treat existing shorts as 0
+            break
+    if sell_qty > held_qty:
+        raise ShortPositionError(
+            f"SELL {sell_qty} {symbol} would exceed position of {held_qty} "
+            f"and create a short position"
         )
 
 
