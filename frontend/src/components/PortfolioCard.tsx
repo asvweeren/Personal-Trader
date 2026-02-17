@@ -48,7 +48,10 @@ export function PortfolioCard({ portfolio, performance }: Props) {
   const pnlColor =
     (performance?.total_return_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400";
 
-  const positionsValue = portfolio.total_value - portfolio.cash;
+  const positionsValue = portfolio.positions.reduce(
+    (sum, p) => sum + (p.market_value ?? 0),
+    0
+  );
 
   return (
     <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
@@ -80,9 +83,7 @@ export function PortfolioCard({ portfolio, performance }: Props) {
               In Posities
               <Tooltip text="Het bedrag dat momenteel vastzit in aandelen. Dit is de huidige marktwaarde van al je open posities." />
             </div>
-            <div
-              className={`text-lg font-semibold ${positionsValue >= 0 ? "text-white" : "text-red-400"}`}
-            >
+            <div className="text-lg font-semibold text-white">
               {formatCurrency(positionsValue)}
             </div>
             <div className="text-xs text-gray-500">
@@ -92,10 +93,10 @@ export function PortfolioCard({ portfolio, performance }: Props) {
           <div>
             <div className="text-xs text-gray-500">
               Beschikbaar
-              <Tooltip text="Het bedrag waarmee je nu nieuwe aandelen kunt kopen. Dit is je koopkracht bij de broker." />
+              <Tooltip text="Het kassaldo op je rekening. Dit is het bedrag dat niet in posities vastzit." />
             </div>
             <div className="text-lg font-semibold text-white">
-              {formatCurrency(portfolio.buying_power)}
+              {formatCurrency(portfolio.cash)}
             </div>
           </div>
         </div>
