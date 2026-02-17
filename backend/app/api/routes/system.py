@@ -143,6 +143,40 @@ async def get_reconciliation():
     return result.to_dict()
 
 
+@router.post("/system/reconciliation/run")
+async def run_reconciliation(db: AsyncSession = Depends(get_db)):
+    """Force an immediate position reconciliation with auto-fix."""
+    from app.risk.reconciliation import reconcile, auto_fix, set_last_result
+
+    try:
+        engine = get_trading_engine()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Trading engine not initialized")
+
+    broker = engine._broker
+    if not await broker.is_connected():
+        raise HTTPException(status_code=503, detail="Broker not connected")
+
+    portfolio = await engine._portfolio_tracker.get_current()
+    result = await reconcile(engine._open_trades, portfolio)
+    set_last_result(result)
+
+    actions = []
+    if not result.is_clean:
+        actions = await auto_fix(result, engine, db)
+        if actions:
+            await send_alert(
+                "Manual Reconciliation",
+                "Forced reconciliation:\n" + "\n".join(actions),
+            )
+        await db.commit()
+
+    return {
+        "reconciliation": result.to_dict(),
+        "actions_taken": actions,
+    }
+
+
 @router.get("/system/regime")
 async def get_regime():
     """Get the current market regime detection result."""
