@@ -126,29 +126,32 @@ async def auto_fix(
                 new=broker_qty,
             )
 
-    # Close short positions: place BUY order to flatten
+    # Close short positions: place BUY order directly via broker to flatten
     for orphan in result.orphaned_broker:
         if orphan.get("action") == "close_short":
             symbol = orphan["symbol"]
             short_qty = abs(orphan["broker_qty"])
             try:
-                order_mgr = engine._order_manager
-                # Use a dummy trade_id of 0 — this is an emergency fix
-                await order_mgr.submit_order(
-                    trade_id=0,
+                from app.broker.base import OrderRequest, OrderSide
+                broker = engine._broker
+                order_req = OrderRequest(
                     symbol=symbol,
-                    side="BUY",
+                    side=OrderSide.BUY,
                     quantity=short_qty,
                     order_type=OrderType.MARKET,
                 )
+                result_order = await broker.place_order(order_req)
                 actions.append(
                     f"CRITICAL: Closed short position {symbol}: "
-                    f"bought {short_qty} shares to flatten"
+                    f"bought {short_qty} shares to flatten "
+                    f"(order {result_order.order_id}, status: {result_order.status})"
                 )
                 logger.critical(
                     "reconciliation.short_position_closed",
                     symbol=symbol,
                     quantity=short_qty,
+                    order_id=result_order.order_id,
+                    status=result_order.status,
                 )
             except Exception:
                 logger.exception(

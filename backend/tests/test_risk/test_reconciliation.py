@@ -147,12 +147,16 @@ async def test_reconcile_detects_short_position():
 
 @pytest.mark.asyncio
 async def test_auto_fix_closes_short():
-    """Auto-fix should place a BUY order to flatten a short position."""
+    """Auto-fix should place a BUY order via broker to flatten a short position."""
+    from app.broker.base import OrderResult
+
     engine = MagicMock()
     engine._open_trades = {}
-    order_mgr = MagicMock()
-    order_mgr.submit_order = AsyncMock()
-    engine._order_manager = order_mgr
+    broker = MagicMock()
+    broker.place_order = AsyncMock(return_value=OrderResult(
+        order_id="fix-1", status="SUBMITTED",
+    ))
+    engine._broker = broker
     db = AsyncMock()
 
     result = ReconciliationResult(
@@ -168,11 +172,11 @@ async def test_auto_fix_closes_short():
     assert "CRITICAL" in actions[0]
     assert "APH" in actions[0]
     assert "50" in actions[0]
-    order_mgr.submit_order.assert_awaited_once()
-    call_kwargs = order_mgr.submit_order.call_args
-    assert call_kwargs.kwargs["symbol"] == "APH"
-    assert call_kwargs.kwargs["side"] == "BUY"
-    assert call_kwargs.kwargs["quantity"] == 50
+    broker.place_order.assert_awaited_once()
+    order_req = broker.place_order.call_args[0][0]
+    assert order_req.symbol == "APH"
+    assert order_req.side.value == "BUY"
+    assert order_req.quantity == 50
 
 
 def test_result_to_dict():
