@@ -36,6 +36,13 @@ EU_SYMBOLS: list[str] = [
     "LLOY.L", "BARC.L", "VOD.L",
 ]
 
+_EU_SUFFIXES = (".AS", ".DE", ".PA", ".L")
+
+
+def _is_eu_symbol(symbol: str) -> bool:
+    """Check if a symbol belongs to the EU pool based on exchange suffix."""
+    return any(symbol.upper().endswith(s) for s in _EU_SUFFIXES)
+
 # ── Full S&P 500 list (~503 tickers) + key ETFs ──────────────────────────
 _SP500_SYMBOLS: list[str] = [
     "A", "AAPL", "ABBV", "ABNB", "ABT", "ACGL", "ACN", "ADBE",
@@ -164,7 +171,10 @@ class StockScreener:
     async def run_screening(
         self,
         max_candidates: int | None = None,
+        us_max_candidates: int | None = None,
+        eu_max_candidates: int | None = None,
         min_avg_volume: int | None = None,
+        eu_min_avg_volume: int | None = None,
         momentum_weight: float | None = None,
         volume_weight: float | None = None,
         volatility_weight: float | None = None,
@@ -176,7 +186,10 @@ class StockScreener:
         {screening_date, total_scanned, candidates, config}
         """
         max_candidates = max_candidates or settings.screener_max_candidates
+        us_max = us_max_candidates or settings.screener_us_max_candidates
+        eu_max = eu_max_candidates or settings.screener_eu_max_candidates
         min_avg_volume = min_avg_volume or settings.screener_min_avg_volume
+        eu_min_vol = eu_min_avg_volume or settings.screener_eu_min_avg_volume
         momentum_weight = (
             momentum_weight if momentum_weight is not None
             else settings.screener_momentum_weight
@@ -196,7 +209,10 @@ class StockScreener:
 
         config = {
             "max_candidates": max_candidates,
+            "us_max_candidates": us_max,
+            "eu_max_candidates": eu_max,
             "min_avg_volume": min_avg_volume,
+            "eu_min_avg_volume": eu_min_vol,
             "momentum_weight": momentum_weight,
             "volume_weight": volume_weight,
             "volatility_weight": volatility_weight,
@@ -228,31 +244,49 @@ class StockScreener:
                 "config": config,
             }
 
-        # Score each symbol
-        scored = []
+        # Score each symbol (EU gets lower volume threshold)
+        us_scored: list[dict] = []
+        eu_scored: list[dict] = []
         for symbol in universe:
             try:
+                is_eu = _is_eu_symbol(symbol)
+                effective_min_vol = eu_min_vol if is_eu else min_avg_volume
                 score_data = self._score_symbol(
                     symbol, data,
-                    min_avg_volume=min_avg_volume,
+                    min_avg_volume=effective_min_vol,
                     momentum_weight=momentum_weight,
                     volume_weight=volume_weight,
                     volatility_weight=volatility_weight,
                 )
                 if score_data is not None:
-                    scored.append(score_data)
+                    if is_eu:
+                        eu_scored.append(score_data)
+                    else:
+                        us_scored.append(score_data)
             except Exception:
                 continue
 
-        # Sort by composite score descending, take top N
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        candidates = scored[:max_candidates]
+        # Sort each pool independently, take top N from each
+        us_scored.sort(key=lambda x: x["score"], reverse=True)
+        eu_scored.sort(key=lambda x: x["score"], reverse=True)
+
+        us_candidates = us_scored[:us_max]
+        eu_candidates = eu_scored[:eu_max]
+
+        for c in us_candidates:
+            c["pool"] = "US"
+        for c in eu_candidates:
+            c["pool"] = "EU"
+
+        candidates = us_candidates + eu_candidates
 
         logger.info(
             "screener.complete",
             total_scanned=total_scanned,
-            passed_filter=len(scored),
-            selected=len(candidates),
+            us_passed=len(us_scored),
+            eu_passed=len(eu_scored),
+            us_selected=len(us_candidates),
+            eu_selected=len(eu_candidates),
         )
 
         return {

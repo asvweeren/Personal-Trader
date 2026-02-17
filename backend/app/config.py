@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     screener_volume_weight: float = 0.3
     screener_volatility_weight: float = 0.3
     screener_include_eu: bool = True
+    screener_us_max_candidates: int = 25
+    screener_eu_max_candidates: int = 15
+    screener_eu_min_avg_volume: int = 100_000
 
     # Trading Configuration
     trading_symbols: str = (

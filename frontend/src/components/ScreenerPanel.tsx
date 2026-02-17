@@ -91,7 +91,8 @@ export function ScreenerPanel() {
           {result?.screening_date && (
             <p className="text-sm text-gray-500">
               Last run: {result.screening_date} &middot; {result.total_scanned} scanned &middot;{" "}
-              {result.candidates.length} selected
+              {result.candidates.filter(c => c.pool !== "EU").length} US &middot;{" "}
+              {result.candidates.filter(c => c.pool === "EU").length} EU
             </p>
           )}
           {!result?.screening_date && (
@@ -126,6 +127,9 @@ export function ScreenerPanel() {
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase">
                     Symbol
                   </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-400 uppercase">
+                    Pool
+                  </th>
                   <SortHeader label="Score" field="score" />
                   <SortHeader label="Momentum" field="momentum_score" />
                   <SortHeader label="Volume" field="volume_score" />
@@ -143,6 +147,15 @@ export function ScreenerPanel() {
                   <tr key={c.symbol} className="hover:bg-gray-800/30">
                     <td className="px-3 py-2 text-gray-500">{i + 1}</td>
                     <td className="px-3 py-2 font-medium text-white">{c.symbol}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-block px-2 py-0.5 text-xs rounded font-medium ${
+                        c.pool === "EU"
+                          ? "bg-blue-900/50 text-blue-300 border border-blue-800"
+                          : "bg-green-900/50 text-green-300 border border-green-800"
+                      }`}>
+                        {c.pool || "US"}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <span
                         className={`font-mono text-sm ${

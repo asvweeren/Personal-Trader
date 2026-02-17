@@ -298,6 +298,7 @@ export interface ScreeningCandidate {
   volume_score: number;
   volatility_score: number;
   sector: string;
+  pool?: string;
   price: number;
   change_5d_pct: number;
   avg_volume: number;
