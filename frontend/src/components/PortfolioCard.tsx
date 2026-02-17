@@ -49,7 +49,7 @@ export function PortfolioCard({ portfolio, performance }: Props) {
     (performance?.total_return_pct ?? 0) >= 0 ? "text-green-400" : "text-red-400";
 
   const positionsValue = portfolio.positions.reduce(
-    (sum, p) => sum + (p.market_value ?? 0),
+    (sum, p) => sum + Math.abs(p.market_value ?? 0),
     0
   );
 
