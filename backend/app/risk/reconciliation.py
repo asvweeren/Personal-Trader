@@ -62,10 +62,8 @@ async def reconcile(
     for symbol in internal_symbols & broker_symbols:
         internal_qty = engine_trades[symbol].quantity
         broker_qty = broker_positions[symbol]
-        if internal_qty == broker_qty:
-            result.matches.append(symbol)
-        elif broker_qty < 0:
-            # Engine thinks we're long, broker says we're short — critical
+        if broker_qty < 0:
+            # Any negative broker position is a short that needs closing
             result.mismatches.append({
                 "symbol": symbol,
                 "internal_qty": internal_qty,
@@ -73,6 +71,8 @@ async def reconcile(
                 "action": "close_short",
                 "severity": "critical",
             })
+        elif internal_qty == broker_qty:
+            result.matches.append(symbol)
         else:
             result.mismatches.append({
                 "symbol": symbol,
