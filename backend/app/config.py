@@ -71,9 +71,10 @@ class Settings(BaseSettings):
     )
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 7.0
-    max_position_pct: float = 20.0
+    max_position_pct: float = 10.0
     max_open_positions: int = 20
     min_cash_reserve_pct: float = 20.0
+    confidence_threshold: float = 0.75     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
     atr_stop_multiplier: float = 2.5       # ATR multiplier for stop-loss distance
@@ -91,7 +92,7 @@ class Settings(BaseSettings):
 
     # Trade management
     min_hold_minutes: int = 30               # Min hold time before SELL signal can close
-    reentry_cooldown_minutes: int = 60       # Min wait time before re-entering same symbol
+    reentry_cooldown_minutes: int = 240      # Min wait time before re-entering same symbol
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
