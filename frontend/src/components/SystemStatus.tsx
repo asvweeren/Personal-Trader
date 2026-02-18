@@ -9,18 +9,20 @@ interface Props {
 export function SystemStatus({ wsConnected }: Props) {
   const [health, setHealth] = useState<SystemHealth | null>(null);
 
-  useEffect(() => {
-    const fetch = () => {
-      api.getSystemHealth().then(setHealth).catch(() => {});
-    };
-    fetch();
-    const interval = setInterval(fetch, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
   const brokerStatus = health?.components.broker.status ?? "unknown";
   const engineStatus = health?.components.trading_engine?.status ?? "unknown";
   const isPaper = health?.components.paper_trading ?? true;
+
+  useEffect(() => {
+    const fetchHealth = () => {
+      api.getSystemHealth().then(setHealth).catch(() => {});
+    };
+    fetchHealth();
+    // Poll faster when broker is disconnected or reconnecting
+    const intervalMs = brokerStatus !== "connected" && health ? 5000 : 30000;
+    const interval = setInterval(fetchHealth, intervalMs);
+    return () => clearInterval(interval);
+  }, [brokerStatus]);
 
   return (
     <div className="flex items-center gap-4 text-xs">
@@ -33,7 +35,9 @@ export function SystemStatus({ wsConnected }: Props) {
       <div className="flex items-center gap-1.5">
         <div
           className={`w-2 h-2 rounded-full ${
-            brokerStatus === "connected" ? "bg-green-400" : "bg-red-400"
+            brokerStatus === "connected" ? "bg-green-400"
+            : brokerStatus === "reconnecting" ? "bg-yellow-400 animate-pulse"
+            : "bg-red-400"
           }`}
         />
         <span className="text-gray-500">Broker</span>

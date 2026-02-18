@@ -424,12 +424,12 @@ def schedule_broker_watchdog(broker) -> None:
 
     scheduler.add_job(
         broker_watchdog,
-        IntervalTrigger(seconds=30),
+        IntervalTrigger(seconds=10),
         id="broker_watchdog",
         replace_existing=True,
         max_instances=1,
     )
-    logger.info("scheduler.job_added", job="broker_watchdog", interval="30s")
+    logger.info("scheduler.job_added", job="broker_watchdog", interval="10s")
 
 
 def schedule_daily_reset(engine) -> None:

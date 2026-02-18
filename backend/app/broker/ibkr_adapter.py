@@ -229,7 +229,18 @@ class IBKRAdapter(BrokerAdapter):
     async def is_connected(self) -> bool:
         if self._ib is None:
             return False
-        return self._ib.isConnected()
+        try:
+            loop = asyncio.get_event_loop()
+            connected = await asyncio.wait_for(
+                loop.run_in_executor(None, self._ib.isConnected),
+                timeout=3.0,
+            )
+            if not connected and not self._reconnecting and self._auto_reconnect and self._ib_loop:
+                asyncio.run_coroutine_threadsafe(self._auto_reconnect_loop(), self._ib_loop)
+            return connected
+        except Exception:
+            logger.warning("ibkr.is_connected_check_failed", exc_info=True)
+            return False
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
         # Safety net: prevent SELL orders from exceeding current position

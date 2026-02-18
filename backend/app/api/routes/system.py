@@ -51,12 +51,19 @@ async def health_check(
     except Exception:
         pass
 
+    if broker_connected:
+        broker_status = "connected"
+    elif getattr(broker, "_reconnecting", False):
+        broker_status = "reconnecting"
+    else:
+        broker_status = "disconnected"
+
     all_ok = broker_connected and db_connected and redis_connected
     return {
         "status": "healthy" if all_ok else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "components": {
-            "broker": {"status": "connected" if broker_connected else "disconnected"},
+            "broker": {"status": broker_status},
             "database": {"status": "connected" if db_connected else "disconnected"},
             "redis": {"status": "connected" if redis_connected else "disconnected"},
             "trading_engine": {"status": engine_status},
