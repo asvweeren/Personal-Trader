@@ -64,6 +64,15 @@ async def reconcile(
         broker_qty = broker_positions[symbol]
         if internal_qty == broker_qty:
             result.matches.append(symbol)
+        elif broker_qty < 0:
+            # Engine thinks we're long, broker says we're short — critical
+            result.mismatches.append({
+                "symbol": symbol,
+                "internal_qty": internal_qty,
+                "broker_qty": broker_qty,
+                "action": "close_short",
+                "severity": "critical",
+            })
         else:
             result.mismatches.append({
                 "symbol": symbol,
@@ -112,6 +121,47 @@ async def auto_fix(
     for mismatch in result.mismatches:
         symbol = mismatch["symbol"]
         broker_qty = mismatch["broker_qty"]
+
+        # If broker has a short position, close the internal trade and flatten
+        if mismatch.get("action") == "close_short":
+            # Close the internal trade first
+            trade = engine._open_trades.pop(symbol, None)
+            if trade:
+                trade.status = TradeStatus.CLOSED
+                trade.closed_at = datetime.now(timezone.utc)
+            # Place BUY order to flatten the short
+            short_qty = abs(broker_qty)
+            try:
+                from app.broker.base import OrderRequest, OrderSide
+                broker = engine._broker
+                order_req = OrderRequest(
+                    symbol=symbol,
+                    side=OrderSide.BUY,
+                    quantity=short_qty,
+                    order_type=OrderType.MARKET,
+                )
+                result_order = await broker.place_order(order_req)
+                actions.append(
+                    f"CRITICAL: Closed short mismatch {symbol}: "
+                    f"closed internal trade + bought {short_qty} to flatten "
+                    f"(order {result_order.order_id}, status: {result_order.status})"
+                )
+                logger.critical(
+                    "reconciliation.short_mismatch_closed",
+                    symbol=symbol,
+                    quantity=short_qty,
+                    order_id=result_order.order_id,
+                )
+            except Exception:
+                logger.exception(
+                    "reconciliation.close_short_mismatch_failed",
+                    symbol=symbol,
+                )
+                actions.append(
+                    f"FAILED to close short mismatch {symbol} ({short_qty} shares)"
+                )
+            continue
+
         trade = engine._open_trades.get(symbol)
         if trade:
             old_qty = trade.quantity
