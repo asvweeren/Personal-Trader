@@ -1,4 +1,5 @@
 import asyncio
+import time
 import traceback
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
@@ -356,23 +357,52 @@ def schedule_broker_watchdog(broker) -> None:
     the watchdog will start the data pipeline and trading engine automatically.
     """
     _initializing = {"active": False}
+    _broker_down_since: dict[str, float | None] = {"ts": None}
 
     async def broker_watchdog():
         try:
             connected = await broker.is_connected()
             if not connected:
-                # If the adapter's auto-reconnect loop is already running, don't
-                # compete by calling connect() — that causes clientId conflicts.
-                if getattr(broker, "_reconnecting", False):
-                    logger.debug("watchdog.broker_offline", reconnect_active=True)
-                else:
-                    logger.warning("watchdog.broker_offline")
+                now = time.monotonic()
+                if _broker_down_since["ts"] is None:
+                    _broker_down_since["ts"] = now
+
+                reconnecting = getattr(broker, "_reconnecting", False)
+                down_seconds = now - _broker_down_since["ts"]
+
+                # Force-reset stuck reconnect loop after 3 minutes
+                if reconnecting and down_seconds > 180:
+                    logger.warning(
+                        "watchdog.force_reconnect",
+                        down_seconds=int(down_seconds),
+                        message="Resetting stuck _reconnecting flag",
+                    )
+                    broker._reconnecting = False
+                    reconnecting = False
+
+                if not reconnecting:
+                    logger.warning("watchdog.broker_offline", down_seconds=int(down_seconds))
                     try:
                         await broker.connect()
                         logger.info("watchdog.broker_reconnected")
+                        _broker_down_since["ts"] = None
                     except Exception:
                         logger.warning("watchdog.reconnect_failed", exc_info=True)
+                else:
+                    logger.warning(
+                        "watchdog.broker_offline",
+                        reconnect_active=True,
+                        down_seconds=int(down_seconds),
+                    )
                 return
+
+            # Broker is connected — reset down timer
+            if _broker_down_since["ts"] is not None:
+                logger.info(
+                    "watchdog.broker_recovered",
+                    down_seconds=int(time.monotonic() - _broker_down_since["ts"]),
+                )
+                _broker_down_since["ts"] = None
 
             # Broker is connected — check if engine needs lazy initialization
             if _initializing["active"]:

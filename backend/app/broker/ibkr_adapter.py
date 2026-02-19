@@ -155,16 +155,17 @@ class IBKRAdapter(BrokerAdapter):
         self._ib.disconnectedEvent += _on_disconnect
 
     async def _auto_reconnect_loop(self) -> None:
-        """Reconnect with exponential backoff (5s → 10s → 20s → ... max 300s)."""
+        """Reconnect with exponential backoff (5s → 10s → 20s → max 30s, max 20 attempts)."""
         if self._reconnecting:
             return
         self._reconnecting = True
         delay = 5
-        max_delay = 300
+        max_delay = 30
+        max_attempts = 20
         attempt = 0
 
         try:
-            while self._auto_reconnect:
+            while self._auto_reconnect and attempt < max_attempts:
                 attempt += 1
                 logger.info("ibkr.auto_reconnect", attempt=attempt, delay=delay)
                 await asyncio.sleep(delay)
@@ -213,6 +214,13 @@ class IBKRAdapter(BrokerAdapter):
                 except Exception as e:
                     logger.warning("ibkr.auto_reconnect_failed", attempt=attempt, error=str(e))
                     delay = min(delay * 2, max_delay)
+
+            # Exhausted all attempts — let watchdog take over with a fresh connect
+            logger.warning(
+                "ibkr.auto_reconnect_exhausted",
+                attempts=attempt,
+                message="Giving up, watchdog will retry",
+            )
         finally:
             self._reconnecting = False
 
@@ -235,8 +243,6 @@ class IBKRAdapter(BrokerAdapter):
                 loop.run_in_executor(None, self._ib.isConnected),
                 timeout=3.0,
             )
-            if not connected and not self._reconnecting and self._auto_reconnect and self._ib_loop:
-                asyncio.run_coroutine_threadsafe(self._auto_reconnect_loop(), self._ib_loop)
             return connected
         except Exception:
             logger.warning("ibkr.is_connected_check_failed", exc_info=True)
