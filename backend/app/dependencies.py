@@ -89,9 +89,14 @@ def load_strategies() -> list[Strategy]:
     """Load and initialize all available trading strategies."""
     strategies: list[Strategy] = []
 
-    # 1. ML Strategy (XGBoost) - DISABLED: 21.7% win rate, -€404/trade avg
-    # Needs retraining before re-enabling
-    logger.info("strategies.skipped", name="ml_xgboost", reason="disabled_poor_performance")
+    # 1. ML Strategy (XGBoost)
+    try:
+        from app.strategy.ml_strategy import MLStrategy
+        ml = MLStrategy()
+        strategies.append(ml)
+        logger.info("strategies.loaded", name="ml_xgboost")
+    except Exception:
+        logger.exception("strategies.load_error", name="ml_xgboost")
 
     # 2. Sentiment Strategy (Claude LLM) - requires Anthropic API key
     if settings.anthropic_api_key:
@@ -105,8 +110,15 @@ def load_strategies() -> list[Strategy]:
     else:
         logger.warning("strategies.skipped", name="sentiment", reason="no API key")
 
-    # 3. Ensemble Strategy - disabled (requires 2+ strategies)
-    # Will re-enable when ml_xgboost is retrained
+    # 3. Ensemble Strategy - combines ML + Sentiment when both are available
+    if len(strategies) >= 2:
+        try:
+            from app.strategy.ensemble import EnsembleStrategy
+            ensemble = EnsembleStrategy(strategies=list(strategies))
+            strategies.append(ensemble)
+            logger.info("strategies.loaded", name="ensemble", sub_strategies=len(strategies) - 1)
+        except Exception:
+            logger.exception("strategies.load_error", name="ensemble")
 
     logger.info("strategies.ready", count=len(strategies))
     return strategies
