@@ -42,6 +42,7 @@ class BacktestRequest(BaseModel):
     take_profit_pct: float = 2.0
     enable_eod_close: bool = True
     trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
+    interval: str = "1h"
     params: dict | None = None
 
 
@@ -82,13 +83,14 @@ async def _run_backtest_task(
             try:
                 import yfinance as yf
 
+                _interval = request.interval
                 ticker = await asyncio.get_event_loop().run_in_executor(
                     None,
                     lambda: yf.download(
                         request.symbol,
                         start=request.start_date,
                         end=request.end_date,
-                        interval="1h",
+                        interval=_interval,
                         progress=False,
                     ),
                 )
@@ -133,7 +135,11 @@ async def _run_backtest_task(
             )
             return
 
-        # Run backtest
+        # Run backtest — disable EOD close for daily bars
+        eod_close = request.enable_eod_close
+        if request.interval in ("1d", "1wk", "1mo"):
+            eod_close = False
+
         config = BacktestConfig(
             strategy=strategy,
             symbol=request.symbol,
@@ -145,7 +151,7 @@ async def _run_backtest_task(
             max_position_pct=request.max_position_pct,
             stop_loss_pct=request.stop_loss_pct,
             take_profit_pct=request.take_profit_pct,
-            enable_eod_close=request.enable_eod_close,
+            enable_eod_close=eod_close,
             trailing_stop_tiers=request.trailing_stop_tiers,
         )
 
@@ -213,6 +219,7 @@ async def run_backtest(
             "take_profit_pct": request.take_profit_pct,
             "enable_eod_close": request.enable_eod_close,
             "trailing_stop_tiers": request.trailing_stop_tiers,
+            "interval": request.interval,
             **(request.params or {}),
         },
         metrics={"status": "running"},
