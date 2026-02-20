@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from app.strategy.feature_pipeline import (
+    balance_classes,
     create_target,
     select_feature_columns,
     remove_low_variance,
@@ -168,6 +169,33 @@ def test_prepare_ml_data_insufficient_data():
     df = make_ohlcv(50)  # Too few rows
     with pytest.raises(ValueError, match="Insufficient data"):
         prepare_ml_data(df)
+
+
+# ── get_feature_importance tests ─────────────────────────────
+
+
+# ── balance_classes tests ────────────────────────────────────
+
+
+def test_balance_classes():
+    X = pd.DataFrame({"a": range(100), "b": range(100)})
+    y = pd.Series([0] * 10 + [1] * 60 + [2] * 30)  # imbalanced: 10/60/30
+    X_bal, y_bal = balance_classes(X, y)
+    # Should undersample to minority count (10)
+    assert len(y_bal) == 30  # 10 per class
+    counts = y_bal.value_counts()
+    assert counts[0] == 10
+    assert counts[1] == 10
+    assert counts[2] == 10
+
+
+def test_balance_classes_preserves_order():
+    X = pd.DataFrame({"a": range(100)})
+    y = pd.Series([0] * 20 + [1] * 50 + [2] * 30)
+    X_bal, y_bal = balance_classes(X, y)
+    # Indices should be in ascending (chronological) order
+    indices = X_bal.index.tolist()
+    assert indices == sorted(indices)
 
 
 # ── get_feature_importance tests ─────────────────────────────

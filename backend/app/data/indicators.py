@@ -174,4 +174,46 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     vol_60d = close.pct_change().rolling(60).std()
     features["volatility_regime"] = features["volatility_20d"] / vol_60d
 
+    # --- Interaction Features ---
+
+    # BB squeeze: BB width in lowest 20% of rolling 20-bar range
+    bb_width = features["bb_width"]
+    bb_width_min = bb_width.rolling(20).min()
+    bb_width_max = bb_width.rolling(20).max()
+    bb_width_pctile = (bb_width - bb_width_min) / (bb_width_max - bb_width_min + 1e-10)
+    features["bb_squeeze"] = (bb_width_pctile < 0.2).astype(float)
+
+    # RSI-SMA cross: RSI minus its own 14-period SMA
+    features["rsi_sma_cross"] = rsi_val - sma(rsi_val, 14)
+
+    # VWAP distance: price distance from VWAP as %
+    features["vwap_distance"] = (close - features["vwap"]) / features["vwap"]
+
+    # Volume-price trend: OBV normalized by price
+    features["volume_price_trend"] = features["obv"] / close
+
+    # ATR ratio: ATR/close (normalized volatility)
+    features["atr_ratio"] = features["atr_14"] / close
+
+    # MACD cross: 1=bullish cross, -1=bearish, 0=none
+    macd_diff = features["macd"] - features["macd_signal"]
+    macd_diff_prev = macd_diff.shift(1)
+    features["macd_cross"] = np.where(
+        (macd_diff > 0) & (macd_diff_prev <= 0), 1.0,
+        np.where((macd_diff < 0) & (macd_diff_prev >= 0), -1.0, 0.0),
+    )
+
+    # BB position: position within Bollinger Bands (0=lower, 1=upper)
+    bb_range = bb["upper"] - bb["lower"]
+    features["bb_position"] = np.where(bb_range > 0, (close - bb["lower"]) / bb_range, 0.5)
+
+    # Trend strength: ADX × sign(price_vs_sma50)
+    features["trend_strength"] = features["adx_14"] * np.sign(features["price_vs_sma50"])
+
+    # --- Regime Features ---
+
+    features["regime_trending"] = (features["adx_14"] > 25.0).astype(float)
+    features["regime_breadth_proxy"] = (features["price_vs_sma50"] > 0).astype(float)
+    features["regime_mean_reversion"] = (features["rsi_14"] - 50).abs() / 50
+
     return features

@@ -182,9 +182,9 @@ class MLStrategy(Strategy):
 
             # Prepare data through feature pipeline
             config = FeaturePipelineConfig(
-                forward_periods=5,
-                buy_threshold=0.005,
-                sell_threshold=-0.005,
+                forward_periods=10,
+                buy_threshold=0.015,
+                sell_threshold=-0.015,
                 correlation_threshold=0.95,
                 train_pct=0.70,
                 val_pct=0.15,

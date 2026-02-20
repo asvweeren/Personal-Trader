@@ -67,4 +67,17 @@ def test_compute_features():
     assert "atr_14" in features.columns
     assert "obv" in features.columns
     assert "return_1d" in features.columns
+    # Interaction features
+    assert "bb_squeeze" in features.columns
+    assert "rsi_sma_cross" in features.columns
+    assert "vwap_distance" in features.columns
+    assert "volume_price_trend" in features.columns
+    assert "atr_ratio" in features.columns
+    assert "macd_cross" in features.columns
+    assert "bb_position" in features.columns
+    assert "trend_strength" in features.columns
+    # Regime features
+    assert "regime_trending" in features.columns
+    assert "regime_breadth_proxy" in features.columns
+    assert "regime_mean_reversion" in features.columns
     assert len(features) == len(df)

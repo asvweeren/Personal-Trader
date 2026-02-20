@@ -34,9 +34,9 @@ class DataSplit:
 class FeaturePipelineConfig:
     """Configuration for the feature pipeline."""
     # Target labeling
-    forward_periods: int = 5  # Look ahead N bars for return
-    buy_threshold: float = 0.005  # +0.5% = BUY (class 2)
-    sell_threshold: float = -0.005  # -0.5% = SELL (class 0)
+    forward_periods: int = 10  # Look ahead N bars for return
+    buy_threshold: float = 0.015  # +1.5% = BUY (class 2)
+    sell_threshold: float = -0.015  # -1.5% = SELL (class 0)
     # Feature selection
     correlation_threshold: float = 0.95  # Remove features above this correlation
     min_variance: float = 1e-8  # Remove near-constant features
@@ -48,9 +48,9 @@ class FeaturePipelineConfig:
 
 def create_target(
     df: pd.DataFrame,
-    forward_periods: int = 5,
-    buy_threshold: float = 0.005,
-    sell_threshold: float = -0.005,
+    forward_periods: int = 10,
+    buy_threshold: float = 0.015,
+    sell_threshold: float = -0.015,
 ) -> pd.Series:
     """Create a 3-class target based on forward returns.
 
@@ -154,6 +154,23 @@ def time_based_split(
     return train, val, test
 
 
+def balance_classes(X: pd.DataFrame, y: pd.Series, random_state: int = 42) -> tuple[pd.DataFrame, pd.Series]:
+    """Undersample majority classes to the count of the minority class."""
+    class_counts = y.value_counts()
+    min_count = class_counts.min()
+    balanced_indices: list = []
+    rng = np.random.default_rng(random_state)
+    for cls in class_counts.index:
+        cls_indices = y[y == cls].index.tolist()
+        if len(cls_indices) > min_count:
+            sampled = rng.choice(cls_indices, size=min_count, replace=False).tolist()
+            balanced_indices.extend(sampled)
+        else:
+            balanced_indices.extend(cls_indices)
+    balanced_indices.sort()  # preserve chronological order
+    return X.loc[balanced_indices], y.loc[balanced_indices]
+
+
 def prepare_ml_data(
     raw_df: pd.DataFrame,
     config: FeaturePipelineConfig | None = None,
@@ -212,6 +229,9 @@ def prepare_ml_data(
     y_val = val_df["target"].astype(int)
     X_test = test_df[feature_cols]
     y_test = test_df["target"].astype(int)
+
+    # 5b. Balance training classes (undersample majority)
+    X_train, y_train = balance_classes(X_train, y_train)
 
     # 6. Normalize
     if normalize:
