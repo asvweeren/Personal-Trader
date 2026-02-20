@@ -165,7 +165,7 @@ async def test_backtest_returns_result():
     assert result.strategy_name == "alternating"
     assert result.symbol == "AAPL"
     assert len(result.equity_curve) > 0
-    assert result.total_bars == 150  # 200 - 50 (min_bars)
+    assert result.total_bars == 100  # 200 - 100 (min_bars)
     assert "total_return_pct" in result.metrics
 
 

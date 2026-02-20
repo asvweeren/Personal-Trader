@@ -33,7 +33,7 @@ class BacktestConfig:
     take_profit_pct: float = 2.0
     enable_eod_close: bool = True
     trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
-    min_bars: int = 50
+    min_bars: int = 100
 
 
 @dataclass
