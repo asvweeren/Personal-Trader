@@ -15,6 +15,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
+from app.data.indicators import compute_features
+from app.strategy.feature_pipeline import create_target
 from app.strategy.ml_strategy import MLStrategy
 
 DATA_DIR = Path(__file__).parent.parent / "ml" / "data"
@@ -58,6 +60,18 @@ def parse_args() -> argparse.Namespace:
         "--data-dir", type=str, default=str(DATA_DIR),
         help="Directory containing CSV data files",
     )
+    parser.add_argument(
+        "--forward-periods", type=int, default=5,
+        help="Forward return look-ahead in bars (default: 5)",
+    )
+    parser.add_argument(
+        "--buy-threshold", type=float, default=0.02,
+        help="Forward return threshold for BUY label (default: 0.02 = 2%%)",
+    )
+    parser.add_argument(
+        "--sell-threshold", type=float, default=-0.02,
+        help="Forward return threshold for SELL label (default: -0.02 = -2%%)",
+    )
     return parser.parse_args()
 
 
@@ -74,14 +88,30 @@ async def main():
         return
 
     if args.combine:
-        # Combine all data for a single model
-        print(f"\nCombining {len(datasets)} symbols into one dataset...")
-        combined = pd.concat(datasets.values(), ignore_index=True)
+        # Compute features PER SYMBOL to avoid rolling indicators crossing
+        # symbol boundaries, then concatenate feature DataFrames.
+        fwd = args.forward_periods
+        buy_thr = args.buy_threshold
+        sell_thr = args.sell_threshold
+        print(f"\nComputing features per symbol for {len(datasets)} symbols...")
+        print(f"Target: forward_periods={fwd}, buy_threshold={buy_thr}, sell_threshold={sell_thr}")
+        feature_dfs = []
+        for sym, df in datasets.items():
+            feat_df = compute_features(df)
+            feat_df["target"] = create_target(
+                feat_df, forward_periods=fwd,
+                buy_threshold=buy_thr, sell_threshold=sell_thr,
+            )
+            feat_df = feat_df.dropna()
+            feature_dfs.append(feat_df)
+            print(f"  {sym}: {len(df)} bars → {len(feat_df)} samples")
+
+        combined = pd.concat(feature_dfs, ignore_index=True)
         combined = combined.sort_values("timestamp").reset_index(drop=True)
-        print(f"Combined dataset: {len(combined)} bars")
+        print(f"Combined dataset: {len(combined)} samples")
 
         strategy = MLStrategy()
-        result = await strategy.train(combined)
+        result = await strategy.train(combined, features_precomputed=True)
         print(f"\nResult: {result.message}")
         if result.metrics:
             for key, value in result.metrics.items():

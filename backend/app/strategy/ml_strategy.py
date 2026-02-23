@@ -233,7 +233,9 @@ class MLStrategy(Strategy):
 
         return signals
 
-    async def train(self, historical_data: pd.DataFrame) -> TrainResult:
+    async def train(
+        self, historical_data: pd.DataFrame, features_precomputed: bool = False,
+    ) -> TrainResult:
         """Train the XGBoost model with full feature pipeline."""
         try:
             import xgboost as xgb
@@ -241,13 +243,16 @@ class MLStrategy(Strategy):
             # Prepare data through feature pipeline
             config = FeaturePipelineConfig(
                 forward_periods=10,
-                buy_threshold=0.008,
-                sell_threshold=-0.008,
+                buy_threshold=0.03,
+                sell_threshold=-0.03,
                 correlation_threshold=0.95,
                 train_pct=0.70,
                 val_pct=0.15,
             )
-            data = prepare_ml_data(historical_data, config, normalize=False)
+            data = prepare_ml_data(
+                historical_data, config, normalize=False,
+                features_precomputed=features_precomputed,
+            )
 
             # Calculate class weights for imbalanced data
             class_counts = data.y_train.value_counts()
@@ -444,7 +449,9 @@ class MLStrategy(Strategy):
             logger.exception("ml_strategy.train_error")
             return TrainResult(success=False, metrics={}, message=str(e))
 
-    async def train_candidate(self, historical_data: pd.DataFrame) -> TrainResult:
+    async def train_candidate(
+        self, historical_data: pd.DataFrame, features_precomputed: bool = False,
+    ) -> TrainResult:
         """Train a candidate model without affecting the live model.
 
         Saves to xgboost_model_candidate.pkl so the live model stays untouched.
@@ -459,7 +466,7 @@ class MLStrategy(Strategy):
 
         try:
             self._model_path = candidate_path
-            result = await self.train(historical_data)
+            result = await self.train(historical_data, features_precomputed=features_precomputed)
         finally:
             # Restore live model state regardless of outcome
             self._model_path = original_path

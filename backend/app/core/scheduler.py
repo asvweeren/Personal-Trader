@@ -560,7 +560,16 @@ def schedule_weekly_model_retrain() -> None:
                     if df.empty:
                         continue
                     df = df.copy()
-                    df["symbol"] = sym
+                    # Normalize yfinance column names to lowercase OHLCV
+                    df = df.rename(columns={
+                        "Open": "open", "High": "high", "Low": "low",
+                        "Close": "close", "Volume": "volume",
+                    })
+                    keep = ["open", "high", "low", "close", "volume"]
+                    df = df[[c for c in keep if c in df.columns]]
+                    df.index.name = "timestamp"
+                    df = df.reset_index()
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
                     frames.append(df)
                 except Exception:
                     logger.warning("scheduler.retrain_download_error", symbol=sym)
@@ -573,11 +582,37 @@ def schedule_weekly_model_retrain() -> None:
                 )
                 return
 
-            historical_data = pd.concat(frames)
+            # Compute features PER SYMBOL to prevent rolling indicators
+            # from crossing symbol boundaries, then concatenate.
+            from app.data.indicators import compute_features
+            from app.strategy.feature_pipeline import create_target
 
-            # 2. Train candidate
+            feature_dfs = []
+            for frame in frames:
+                feat_df = compute_features(frame)
+                feat_df["target"] = create_target(
+                    feat_df, forward_periods=10,
+                    buy_threshold=0.03, sell_threshold=-0.03,
+                )
+                feat_df = feat_df.dropna()
+                if len(feat_df) >= 60:
+                    feature_dfs.append(feat_df)
+
+            if not feature_dfs:
+                logger.error("scheduler.retrain_no_features")
+                await send_alert(
+                    "Model Retrain Failed",
+                    "No symbols had enough data after feature computation.",
+                )
+                return
+
+            historical_data = pd.concat(feature_dfs, ignore_index=True)
+            historical_data = historical_data.sort_values("timestamp").reset_index(drop=True)
+            logger.info("scheduler.retrain_features", symbols=len(feature_dfs), samples=len(historical_data))
+
+            # 2. Train candidate (features already computed per-symbol)
             strategy = MLStrategy()
-            result = await strategy.train_candidate(historical_data)
+            result = await strategy.train_candidate(historical_data, features_precomputed=True)
 
             if not result.success:
                 logger.error("scheduler.retrain_failed", message=result.message)

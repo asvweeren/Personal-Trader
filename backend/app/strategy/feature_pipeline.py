@@ -179,13 +179,17 @@ def prepare_ml_data(
     raw_df: pd.DataFrame,
     config: FeaturePipelineConfig | None = None,
     normalize: bool = True,
+    features_precomputed: bool = False,
 ) -> DataSplit:
     """Full pipeline: features → target → selection → split → normalize.
 
     Args:
         raw_df: DataFrame with OHLCV columns (timestamp, open, high, low, close, volume).
+            When features_precomputed=True, expects features + "target" column already present.
         config: Pipeline configuration. Uses defaults if None.
         normalize: Whether to z-score normalize features.
+        features_precomputed: If True, skip compute_features() and create_target().
+            Used when features were computed per-symbol before combining.
 
     Returns:
         DataSplit with train/val/test data ready for ML training.
@@ -193,16 +197,19 @@ def prepare_ml_data(
     if config is None:
         config = FeaturePipelineConfig()
 
-    # 1. Compute technical indicators
-    features_df = compute_features(raw_df)
+    if features_precomputed:
+        features_df = raw_df.copy()
+    else:
+        # 1. Compute technical indicators
+        features_df = compute_features(raw_df)
 
-    # 2. Create target
-    features_df["target"] = create_target(
-        features_df,
-        forward_periods=config.forward_periods,
-        buy_threshold=config.buy_threshold,
-        sell_threshold=config.sell_threshold,
-    )
+        # 2. Create target
+        features_df["target"] = create_target(
+            features_df,
+            forward_periods=config.forward_periods,
+            buy_threshold=config.buy_threshold,
+            sell_threshold=config.sell_threshold,
+        )
 
     # 3. Drop rows with NaN (from indicators warmup + forward labeling)
     features_df = features_df.dropna()
