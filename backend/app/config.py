@@ -70,10 +70,11 @@ class Settings(BaseSettings):
         "IWM,EFA,VGK,DIA,XLF,XLE"
     )
     initial_capital: float = 5000.0
-    max_daily_loss_pct: float = 7.0
+    max_daily_loss_pct: float = 5.0
     max_position_pct: float = 10.0
-    max_open_positions: int = 20
-    min_cash_reserve_pct: float = 20.0
+    max_open_positions: int = 8
+    min_cash_reserve_pct: float = 30.0
+    max_sector_concentration_pct: float = 35.0
     confidence_threshold: float = 0.75     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss

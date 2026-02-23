@@ -155,18 +155,22 @@ def time_based_split(
 
 
 def balance_classes(X: pd.DataFrame, y: pd.Series, random_state: int = 42) -> tuple[pd.DataFrame, pd.Series]:
-    """Undersample majority classes to the count of the minority class."""
+    """Oversample minority classes to the count of the majority class.
+
+    Preserves all training data (no information loss) by duplicating
+    random samples from underrepresented classes.
+    """
     class_counts = y.value_counts()
-    min_count = class_counts.min()
+    max_count = class_counts.max()
     balanced_indices: list = []
     rng = np.random.default_rng(random_state)
     for cls in class_counts.index:
         cls_indices = y[y == cls].index.tolist()
-        if len(cls_indices) > min_count:
-            sampled = rng.choice(cls_indices, size=min_count, replace=False).tolist()
-            balanced_indices.extend(sampled)
-        else:
-            balanced_indices.extend(cls_indices)
+        balanced_indices.extend(cls_indices)
+        if len(cls_indices) < max_count:
+            extra_needed = max_count - len(cls_indices)
+            oversampled = rng.choice(cls_indices, size=extra_needed, replace=True).tolist()
+            balanced_indices.extend(oversampled)
     balanced_indices.sort()  # preserve chronological order
     return X.loc[balanced_indices], y.loc[balanced_indices]
 

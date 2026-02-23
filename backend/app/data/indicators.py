@@ -216,4 +216,20 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["regime_breadth_proxy"] = (features["price_vs_sma50"] > 0).astype(float)
     features["regime_mean_reversion"] = (features["rsi_14"] - 50).abs() / 50
 
+    # --- Additional Quantitative Features ---
+
+    # Volatility skew: downside vol / upside vol (>1 = more downside risk)
+    returns = close.pct_change()
+    downside_vol = returns.where(returns < 0, 0.0).rolling(20).std()
+    upside_vol = returns.where(returns > 0, 0.0).rolling(20).std()
+    features["volatility_skew"] = downside_vol / (upside_vol + 1e-10)
+
+    # Vol-of-vol: volatility of volatility (regime change detector)
+    features["vol_of_vol"] = features["volatility_20d"].rolling(30).std()
+
+    # OBV momentum: rate of change of OBV
+    obv_series = features["obv"]
+    features["obv_momentum"] = obv_series / (obv_series.shift(5) + 1e-10)
+    features["obv_divergence"] = obv_series - obv_series.rolling(20).mean()
+
     return features

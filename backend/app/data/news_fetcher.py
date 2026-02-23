@@ -310,40 +310,57 @@ class NewsFetcher:
                 items.extend(result)
         return items
 
-    async def _fetch_single_rss(self, source_name: str, url: str) -> list[NewsItem]:
-        """Fetch a single RSS feed."""
-        try:
-            client = await self._get_client()
-            resp = await client.get(url)
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.text)
+    async def _fetch_single_rss(
+        self, source_name: str, url: str, max_retries: int = 3
+    ) -> list[NewsItem]:
+        """Fetch a single RSS feed with exponential backoff retry."""
+        for attempt in range(1, max_retries + 1):
+            try:
+                client = await self._get_client()
+                resp = await client.get(url)
+                resp.raise_for_status()
+                feed = feedparser.parse(resp.text)
 
-            items: list[NewsItem] = []
-            for entry in feed.entries[:15]:
-                published_at = None
-                if hasattr(entry, "published_parsed") and entry.published_parsed:
-                    try:
-                        published_at = datetime(
-                            *entry.published_parsed[:6], tzinfo=timezone.utc
-                        )
-                    except Exception:
+                items: list[NewsItem] = []
+                for entry in feed.entries[:15]:
+                    published_at = None
+                    if hasattr(entry, "published_parsed") and entry.published_parsed:
+                        try:
+                            published_at = datetime(
+                                *entry.published_parsed[:6], tzinfo=timezone.utc
+                            )
+                        except Exception:
+                            published_at = datetime.now(timezone.utc)
+                    else:
                         published_at = datetime.now(timezone.utc)
-                else:
-                    published_at = datetime.now(timezone.utc)
 
-                items.append(
-                    NewsItem(
-                        title=entry.get("title", "").strip(),
-                        description=_clean_html(entry.get("summary", "").strip()),
-                        source=source_name,
-                        url=entry.get("link", ""),
-                        published_at=published_at,
+                    items.append(
+                        NewsItem(
+                            title=entry.get("title", "").strip(),
+                            description=_clean_html(entry.get("summary", "").strip()),
+                            source=source_name,
+                            url=entry.get("link", ""),
+                            published_at=published_at,
+                        )
                     )
-                )
-            return items
-        except Exception:
-            logger.debug("news.rss_error", source=source_name)
-            return []
+                return items
+            except Exception:
+                if attempt < max_retries:
+                    wait = 2 ** (attempt - 1)  # 1s, 2s, 4s
+                    logger.debug(
+                        "news.rss_retry",
+                        source=source_name,
+                        attempt=attempt,
+                        wait_seconds=wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.warning(
+                        "news.rss_failed_all_retries",
+                        source=source_name,
+                        attempts=max_retries,
+                    )
+        return []
 
     # ── NewsAPI ───────────────────────────────────────────────────
 

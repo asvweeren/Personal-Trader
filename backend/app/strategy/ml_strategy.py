@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import structlog
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
@@ -199,11 +199,20 @@ class MLStrategy(Strategy):
                 lambda c: total / (n_classes * class_counts.get(c, 1))
             )
 
-            # Hyperparameter candidates
+            # Hyperparameter candidates (12 configs with varying regularization)
             param_grid = [
-                {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.1},
-                {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05},
-                {"n_estimators": 150, "max_depth": 6, "learning_rate": 0.08},
+                {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.1, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.1, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 150, "max_depth": 4, "learning_rate": 0.08, "reg_alpha": 0.5, "reg_lambda": 1.5},
+                {"n_estimators": 150, "max_depth": 5, "learning_rate": 0.08, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05, "reg_alpha": 0.01, "reg_lambda": 0.5},
+                {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.05, "reg_alpha": 0.5, "reg_lambda": 2.0},
+                {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.03, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.03, "reg_alpha": 0.5, "reg_lambda": 1.5},
+                {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.03, "reg_alpha": 1.0, "reg_lambda": 3.0},
+                {"n_estimators": 400, "max_depth": 4, "learning_rate": 0.02, "reg_alpha": 0.1, "reg_lambda": 1.0},
+                {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.02, "reg_alpha": 0.5, "reg_lambda": 2.0},
             ]
 
             best_score = -1
@@ -213,14 +222,16 @@ class MLStrategy(Strategy):
 
             for params in param_grid:
                 model = xgb.XGBClassifier(
-                    **params,
+                    n_estimators=params["n_estimators"],
+                    max_depth=params["max_depth"],
+                    learning_rate=params["learning_rate"],
                     objective="multi:softprob",
                     num_class=3,
                     eval_metric="mlogloss",
                     subsample=0.8,
                     colsample_bytree=0.8,
-                    reg_alpha=0.1,
-                    reg_lambda=1.0,
+                    reg_alpha=params.get("reg_alpha", 0.1),
+                    reg_lambda=params.get("reg_lambda", 1.0),
                     min_child_weight=3,
                     use_label_encoder=False,
                 )
@@ -259,14 +270,16 @@ class MLStrategy(Strategy):
 
             # Retrain best model on full training set
             best_model = xgb.XGBClassifier(
-                **best_params,
+                n_estimators=best_params["n_estimators"],
+                max_depth=best_params["max_depth"],
+                learning_rate=best_params["learning_rate"],
                 objective="multi:softprob",
                 num_class=3,
                 eval_metric="mlogloss",
                 subsample=0.8,
                 colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=1.0,
+                reg_alpha=best_params.get("reg_alpha", 0.1),
+                reg_lambda=best_params.get("reg_lambda", 1.0),
                 min_child_weight=3,
                 use_label_encoder=False,
             )
@@ -282,6 +295,20 @@ class MLStrategy(Strategy):
             test_preds = best_model.predict(data.X_test)
             val_accuracy = accuracy_score(data.y_val, val_preds)
             test_accuracy = accuracy_score(data.y_test, test_preds)
+
+            # Per-class metrics (confusion matrix + classification report)
+            target_names = ["SELL", "HOLD", "BUY"]
+            test_report = classification_report(
+                data.y_test, test_preds, target_names=target_names, output_dict=True
+            )
+            test_confusion = confusion_matrix(data.y_test, test_preds).tolist()
+            logger.info(
+                "ml_strategy.per_class_metrics",
+                sell_f1=round(test_report["SELL"]["f1-score"], 3),
+                hold_f1=round(test_report["HOLD"]["f1-score"], 3),
+                buy_f1=round(test_report["BUY"]["f1-score"], 3),
+                confusion_matrix=test_confusion,
+            )
 
             # Feature importance
             importance = get_feature_importance(
@@ -302,6 +329,8 @@ class MLStrategy(Strategy):
                 "class_distribution": data.y_train.value_counts().to_dict(),
                 "feature_importance": importance,
                 "cv_results": cv_results,
+                "classification_report": test_report,
+                "confusion_matrix": test_confusion,
             }
 
             self._model = best_model

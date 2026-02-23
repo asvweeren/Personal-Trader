@@ -181,12 +181,12 @@ def test_balance_classes():
     X = pd.DataFrame({"a": range(100), "b": range(100)})
     y = pd.Series([0] * 10 + [1] * 60 + [2] * 30)  # imbalanced: 10/60/30
     X_bal, y_bal = balance_classes(X, y)
-    # Should undersample to minority count (10)
-    assert len(y_bal) == 30  # 10 per class
+    # Should oversample to majority count (60)
+    assert len(y_bal) == 180  # 60 per class
     counts = y_bal.value_counts()
-    assert counts[0] == 10
-    assert counts[1] == 10
-    assert counts[2] == 10
+    assert counts[0] == 60
+    assert counts[1] == 60
+    assert counts[2] == 60
 
 
 def test_balance_classes_preserves_order():

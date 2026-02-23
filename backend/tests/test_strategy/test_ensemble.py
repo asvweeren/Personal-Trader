@@ -88,6 +88,7 @@ async def test_all_hold_gives_hold():
 
 @pytest.mark.asyncio
 async def test_conflict_reduces_confidence():
+    """Mild conflict (one side < 0.7): confidence reduced but not forced HOLD."""
     s1 = MockStrategy("strat1", [make_signal(
         action=SignalAction.BUY, confidence=0.9, strategy="strat1",
     )])
@@ -98,9 +99,27 @@ async def test_conflict_reduces_confidence():
 
     signals = await ensemble.generate_signals(make_snapshot())
     assert len(signals) == 1
-    assert signals[0].metadata["conflict"] is True
-    # Confidence should be reduced due to conflict
+    # Mild conflict: confidence reduced by 30% but not forced HOLD
     assert signals[0].confidence < 0.9
+    assert signals[0].metadata["conflict"] is False
+
+
+@pytest.mark.asyncio
+async def test_strong_conflict_forces_hold():
+    """Strong conflict (both sides > 0.7): forced HOLD with zero confidence."""
+    s1 = MockStrategy("strat1", [make_signal(
+        action=SignalAction.BUY, confidence=0.9, strategy="strat1",
+    )])
+    s2 = MockStrategy("strat2", [make_signal(
+        action=SignalAction.SELL, confidence=0.8, strategy="strat2",
+    )])
+    ensemble = EnsembleStrategy([s1, s2])
+
+    signals = await ensemble.generate_signals(make_snapshot())
+    assert len(signals) == 1
+    assert signals[0].metadata["conflict"] is True
+    assert signals[0].action == SignalAction.HOLD
+    assert signals[0].confidence == 0.0
 
 
 @pytest.mark.asyncio

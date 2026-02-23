@@ -14,9 +14,11 @@ from app.core.exceptions import (
     MaxLeverageExceeded,
     MaxPositionsExceeded,
     PositionSizeLimitExceeded,
+    SectorConcentrationExceeded,
     ShortPositionError,
 )
 from app.risk.market_hours import get_exchange_for_symbol, is_market_open
+from app.risk.position_sizer import get_sector
 
 # Maximum ratio of total positions value to equity (net liquidation).
 # 2.0 = max 2x leverage (e.g. $200k positions on $100k equity).
@@ -136,6 +138,32 @@ def check_no_short_position(
         )
 
 
+def check_sector_concentration(
+    portfolio: Portfolio, symbol: str, order_value: float, max_sector_pct: float
+) -> None:
+    """Check if a new order would push sector concentration above the limit."""
+    total_value = portfolio.account_summary.total_value
+    if total_value <= 0:
+        return
+
+    target_sector = get_sector(symbol)
+    if target_sector in ("unknown", "etf_broad"):
+        return  # Don't limit unknown sectors or broad ETFs
+
+    sector_value = sum(
+        abs(p.market_value) for p in portfolio.positions
+        if get_sector(p.symbol) == target_sector
+    )
+    new_sector_value = sector_value + order_value
+    sector_pct = (new_sector_value / total_value) * 100
+
+    if sector_pct > max_sector_pct:
+        raise SectorConcentrationExceeded(
+            f"Sector '{target_sector}' would be {sector_pct:.1f}% of portfolio "
+            f"(max: {max_sector_pct}%)"
+        )
+
+
 def check_market_hours(symbol: str, now: datetime | None = None) -> None:
     """Check if the relevant market is open for this symbol. Raises if closed."""
     exchange = get_exchange_for_symbol(symbol)
@@ -174,6 +202,7 @@ def check_all_hard_limits(
     min_cash_reserve_pct: float,
     symbol: str | None = None,
     check_hours: bool = True,
+    max_sector_pct: float = 35.0,
 ) -> HardLimitCheck:
     """Run all hard limit checks. Returns result instead of raising."""
     violations = []
@@ -217,5 +246,12 @@ def check_all_hard_limits(
         check_leverage(portfolio, order_value)
     except MaxLeverageExceeded as e:
         violations.append(str(e))
+
+    # Sector concentration check
+    if symbol and is_new_position:
+        try:
+            check_sector_concentration(portfolio, symbol, order_value, max_sector_pct)
+        except SectorConcentrationExceeded as e:
+            violations.append(str(e))
 
     return HardLimitCheck(passed=len(violations) == 0, violations=violations)

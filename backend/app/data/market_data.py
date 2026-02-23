@@ -220,6 +220,7 @@ class MarketDataService:
         # Fetch from broker
         df = await self._broker.get_historical_data(symbol, duration, bar_size)
         if not df.empty:
+            df = self.validate_data(df)
             self._historical_cache[cache_key] = df
             self._cache_timestamps[cache_key] = datetime.now(timezone.utc)
             # Persist to DB in background
@@ -262,6 +263,38 @@ class MarketDataService:
             ohlcv=ohlcv,
             features={},
         )
+
+    # ── Data quality validation ─────────────────────────────────────
+
+    @staticmethod
+    def validate_data(df: pd.DataFrame) -> pd.DataFrame:
+        """Validate and clean historical data. Returns cleaned DataFrame."""
+        if df.empty:
+            return df
+
+        # Remove rows where all OHLCV are NaN
+        ohlcv_cols = ["open", "high", "low", "close", "volume"]
+        existing_cols = [c for c in ohlcv_cols if c in df.columns]
+        df = df.dropna(subset=existing_cols, how="all")
+
+        if df.empty:
+            return df
+
+        # Fix OHLC consistency: high must be >= max(open, close), low <= min(open, close)
+        if all(c in df.columns for c in ["open", "high", "low", "close"]):
+            df["high"] = df[["open", "high", "close"]].max(axis=1)
+            df["low"] = df[["open", "low", "close"]].min(axis=1)
+
+        # Remove zero/negative price rows
+        if "close" in df.columns:
+            df = df[df["close"] > 0]
+
+        # Remove duplicate timestamps
+        if "timestamp" in df.columns:
+            df = df.drop_duplicates(subset=["timestamp"], keep="last")
+            df = df.sort_values("timestamp").reset_index(drop=True)
+
+        return df
 
     # ── Cache management ─────────────────────────────────────────────
 

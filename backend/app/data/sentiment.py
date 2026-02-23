@@ -110,6 +110,10 @@ class SentimentAnalyzer:
 
         self._rate_limiter = RateLimiter(max_calls=max_calls_per_minute, period_seconds=60)
 
+        # Track when client was disabled for periodic reset
+        self._client_disabled_at: float | None = None
+        self._client_reset_cooldown = 3600  # Retry API client after 1 hour
+
         # In-memory fallback cache
         self._memory_cache: dict[str, tuple[SentimentResult, float]] = {}
         self._cache_ttl = cache_ttl_seconds
@@ -200,7 +204,14 @@ class SentimentAnalyzer:
         if cached:
             return cached
 
-        # If no API key, return neutral sentiment
+        # If client was disabled, try to reset after cooldown
+        if not self._client and self._api_key and self._client_disabled_at:
+            if time.monotonic() - self._client_disabled_at >= self._client_reset_cooldown:
+                logger.info("sentiment.client_reset_attempt")
+                self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+                self._client_disabled_at = None
+
+        # If no API key or client still disabled, return neutral sentiment
         if not self._client:
             return self._neutral_result(
                 symbol, news_items, reason="Anthropic API key not configured"
@@ -306,8 +317,9 @@ class SentimentAnalyzer:
             )
         except anthropic.AuthenticationError:
             logger.error("sentiment.auth_error", symbol=symbol)
-            # Disable client to avoid repeated auth failures
+            # Disable client temporarily — will retry after cooldown
             self._client = None
+            self._client_disabled_at = time.monotonic()
             return self._neutral_result(
                 symbol, batch, reason="Invalid Anthropic API key"
             )
@@ -315,8 +327,9 @@ class SentimentAnalyzer:
             error_msg = str(e)
             if "usage limits" in error_msg or "rate" in error_msg.lower():
                 logger.warning("sentiment.api_budget_exhausted", detail=error_msg[:200])
-                # Disable client until next restart to avoid hammering the API
+                # Disable client temporarily — will retry after cooldown
                 self._client = None
+                self._client_disabled_at = time.monotonic()
             else:
                 logger.error("sentiment.api_bad_request", symbol=symbol, error=error_msg[:200])
             return self._neutral_result(

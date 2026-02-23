@@ -112,17 +112,33 @@ class EnsembleStrategy(Strategy):
             action = SignalAction.HOLD
             confidence = hold_pct
 
-        # Conflict detection: if strategies strongly disagree, reduce confidence
-        has_buy = any(s.action == SignalAction.BUY for s, _ in signal_weights)
-        has_sell = any(s.action == SignalAction.SELL for s, _ in signal_weights)
-        conflict = has_buy and has_sell
+        # Conflict detection: only block when strategies *strongly* disagree
+        has_strong_buy = any(
+            s.action == SignalAction.BUY and s.confidence > 0.7
+            for s, _ in signal_weights
+        )
+        has_strong_sell = any(
+            s.action == SignalAction.SELL and s.confidence > 0.7
+            for s, _ in signal_weights
+        )
+        conflict = has_strong_buy and has_strong_sell
 
         if conflict:
-            # When strategies disagree, force HOLD — no conviction to trade
+            # Strong disagreement — force HOLD
             action = SignalAction.HOLD
             confidence = 0.0
             logger.debug(
                 "ensemble.conflict_forced_hold",
+                symbol=symbol,
+                votes=strategy_votes,
+                net_score=round(net_score, 3),
+            )
+        elif any(s.action == SignalAction.BUY for s, _ in signal_weights) and \
+                any(s.action == SignalAction.SELL for s, _ in signal_weights):
+            # Mild disagreement — reduce confidence by 30%
+            confidence *= 0.7
+            logger.debug(
+                "ensemble.mild_conflict_reduced",
                 symbol=symbol,
                 votes=strategy_votes,
                 net_score=round(net_score, 3),

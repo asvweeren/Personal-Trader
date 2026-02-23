@@ -38,6 +38,10 @@ class ShortPositionError(RiskLimitExceeded):
     """Sell order would create a short position (not allowed)."""
 
 
+class SectorConcentrationExceeded(RiskLimitExceeded):
+    """Sector concentration would exceed maximum allowed percentage."""
+
+
 class MarketClosedError(TraderError):
     """Attempted to trade outside market hours."""
 

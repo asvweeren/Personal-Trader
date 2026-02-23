@@ -84,6 +84,8 @@ class TradingEngine:
         self._open_trades: dict[str, Trade] = {}
         # Track last close time per symbol for re-entry cooldown
         self._last_close_time: dict[str, datetime] = {}
+        # Track last trailing stop update price to prevent whipsaw
+        self._last_stop_update_price: dict[str, float] = {}
 
     @property
     def state(self) -> EngineState:
@@ -173,8 +175,20 @@ class TradingEngine:
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
 
-            # 2b. Reconciliation every 6th cycle (~30 min)
-            if self._cycle_count > 0 and self._cycle_count % 6 == 0:
+            # 2a. Staleness check: skip cycle if data is too old
+            data_age = (datetime.now(timezone.utc) - snapshot.timestamp).total_seconds()
+            if data_age > 300:
+                logger.warning(
+                    "engine.stale_data_skip",
+                    age_seconds=round(data_age),
+                    threshold=300,
+                )
+                self._cycle_count += 1
+                self._last_cycle_at = datetime.now(timezone.utc)
+                return
+
+            # 2b. Reconciliation every 3rd cycle (~15 min)
+            if self._cycle_count > 0 and self._cycle_count % 3 == 0:
                 try:
                     portfolio_for_recon = await self._portfolio_tracker.get_current()
                     recon_result = await reconcile(self._open_trades, portfolio_for_recon)
@@ -446,7 +460,16 @@ class TradingEngine:
                 return
 
         # Cancel any pending SELL orders (e.g. stop-loss) before placing new sell
-        await self._cancel_pending_sells(signal.symbol)
+        cancelled = await self._cancel_pending_sells(signal.symbol)
+        # Verify no pending sells remain to avoid accidental short
+        remaining = len(self._order_manager._pending_by_symbol.get(signal.symbol, set()))
+        if remaining > 0:
+            logger.warning(
+                "engine.sell_cancel_incomplete",
+                symbol=signal.symbol,
+                remaining_orders=remaining,
+            )
+            return
 
         # Place sell order for the full position
         result = await self._order_manager.submit_order(
@@ -591,8 +614,25 @@ class TradingEngine:
                 filled = True
                 break
 
+            # Handle partial fill: accept what we got and continue
+            if mapped_status == OrderStatus.PARTIALLY_FILLED and result.filled_quantity:
+                try:
+                    await self._broker.cancel_order(result.order_id)
+                except Exception:
+                    pass
+                # Use the partial fill — update quantity to what was actually filled
+                quantity = result.filled_quantity
+                filled = True
+                logger.info(
+                    "engine.partial_fill_accepted",
+                    symbol=signal.symbol,
+                    requested=trade.quantity,
+                    filled=quantity,
+                )
+                break
+
             # Not filled — cancel pending order before retry
-            if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
+            if mapped_status == OrderStatus.SUBMITTED:
                 try:
                     await self._broker.cancel_order(result.order_id)
                 except Exception:
@@ -618,6 +658,7 @@ class TradingEngine:
 
         if filled:
             trade.status = TradeStatus.OPEN
+            trade.quantity = quantity  # Update to actual filled quantity
             trade.entry_price = result.filled_price
             self._open_trades[signal.symbol] = trade
             logger.info(
@@ -627,9 +668,16 @@ class TradingEngine:
                 price=result.filled_price,
             )
 
-            # Place stop-loss (ATR-based with min floor)
+            # Place stop-loss (ATR-based with min floor, adjusted for slippage)
             if result.filled_price:
                 stop_price = self._calculate_atr_stop(result.filled_price, signal.symbol)
+
+                # Slippage correction: tighten stop if we got a worse entry
+                slippage = result.filled_price - price if price > 0 else 0
+                if slippage > 0:
+                    # Bought higher than expected — tighten stop proportionally
+                    stop_price = round(stop_price + slippage * 0.5, 2)
+
                 trade.stop_loss = stop_price
                 await self._order_manager.submit_order(
                     trade_id=trade.id,
@@ -640,11 +688,13 @@ class TradingEngine:
                     stop_price=stop_price,
                 )
 
-                # Set take-profit target (ATR-based with min floor)
+                # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
-                trade.take_profit = calculate_take_profit(
-                    result.filled_price, signal.symbol, atr_val
-                )
+                tp = calculate_take_profit(result.filled_price, signal.symbol, atr_val)
+                # If we got a worse entry, shift TP up to maintain R:R ratio
+                if slippage > 0:
+                    tp = round(tp + slippage, 2)
+                trade.take_profit = tp
 
             # Alert: Trade Opened
             alert_msg = (
@@ -777,7 +827,15 @@ class TradingEngine:
                 )
 
             if new_stop > trade.stop_loss:
+                # Whipsaw protection: only update if price moved >1% since last update
+                last_update_price = self._last_stop_update_price.get(symbol, 0.0)
+                if last_update_price > 0:
+                    price_change_pct = abs(current_price - last_update_price) / last_update_price * 100
+                    if price_change_pct < 1.0:
+                        continue
+
                 trade.stop_loss = new_stop
+                self._last_stop_update_price[symbol] = current_price
                 logger.debug(
                     "engine.trailing_stop_updated",
                     symbol=symbol,
@@ -810,6 +868,10 @@ class TradingEngine:
                 )
                 # Cancel pending SELL orders (stop-loss) before closing
                 await self._cancel_pending_sells(symbol)
+                remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
+                if remaining > 0:
+                    logger.warning("engine.tp_cancel_incomplete", symbol=symbol)
+                    continue
 
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
@@ -857,6 +919,10 @@ class TradingEngine:
                 )
                 # Cancel pending SELL orders (stop-loss) before EOD close
                 await self._cancel_pending_sells(symbol)
+                remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
+                if remaining > 0:
+                    logger.warning("engine.eod_cancel_incomplete", symbol=symbol)
+                    continue
 
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
