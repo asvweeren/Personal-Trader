@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, Integer, String, func
+from sqlalchemy import DateTime, Enum, Float, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,9 @@ class SignalAction(str, enum.Enum):
 
 class Signal(Base):
     __tablename__ = "signals"
+    __table_args__ = (
+        Index("ix_signal_symbol_created", "symbol", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     strategy_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

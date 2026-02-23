@@ -18,7 +18,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 from app.strategy.ml_strategy import MLStrategy
 
 DATA_DIR = Path(__file__).parent.parent / "ml" / "data"
-DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "NVDA"]
+DEFAULT_SYMBOLS = [
+    # Large-cap tech
+    "AAPL", "MSFT", "GOOGL", "NVDA", "META", "AMZN",
+    # Large-cap value
+    "JNJ", "JPM", "XOM", "BAC", "PG",
+    # ETFs (broad, tech, intl)
+    "SPY", "QQQ", "IWM", "EFA", "VGK",
+    # EU blue chips
+    "ASML", "SAP", "SIE.DE", "MC.PA", "AZN.L",
+]
 
 
 def load_data(data_dir: Path, symbols: list[str]) -> dict[str, pd.DataFrame]:

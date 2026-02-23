@@ -1,6 +1,7 @@
 """Performance metrics calculation for backtests and live trading."""
 
 import numpy as np
+from scipy import stats as scipy_stats
 
 
 def calculate_metrics(
@@ -62,6 +63,17 @@ def calculate_metrics(
     # Trade duration stats (if bars_held info is available, caller handles that)
     avg_trade_pnl = float(np.mean(trade_pnls)) if trade_pnls else 0
 
+    # Recovery factor: net profit / max drawdown
+    net_profit = float(equity[-1] - initial_capital)
+    recovery_factor = net_profit / (max_dd * initial_capital) if max_dd > 0 and initial_capital > 0 else 0.0
+
+    # Return distribution stats
+    return_skew = float(scipy_stats.skew(returns)) if len(returns) > 2 else 0.0
+    return_kurtosis = float(scipy_stats.kurtosis(returns)) if len(returns) > 2 else 0.0
+
+    # Drawdown recovery time (bars from trough back to peak)
+    dd_recovery_bars = _drawdown_recovery_bars(equity)
+
     result = {
         "total_return_pct": round(total_return * 100, 2),
         "annualized_return_pct": round(annualized_return * 100, 2),
@@ -82,6 +94,10 @@ def calculate_metrics(
         "max_consecutive_wins": max_consec_wins,
         "max_consecutive_losses": max_consec_losses,
         "final_equity": round(float(equity[-1]), 2),
+        "recovery_factor": round(recovery_factor, 3),
+        "return_skew": round(return_skew, 3),
+        "return_kurtosis": round(return_kurtosis, 3),
+        "drawdown_recovery_bars": dd_recovery_bars,
     }
 
     return result
@@ -265,6 +281,31 @@ def _max_drawdown_with_duration(equity: np.ndarray) -> tuple[float, int]:
             max_dd_duration = duration
 
     return float(max_dd), max_dd_duration
+
+
+def _drawdown_recovery_bars(equity: np.ndarray) -> int:
+    """Bars from maximum drawdown trough back to previous peak."""
+    if len(equity) < 2:
+        return 0
+    peak = equity[0]
+    max_dd = 0.0
+    trough_idx = 0
+    peak_at_trough = peak
+    for i, value in enumerate(equity):
+        if value > peak:
+            peak = value
+        else:
+            dd = (peak - value) / peak if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+                trough_idx = i
+                peak_at_trough = peak
+    # Count bars from trough to recovery (back to peak level)
+    for i in range(trough_idx, len(equity)):
+        if equity[i] >= peak_at_trough:
+            return i - trough_idx
+    # Never recovered
+    return len(equity) - 1 - trough_idx
 
 
 def _max_consecutive(trade_pnls: list[float]) -> tuple[int, int]:

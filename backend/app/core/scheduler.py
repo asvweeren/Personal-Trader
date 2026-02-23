@@ -13,10 +13,14 @@ logger = structlog.get_logger()
 
 scheduler = AsyncIOScheduler()
 
+# Jobs where failure is critical (affects trading)
+_CRITICAL_JOBS = {"trading_cycle", "eod_safety_close", "daily_reset", "broker_watchdog"}
+
 
 def _on_job_event(event) -> None:
     """Handle scheduler job errors and missed executions."""
     job_id = getattr(event, "job_id", "unknown")
+    is_critical = job_id in _CRITICAL_JOBS
 
     if hasattr(event, "exception") and event.exception:
         tb = "".join(traceback.format_exception(
@@ -29,20 +33,21 @@ def _on_job_event(event) -> None:
             job_id=job_id,
             error=str(event.exception),
             traceback=tb[:500],
+            critical=is_critical,
         )
         try:
             from app.monitoring.alerts import send_alert
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 loop.create_task(send_alert(
-                    "Scheduler Job Failed",
+                    "Scheduler Job Failed" if is_critical else "Scheduler Job Warning",
                     f"Job: {job_id}\nError: {str(event.exception)[:300]}",
-                    critical=True,
+                    critical=is_critical,
                 ))
         except Exception:
             logger.warning("scheduler.alert_send_failed", job_id=job_id)
     else:
-        logger.warning("scheduler.job_missed", job_id=job_id)
+        logger.warning("scheduler.job_missed", job_id=job_id, critical=is_critical)
         try:
             from app.monitoring.alerts import send_alert
             loop = asyncio.get_event_loop()
@@ -50,6 +55,7 @@ def _on_job_event(event) -> None:
                 loop.create_task(send_alert(
                     "Scheduler Job Missed",
                     f"Job '{job_id}' missed its scheduled execution window.",
+                    critical=is_critical,
                 ))
         except Exception:
             logger.warning("scheduler.alert_send_failed", job_id=job_id)

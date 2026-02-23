@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +17,9 @@ async def get_trades(
     limit: int = Query(50, ge=1, le=200),
     symbol: str | None = None,
     status: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    strategy: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Trade).order_by(desc(Trade.created_at))
@@ -22,6 +27,12 @@ async def get_trades(
         query = query.where(Trade.symbol == symbol)
     if status:
         query = query.where(Trade.status == status)
+    if start_date:
+        query = query.where(Trade.created_at >= start_date)
+    if end_date:
+        query = query.where(Trade.created_at <= end_date)
+    if strategy:
+        query = query.where(Trade.strategy_name == strategy)
     query = query.offset(skip).limit(limit)
 
     result = await db.execute(query)
@@ -32,6 +43,12 @@ async def get_trades(
         count_query = count_query.where(Trade.symbol == symbol)
     if status:
         count_query = count_query.where(Trade.status == status)
+    if start_date:
+        count_query = count_query.where(Trade.created_at >= start_date)
+    if end_date:
+        count_query = count_query.where(Trade.created_at <= end_date)
+    if strategy:
+        count_query = count_query.where(Trade.strategy_name == strategy)
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 

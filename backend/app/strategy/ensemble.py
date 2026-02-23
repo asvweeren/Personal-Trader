@@ -220,3 +220,44 @@ class EnsembleStrategy(Strategy):
 
     def get_weights(self) -> dict[str, float]:
         return dict(self._weights)
+
+    def check_diversity(self) -> dict:
+        """Check if strategies are sufficiently diverse (not always agreeing).
+
+        Returns diversity stats including agreement rate and warning flag.
+        """
+        if len(self._signal_history) < 2:
+            return {"diverse": True, "agreement_rate": 0.0, "samples": 0}
+
+        # Collect recent outcomes per symbol across strategies
+        strategy_names = list(self._signal_history.keys())
+        if len(strategy_names) < 2:
+            return {"diverse": True, "agreement_rate": 0.0, "samples": 0}
+
+        s1_history = self._signal_history.get(strategy_names[0], [])
+        s2_history = self._signal_history.get(strategy_names[1], [])
+        if len(s1_history) < 10 or len(s2_history) < 10:
+            return {"diverse": True, "agreement_rate": 0.0, "samples": 0}
+
+        # Compare last 50 outcomes
+        s1_recent = [h["correct"] for h in s1_history[-50:]]
+        s2_recent = [h["correct"] for h in s2_history[-50:]]
+        min_len = min(len(s1_recent), len(s2_recent))
+        agreements = sum(
+            1 for i in range(min_len) if s1_recent[i] == s2_recent[i]
+        )
+        agreement_rate = agreements / min_len if min_len > 0 else 0.0
+
+        is_diverse = agreement_rate < 0.9
+        if not is_diverse:
+            logger.warning(
+                "ensemble.low_diversity",
+                agreement_rate=round(agreement_rate, 3),
+                strategies=strategy_names[:2],
+            )
+
+        return {
+            "diverse": is_diverse,
+            "agreement_rate": round(agreement_rate, 3),
+            "samples": min_len,
+        }

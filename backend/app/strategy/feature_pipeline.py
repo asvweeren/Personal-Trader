@@ -35,8 +35,8 @@ class FeaturePipelineConfig:
     """Configuration for the feature pipeline."""
     # Target labeling
     forward_periods: int = 10  # Look ahead N bars for return
-    buy_threshold: float = 0.015  # +1.5% = BUY (class 2)
-    sell_threshold: float = -0.015  # -1.5% = SELL (class 0)
+    buy_threshold: float = 0.008  # +0.8% = BUY (class 2)
+    sell_threshold: float = -0.008  # -0.8% = SELL (class 0)
     # Feature selection
     correlation_threshold: float = 0.95  # Remove features above this correlation
     min_variance: float = 1e-8  # Remove near-constant features

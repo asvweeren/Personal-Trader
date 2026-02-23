@@ -266,12 +266,12 @@ class StockScreener:
             except Exception:
                 continue
 
-        # Sort each pool independently, take top N from each
+        # Sort each pool independently, apply sector diversification (max 3 per sector)
         us_scored.sort(key=lambda x: x["score"], reverse=True)
         eu_scored.sort(key=lambda x: x["score"], reverse=True)
 
-        us_candidates = us_scored[:us_max]
-        eu_candidates = eu_scored[:eu_max]
+        us_candidates = self._diversify_by_sector(us_scored, us_max, max_per_sector=3)
+        eu_candidates = self._diversify_by_sector(eu_scored, eu_max, max_per_sector=3)
 
         for c in us_candidates:
             c["pool"] = "US"
@@ -295,6 +295,23 @@ class StockScreener:
             "candidates": candidates,
             "config": config,
         }
+
+    @staticmethod
+    def _diversify_by_sector(
+        scored: list[dict], max_candidates: int, max_per_sector: int = 3
+    ) -> list[dict]:
+        """Greedy selection with sector cap to prevent all-tech results."""
+        selected: list[dict] = []
+        sector_counts: dict[str, int] = {}
+        for candidate in scored:
+            if len(selected) >= max_candidates:
+                break
+            sector = candidate.get("sector", "unknown")
+            if sector_counts.get(sector, 0) >= max_per_sector:
+                continue
+            selected.append(candidate)
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        return selected
 
     def _download_data(self, symbols: list[str]) -> dict[str, pd.DataFrame]:
         """Download 20d OHLCV via yfinance. Returns {symbol: DataFrame}."""

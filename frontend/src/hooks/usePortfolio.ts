@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "../api/client";
 import type { Portfolio, Performance, RiskMetricsData } from "../types";
 
-export function usePortfolio(refreshInterval = 10000) {
+export function usePortfolio(refreshInterval = 10000, paused = false) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [performance, setPerformance] = useState<Performance | null>(null);
   const [risk, setRisk] = useState<RiskMetricsData | null>(null);
@@ -28,10 +28,23 @@ export function usePortfolio(refreshInterval = 10000) {
   }, []);
 
   useEffect(() => {
+    if (paused) return;
+
     refresh();
     const interval = setInterval(refresh, refreshInterval);
     return () => clearInterval(interval);
-  }, [refresh, refreshInterval]);
+  }, [refresh, refreshInterval, paused]);
+
+  // Pause polling when tab is hidden
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && !paused) {
+        refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [refresh, paused]);
 
   return { portfolio, performance, risk, loading, error, refresh };
 }

@@ -33,7 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function Dashboard() {
   const [tab, setTab] = useState<Tab>("overview");
   const { logout } = useAuth();
-  const { portfolio, performance, risk, loading, error } = usePortfolio();
+  const { portfolio, performance, risk, loading, error } = usePortfolio(10000, tab !== "overview");
   const ws = useWebSocket(
     `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/live`,
   );

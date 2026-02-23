@@ -58,6 +58,9 @@ _sector_cache: dict[str, str] = {}
 DEFAULT_SECTOR = "unknown"
 MAX_SECTOR_CONCENTRATION_PCT = 40.0  # Max 40% in one sector
 
+# Track pending allocations to prevent double-sizing on same symbol
+_pending_allocations: dict[str, float] = {}
+
 # yfinance sector → our sector mapping
 _YF_SECTOR_MAP: dict[str, str] = {
     "technology": "technology",
@@ -107,6 +110,21 @@ def cache_sector(symbol: str, sector: str) -> None:
     """Add a symbol→sector mapping to the dynamic cache."""
     normalized = _YF_SECTOR_MAP.get(sector.lower(), sector.lower())
     _sector_cache[symbol.upper()] = normalized
+
+
+def reserve_allocation(symbol: str, amount: float) -> None:
+    """Reserve allocation for a symbol to prevent double-sizing."""
+    _pending_allocations[symbol] = _pending_allocations.get(symbol, 0.0) + amount
+
+
+def release_allocation(symbol: str) -> None:
+    """Release reserved allocation after fill or cancel."""
+    _pending_allocations.pop(symbol, None)
+
+
+def get_pending_allocation(symbol: str) -> float:
+    """Get currently reserved allocation for a symbol."""
+    return _pending_allocations.get(symbol, 0.0)
 
 
 def calculate_kelly_fraction(
@@ -240,6 +258,15 @@ def calculate_position_size(
 
     # Maximum allowed allocation for this position
     max_allocation = total_value * (max_position_pct / 100)
+
+    # Subtract any pending allocation for this symbol
+    if symbol:
+        pending = get_pending_allocation(symbol)
+        if pending > 0:
+            max_allocation = max(0, max_allocation - pending)
+            if max_allocation <= 0:
+                logger.debug("position_sizer.duplicate_blocked", symbol=symbol)
+                return 0
 
     # Kelly fraction
     if win_rate is not None and avg_win_loss_ratio is not None:

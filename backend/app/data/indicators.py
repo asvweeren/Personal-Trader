@@ -232,4 +232,29 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["obv_momentum"] = obv_series / (obv_series.shift(5) + 1e-10)
     features["obv_divergence"] = obv_series - obv_series.rolling(20).mean()
 
+    # --- Stochastic RSI ---
+    rsi_14 = features["rsi_14"]
+    rsi_min = rsi_14.rolling(14).min()
+    rsi_max = rsi_14.rolling(14).max()
+    features["stoch_rsi_k"] = (rsi_14 - rsi_min) / (rsi_max - rsi_min + 1e-10)
+    features["stoch_rsi_d"] = ema(features["stoch_rsi_k"], 3)
+
+    # --- Williams %R ---
+    hh_14 = high.rolling(14).max()
+    ll_14 = low.rolling(14).min()
+    features["williams_r"] = -100 * (hh_14 - close) / (hh_14 - ll_14 + 1e-10)
+
+    # --- Money Flow Index (14) ---
+    tp = (high + low + close) / 3
+    mf = tp * vol
+    tp_diff = tp.diff()
+    positive_mf = mf.where(tp_diff > 0, 0.0).rolling(14).sum()
+    negative_mf = mf.where(tp_diff < 0, 0.0).rolling(14).sum()
+    features["mfi_14"] = 100 - 100 / (1 + positive_mf / (negative_mf + 1e-10))
+
+    # --- Ichimoku signal (tenkan - kijun normalized by price) ---
+    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
+    kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
+    features["ichimoku_signal"] = (tenkan - kijun) / close
+
     return features

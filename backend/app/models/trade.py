@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Float, Integer, String, func
+from sqlalchemy import DateTime, Enum, Float, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.database import Base
@@ -27,6 +27,9 @@ class TradeStatus(str, enum.Enum):
 
 class Trade(Base):
     __tablename__ = "trades"
+    __table_args__ = (
+        Index("ix_trade_symbol_status_created", "symbol", "status", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)

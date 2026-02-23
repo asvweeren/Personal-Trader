@@ -1,7 +1,7 @@
 """Order lifecycle management: submission, tracking, partial fills, and cancellation."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,9 @@ _ACTIVE_STATUSES = {OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED}
 class OrderManager:
     """Manages the lifecycle of orders from creation to fill/cancel."""
 
+    # Auto-cancel orders pending longer than this
+    ORDER_TIMEOUT = timedelta(minutes=10)
+
     def __init__(self, broker: BrokerAdapter, db: AsyncSession):
         self._broker = broker
         self._db = db
@@ -28,6 +31,8 @@ class OrderManager:
         self._pending_orders: dict[str, Order] = {}
         # Secondary index: symbol -> set of broker_order_ids (for cancel by symbol)
         self._pending_by_symbol: dict[str, set[str]] = {}
+        # Track submission time for timeout detection
+        self._submitted_at: dict[str, datetime] = {}
 
     @property
     def pending_count(self) -> int:
@@ -125,6 +130,7 @@ class OrderManager:
         elif mapped in _ACTIVE_STATUSES:
             self._pending_orders[result.order_id] = db_order
             self._pending_by_symbol.setdefault(symbol, set()).add(result.order_id)
+            self._submitted_at[result.order_id] = datetime.now(timezone.utc)
 
         logger.info(
             "order.submitted",
@@ -146,6 +152,24 @@ class OrderManager:
         """
         if not self._pending_orders:
             return []
+
+        # Auto-cancel timed-out orders
+        now = datetime.now(timezone.utc)
+        timed_out = [
+            bid for bid, sub_at in self._submitted_at.items()
+            if now - sub_at > self.ORDER_TIMEOUT and bid in self._pending_orders
+        ]
+        for broker_id in timed_out:
+            logger.warning(
+                "order.timeout_cancel",
+                order_id=broker_id,
+                symbol=self._pending_orders[broker_id].symbol,
+                pending_seconds=int((now - self._submitted_at[broker_id]).total_seconds()),
+            )
+            try:
+                await self.cancel_order(broker_id)
+            except Exception:
+                logger.exception("order.timeout_cancel_error", order_id=broker_id)
 
         filled = []
         to_remove = []
@@ -221,6 +245,7 @@ class OrderManager:
 
         for broker_id in to_remove:
             order = self._pending_orders.pop(broker_id, None)
+            self._submitted_at.pop(broker_id, None)
             if order:
                 sym_set = self._pending_by_symbol.get(order.symbol)
                 if sym_set:
@@ -235,9 +260,12 @@ class OrderManager:
 
     async def cancel_order(self, broker_order_id: str) -> bool:
         """Cancel an order with the broker."""
+        if broker_order_id not in self._pending_orders:
+            return False
         success = await self._broker.cancel_order(broker_order_id)
         if success:
             db_order = self._pending_orders.pop(broker_order_id, None)
+            self._submitted_at.pop(broker_order_id, None)
             if db_order:
                 db_order.status = OrderStatus.CANCELLED
                 sym_set = self._pending_by_symbol.get(db_order.symbol)

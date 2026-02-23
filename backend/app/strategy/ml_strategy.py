@@ -12,6 +12,8 @@ import structlog
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
+from sklearn.calibration import CalibratedClassifierCV
+
 from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TrainResult, TradingSignal
@@ -87,6 +89,39 @@ class MLStrategy(Strategy):
 
         logger.info("ml_strategy.model_saved", path=str(self._model_path))
 
+    def is_model_stale(self, days_threshold: int = 30) -> bool:
+        """Check if model hasn't been retrained recently."""
+        if not self._model_metadata:
+            return True
+        trained_at = self._model_metadata.get("trained_at")
+        if not trained_at:
+            return True
+        trained_dt = datetime.fromisoformat(str(trained_at))
+        days_old = (datetime.now(timezone.utc) - trained_dt).days
+        return days_old > days_threshold
+
+    def _check_feature_drift(self, latest: pd.DataFrame, symbol: str) -> None:
+        """Warn if live features deviate significantly from training distribution."""
+        feature_stats = self._model_metadata.get("feature_stats")
+        if not feature_stats:
+            return
+        for col in latest.columns:
+            stats = feature_stats.get(col)
+            if not stats:
+                continue
+            val = float(latest[col].iloc[0])
+            mean = stats["mean"]
+            std = stats["std"]
+            if std > 0 and abs(val - mean) > 3 * std:
+                logger.warning(
+                    "ml_strategy.feature_drift",
+                    symbol=symbol,
+                    feature=col,
+                    value=round(val, 4),
+                    training_mean=round(mean, 4),
+                    training_std=round(std, 4),
+                )
+
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime."""
         try:
@@ -112,6 +147,14 @@ class MLStrategy(Strategy):
 
         confidence_threshold = self.get_regime_threshold()
 
+        # Increase threshold for stale models
+        if self.is_model_stale():
+            confidence_threshold = max(confidence_threshold, 0.85)
+            logger.warning(
+                "ml_strategy.stale_model",
+                trained_at=self._model_metadata.get("trained_at"),
+            )
+
         for symbol, df in market_data.ohlcv.items():
             if df.empty or len(df) < 50:
                 continue
@@ -132,6 +175,9 @@ class MLStrategy(Strategy):
 
                 if latest.isnull().any(axis=1).iloc[0]:
                     continue
+
+                # Check for feature drift
+                self._check_feature_drift(latest, symbol)
 
                 # Model predicts: 0=SELL, 1=HOLD, 2=BUY
                 proba = self._model.predict_proba(latest)[0]
@@ -183,8 +229,8 @@ class MLStrategy(Strategy):
             # Prepare data through feature pipeline
             config = FeaturePipelineConfig(
                 forward_periods=10,
-                buy_threshold=0.015,
-                sell_threshold=-0.015,
+                buy_threshold=0.008,
+                sell_threshold=-0.008,
                 correlation_threshold=0.95,
                 train_pct=0.70,
                 val_pct=0.15,
@@ -290,6 +336,17 @@ class MLStrategy(Strategy):
                 verbose=False,
             )
 
+            # Calibrate probabilities using isotonic regression on validation set
+            try:
+                calibrated_model = CalibratedClassifierCV(
+                    best_model, method="isotonic", cv="prefit"
+                )
+                calibrated_model.fit(data.X_val, data.y_val)
+                best_model = calibrated_model
+                logger.info("ml_strategy.calibration_applied")
+            except Exception:
+                logger.warning("ml_strategy.calibration_failed")
+
             # Evaluate on validation and test sets
             val_preds = best_model.predict(data.X_val)
             test_preds = best_model.predict(data.X_test)
@@ -315,6 +372,16 @@ class MLStrategy(Strategy):
                 best_model, data.feature_columns, top_n=15
             )
 
+            # Compute feature statistics for drift detection
+            feature_stats = {}
+            for col in data.feature_columns:
+                feature_stats[col] = {
+                    "mean": float(data.X_train[col].mean()),
+                    "std": float(data.X_train[col].std()),
+                    "min": float(data.X_train[col].min()),
+                    "max": float(data.X_train[col].max()),
+                }
+
             # Save model with metadata
             metadata = {
                 "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -331,6 +398,7 @@ class MLStrategy(Strategy):
                 "cv_results": cv_results,
                 "classification_report": test_report,
                 "confusion_matrix": test_confusion,
+                "feature_stats": feature_stats,
             }
 
             self._model = best_model

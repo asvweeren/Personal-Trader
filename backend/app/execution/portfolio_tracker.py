@@ -58,9 +58,20 @@ class PortfolioTracker:
         return self._daily_start_value
 
     def get_daily_pnl(self) -> float:
-        """Calculate P&L since start of day."""
+        """Calculate P&L since start of day.
+
+        Uses realized trades P&L + unrealized P&L change when performance
+        tracker is available, falls back to total_value difference otherwise.
+        """
         if self._daily_start_value is None or self._last_portfolio is None:
             return 0.0
+
+        # Prefer performance-based calculation (handles deposits/withdrawals)
+        if self._performance:
+            realized_today = self._performance.realized_pnl
+            unrealized = self._last_portfolio.account_summary.unrealized_pnl
+            return realized_today + unrealized
+
         return self._last_portfolio.account_summary.total_value - self._daily_start_value
 
     async def record_trade_close(
