@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from collections import defaultdict
 
 import pandas as pd
@@ -256,9 +256,11 @@ class MarketDataService:
             return df
         today = datetime.now(timezone.utc).date()
         last_ts = df["timestamp"].iloc[-1]
-        # Handle both datetime objects and string dates (IBKR formatDate=1 → "YYYYMMDD")
-        if hasattr(last_ts, "date"):
+        # Handle datetime.date, datetime.datetime, and string dates
+        if isinstance(last_ts, datetime):
             last_date = last_ts.date()
+        elif isinstance(last_ts, date):
+            last_date = last_ts
         elif isinstance(last_ts, str):
             last_date = pd.Timestamp(last_ts).date()
         else:
