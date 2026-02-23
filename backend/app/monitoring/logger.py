@@ -14,6 +14,7 @@ def setup_logging(debug: bool = False) -> None:
             structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
+            structlog.processors.format_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.dev.ConsoleRenderer() if debug else structlog.processors.JSONRenderer(),
         ],
