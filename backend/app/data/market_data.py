@@ -247,16 +247,8 @@ class MarketDataService:
         ohlcv = {}
         for symbol in symbols:
             try:
-                df = await self.get_historical_data(symbol)
-                # Append any recent in-memory bars
-                if symbol in self._recent_bars and self._recent_bars[symbol]:
-                    recent_df = pd.DataFrame(self._recent_bars[symbol])
-                    if not df.empty:
-                        df = pd.concat([df, recent_df], ignore_index=True)
-                        df = df.drop_duplicates(subset=["timestamp"], keep="last")
-                        df = df.sort_values("timestamp").reset_index(drop=True)
-                    else:
-                        df = recent_df
+                df = await self.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
+                # Skip: recent streaming bars are hourly, don't mix with daily
                 ohlcv[symbol] = df
                 # Fill missing streaming price from last OHLCV close
                 if (not prices.get(symbol)) and not df.empty:

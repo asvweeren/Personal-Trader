@@ -92,7 +92,7 @@ class DataPipeline:
 
         for symbol in self._symbols:
             try:
-                df = await self._market_data.get_historical_data(symbol)
+                df = await self._market_data.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
                 if df.empty or len(df) < 50:
                     logger.debug(
                         "pipeline.skip_features",
@@ -154,7 +154,7 @@ class DataPipeline:
         for symbol in self._symbols:
             try:
                 count = await self._market_data.download_and_store(
-                    symbol, duration="30 D", bar_size="1 hour"
+                    symbol, duration="1 Y", bar_size="1 day"
                 )
                 logger.info("pipeline.historical_stored", symbol=symbol, bars=count)
             except Exception:
