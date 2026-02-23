@@ -252,13 +252,19 @@ class MarketDataService:
         drift (e.g. volume_ratio ≈ 0.2 instead of ~1.0) and causes the
         model to generate spurious SELL signals.
         """
-        if df.empty:
+        if df.empty or "timestamp" not in df.columns:
             return df
         today = datetime.now(timezone.utc).date()
-        last_idx = df.index[-1]
-        last_date = last_idx.date() if hasattr(last_idx, "date") else None
+        last_ts = df["timestamp"].iloc[-1]
+        # Handle both datetime objects and string dates (IBKR formatDate=1 → "YYYYMMDD")
+        if hasattr(last_ts, "date"):
+            last_date = last_ts.date()
+        elif isinstance(last_ts, str):
+            last_date = pd.Timestamp(last_ts).date()
+        else:
+            return df
         if last_date == today:
-            return df.iloc[:-1]
+            return df.iloc[:-1].reset_index(drop=True)
         return df
 
     async def get_snapshot(self, symbols: list[str]) -> MarketSnapshot:
