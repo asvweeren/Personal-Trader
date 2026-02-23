@@ -93,6 +93,8 @@ class DataPipeline:
         for symbol in self._symbols:
             try:
                 df = await self._market_data.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
+                # Drop today's incomplete bar to match training data (completed bars only)
+                df = self._market_data._drop_incomplete_daily_bar(df)
                 if df.empty or len(df) < 50:
                     logger.debug(
                         "pipeline.skip_features",

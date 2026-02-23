@@ -242,6 +242,25 @@ class MarketDataService:
 
     # ── Snapshots ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _drop_incomplete_daily_bar(df: pd.DataFrame) -> pd.DataFrame:
+        """Drop the current day's incomplete bar from daily OHLCV data.
+
+        IBKR returns a partial bar for the current trading day whose volume
+        (and high/low) are not yet final.  The ML model was trained on
+        completed daily bars, so using the partial bar introduces feature
+        drift (e.g. volume_ratio ≈ 0.2 instead of ~1.0) and causes the
+        model to generate spurious SELL signals.
+        """
+        if df.empty:
+            return df
+        today = datetime.now(timezone.utc).date()
+        last_idx = df.index[-1]
+        last_date = last_idx.date() if hasattr(last_idx, "date") else None
+        if last_date == today:
+            return df.iloc[:-1]
+        return df
+
     async def get_snapshot(self, symbols: list[str]) -> MarketSnapshot:
         """Get a complete market snapshot with prices and OHLCV data for all symbols."""
         prices = await self.get_current_prices(symbols)
@@ -249,7 +268,8 @@ class MarketDataService:
         for symbol in symbols:
             try:
                 df = await self.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
-                # Skip: recent streaming bars are hourly, don't mix with daily
+                # Drop today's incomplete bar — model needs completed daily bars
+                df = self._drop_incomplete_daily_bar(df)
                 ohlcv[symbol] = df
                 # Fill missing streaming price from last OHLCV close
                 if (not prices.get(symbol)) and not df.empty:
