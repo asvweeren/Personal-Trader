@@ -250,6 +250,17 @@ class TradingEngine:
             await self._check_trailing_stops(snapshot.prices)
 
             # 6. Generate signals from all strategies
+            #    Pass regime state to ML strategy for regime-aware thresholds
+            if regime_state is not None:
+                for strategy in self._strategies:
+                    if hasattr(strategy, "get_regime_threshold"):
+                        strategy._current_regime = regime_state
+                    # Also propagate to sub-strategies in ensemble
+                    if hasattr(strategy, "_strategies"):
+                        for sub in strategy._strategies:
+                            if hasattr(sub, "get_regime_threshold"):
+                                sub._current_regime = regime_state
+
             all_signals: list[TradingSignal] = []
             for strategy in self._strategies:
                 try:

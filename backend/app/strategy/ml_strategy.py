@@ -45,7 +45,7 @@ class MLStrategy(Strategy):
 
     def __init__(
         self,
-        confidence_threshold: float = 0.75,
+        confidence_threshold: float = 0.50,
         model_path: str | None = None,
     ):
         self._model = None
@@ -123,19 +123,22 @@ class MLStrategy(Strategy):
                 )
 
     def get_regime_threshold(self) -> float:
-        """Get confidence threshold adjusted for current market regime."""
+        """Get confidence threshold adjusted for current market regime.
+
+        For a 3-class classifier (BUY/HOLD/SELL), random chance = 33%.
+        Model accuracy is ~71%, so thresholds should be well below that.
+        """
         try:
             from app.strategy.regime import MarketRegime
-            from app.risk.reconciliation import get_last_result  # noqa: F401
-            # Access regime from engine's detector via module-level reference
+
             regime = getattr(self, "_current_regime", None)
             if regime is not None:
                 if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                    return 0.65  # Slightly relaxed in clear trends
+                    return 0.45  # Relaxed in clear trends
                 elif regime.regime == MarketRegime.RANGING:
-                    return 0.80  # Conservative in ranges
+                    return 0.55  # More conservative in ranges
                 elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                    return 0.85  # Very conservative in high vol
+                    return 0.60  # Conservative in high vol
         except Exception:
             pass
         return self._confidence_threshold
@@ -147,13 +150,22 @@ class MLStrategy(Strategy):
 
         confidence_threshold = self.get_regime_threshold()
 
-        # Increase threshold for stale models
+        # Increase threshold for stale models (add 10% penalty, don't jump to 85%)
         if self.is_model_stale():
-            confidence_threshold = max(confidence_threshold, 0.85)
+            confidence_threshold = min(confidence_threshold + 0.10, 0.70)
             logger.warning(
                 "ml_strategy.stale_model",
                 trained_at=self._model_metadata.get("trained_at"),
+                adjusted_threshold=confidence_threshold,
             )
+
+        regime_name = getattr(getattr(self, "_current_regime", None), "regime", None)
+        logger.info(
+            "ml_strategy.threshold",
+            threshold=round(confidence_threshold, 3),
+            regime=regime_name.value if regime_name else "none",
+            symbols=len(market_data.ohlcv),
+        )
 
         for symbol, df in market_data.ohlcv.items():
             if df.empty or len(df) < 50:
