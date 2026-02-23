@@ -10,8 +10,12 @@ from app.data.indicators import compute_features
 from app.data.market_data import MarketDataService, MarketSnapshot
 from app.data.news_fetcher import NewsFetcher
 from app.data.sentiment import SentimentAnalyzer, SentimentResult
+from app.risk.market_hours import is_market_open, Exchange
 
 logger = structlog.get_logger()
+
+# Max symbols to analyze sentiment for (cost control)
+MAX_SENTIMENT_SYMBOLS = 15
 
 
 class DataPipeline:
@@ -124,20 +128,41 @@ class DataPipeline:
         return features
 
     async def refresh_sentiment(self) -> dict[str, SentimentResult]:
-        """Fetch news and compute sentiment for all symbols.
-        Intended to be called periodically (e.g., every 15-30 minutes).
+        """Fetch news and compute sentiment for top symbols during market hours only.
+
+        Cost optimizations:
+        - Only runs when at least one market (EU/US) is open
+        - Limits analysis to MAX_SENTIMENT_SYMBOLS (top screener picks)
+        - Results cached in Redis with 30-min TTL
         """
-        logger.info("pipeline.refresh_sentiment", symbols=len(self._symbols))
+        # Skip sentiment outside market hours to save API costs
+        any_market_open = (
+            is_market_open(Exchange.NYSE)
+            or is_market_open(Exchange.EURONEXT)
+            or is_market_open(Exchange.LSE)
+            or is_market_open(Exchange.XETRA)
+        )
+        if not any_market_open:
+            logger.debug("pipeline.sentiment_skipped", reason="markets_closed")
+            return {}
+
+        # Limit to top N symbols to control API costs
+        symbols_to_analyze = self._symbols[:MAX_SENTIMENT_SYMBOLS]
+        logger.info(
+            "pipeline.refresh_sentiment",
+            symbols=len(symbols_to_analyze),
+            total=len(self._symbols),
+        )
         sentiments = {}
 
-        for symbol in self._symbols:
+        for symbol in symbols_to_analyze:
             try:
                 news = await self._news_fetcher.fetch_symbol_news(symbol, limit=10)
                 result = await self._sentiment.analyze(symbol, news)
                 sentiments[symbol] = result
                 self._latest_sentiment[symbol] = result
 
-                # Cache in Redis
+                # Cache in Redis with 30-min TTL
                 await self._feature_store.store_sentiment(
                     symbol, self._sentiment.to_dict(result), ttl=1800
                 )

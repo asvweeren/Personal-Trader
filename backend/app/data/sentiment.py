@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 SENTIMENT_MODEL = "claude-haiku-4-5-20251001"
 
 # Redis cache TTL for sentiment results
-SENTIMENT_CACHE_TTL = 900  # 15 minutes
+SENTIMENT_CACHE_TTL = 3600  # 60 minutes (matches refresh interval)
 
 # Maximum headlines to send per API call
 MAX_HEADLINES_PER_BATCH = 10

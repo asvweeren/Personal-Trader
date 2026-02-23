@@ -87,15 +87,15 @@ def schedule_data_pipeline(pipeline) -> None:
     )
     logger.info("scheduler.job_added", job="refresh_features", interval="5min")
 
-    # Refresh sentiment every 15 minutes
+    # Refresh sentiment every 60 minutes (cost-optimized: ~15 symbols, market hours only)
     scheduler.add_job(
         pipeline.refresh_sentiment,
-        IntervalTrigger(minutes=15),
+        IntervalTrigger(minutes=60),
         id="refresh_sentiment",
         replace_existing=True,
         max_instances=1,
     )
-    logger.info("scheduler.job_added", job="refresh_sentiment", interval="15min")
+    logger.info("scheduler.job_added", job="refresh_sentiment", interval="60min")
 
     # Refresh historical data daily at 08:00 UTC (before EU market open)
     scheduler.add_job(

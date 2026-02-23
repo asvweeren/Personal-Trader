@@ -27,20 +27,20 @@ def make_sentiment(symbol="AAPL", score=0.5, confidence=0.8, news_count=5):
     )
 
 
+def _setup_strategy_with_cached(strategy, cached_result):
+    """Set up the strategy with a mocked cache that returns the given result."""
+    strategy._analyzer = MagicMock()
+    strategy._analyzer._get_cached = AsyncMock(return_value=cached_result)
+    strategy._news_fetcher = MagicMock()
+
+
 # ── Signal generation tests ──────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_bullish_sentiment_gives_buy():
     strategy = SentimentStrategy(buy_threshold=0.3, min_confidence=0.3)
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[
-        NewsItem("Good news", "AAPL is great", "Test", "http://test.com"),
-    ])
-    strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(score=0.5, confidence=0.8, news_count=5)
-    )
+    _setup_strategy_with_cached(strategy, make_sentiment(score=0.5, confidence=0.8, news_count=5))
 
     signals = await strategy.generate_signals(make_snapshot())
     assert len(signals) == 1
@@ -50,14 +50,7 @@ async def test_bullish_sentiment_gives_buy():
 @pytest.mark.asyncio
 async def test_bearish_sentiment_gives_sell():
     strategy = SentimentStrategy(sell_threshold=-0.3, min_confidence=0.3)
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[
-        NewsItem("Bad news", "AAPL is bad", "Test", "http://test.com"),
-    ])
-    strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(score=-0.5, confidence=0.8, news_count=5)
-    )
+    _setup_strategy_with_cached(strategy, make_sentiment(score=-0.5, confidence=0.8, news_count=5))
 
     signals = await strategy.generate_signals(make_snapshot())
     assert len(signals) == 1
@@ -67,12 +60,7 @@ async def test_bearish_sentiment_gives_sell():
 @pytest.mark.asyncio
 async def test_neutral_sentiment_gives_hold():
     strategy = SentimentStrategy()
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[])
-    strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(score=0.0, confidence=0.5, news_count=3)
-    )
+    _setup_strategy_with_cached(strategy, make_sentiment(score=0.0, confidence=0.5, news_count=3))
 
     signals = await strategy.generate_signals(make_snapshot())
     assert len(signals) == 1
@@ -83,16 +71,21 @@ async def test_neutral_sentiment_gives_hold():
 async def test_low_confidence_gives_hold():
     """Even bullish score should HOLD if confidence is below threshold."""
     strategy = SentimentStrategy(min_confidence=0.7)
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[])
-    strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(score=0.8, confidence=0.3, news_count=1)
-    )
+    _setup_strategy_with_cached(strategy, make_sentiment(score=0.8, confidence=0.3, news_count=1))
 
     signals = await strategy.generate_signals(make_snapshot())
     assert len(signals) == 1
     assert signals[0].action == SignalAction.HOLD
+
+
+@pytest.mark.asyncio
+async def test_no_cached_sentiment_skips_symbol():
+    """If no cached sentiment is available, the symbol is skipped."""
+    strategy = SentimentStrategy()
+    _setup_strategy_with_cached(strategy, None)
+
+    signals = await strategy.generate_signals(make_snapshot())
+    assert len(signals) == 0
 
 
 # ── Confidence calibration tests ─────────────────────────────
@@ -134,18 +127,17 @@ def test_calibration_moderate_articles():
 
 
 @pytest.mark.asyncio
-async def test_api_call_tracking():
-    strategy = SentimentStrategy()
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[])
+async def test_symbols_analyzed_tracking():
+    strategy = SentimentStrategy(min_confidence=0.3)
     strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(news_count=0)
+    # Return cached result for both symbols
+    strategy._analyzer._get_cached = AsyncMock(
+        return_value=make_sentiment(news_count=5)
     )
+    strategy._news_fetcher = MagicMock()
 
     await strategy.generate_signals(make_snapshot(["AAPL", "MSFT"]))
     stats = strategy.get_stats()
-    assert stats["api_calls"] == 2
     assert stats["symbols_analyzed"] == 2
 
 
@@ -155,12 +147,7 @@ async def test_api_call_tracking():
 @pytest.mark.asyncio
 async def test_signal_metadata():
     strategy = SentimentStrategy(min_confidence=0.3)
-    strategy._news_fetcher = MagicMock()
-    strategy._news_fetcher.fetch_news = AsyncMock(return_value=[])
-    strategy._analyzer = MagicMock()
-    strategy._analyzer.analyze = AsyncMock(
-        return_value=make_sentiment(score=0.4, confidence=0.7, news_count=5)
-    )
+    _setup_strategy_with_cached(strategy, make_sentiment(score=0.4, confidence=0.7, news_count=5))
 
     signals = await strategy.generate_signals(make_snapshot())
     meta = signals[0].metadata

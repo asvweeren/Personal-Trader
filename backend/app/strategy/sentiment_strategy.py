@@ -48,32 +48,34 @@ class SentimentStrategy(Strategy):
         self._sell_threshold = sell_threshold
         self._min_confidence = min_confidence
         self._min_news_count = min_news_count
-        # Cost tracking
-        self._api_calls = 0
+        # Tracking
         self._total_symbols_analyzed = 0
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
-        """Generate trading signals from sentiment analysis of news.
+        """Generate trading signals from cached sentiment data.
 
-        For each symbol in market_data, fetches recent news, analyzes sentiment
-        via Claude, and maps the score to BUY/SELL/HOLD signals.
+        Uses pre-computed sentiment from the pipeline (cached in Redis).
+        Does NOT make its own API calls — all API calls are centralized
+        in pipeline.refresh_sentiment() to control costs.
         """
         signals: list[TradingSignal] = []
         for symbol in market_data.prices:
             try:
-                news = await self._news_fetcher.fetch_news(symbol=symbol, limit=10)
-                sentiment = await self._analyzer.analyze(symbol, news)
-                self._api_calls += 1
+                # Use cached sentiment only — no direct API calls
+                cached = await self._analyzer._get_cached(symbol)
+                if not cached:
+                    continue
+
                 self._total_symbols_analyzed += 1
 
                 # Calibrate confidence based on news volume
-                calibrated_confidence = self._calibrate_confidence(sentiment)
+                calibrated_confidence = self._calibrate_confidence(cached)
 
                 if calibrated_confidence < self._min_confidence:
                     action = SignalAction.HOLD
-                elif sentiment.score >= self._buy_threshold:
+                elif cached.score >= self._buy_threshold:
                     action = SignalAction.BUY
-                elif sentiment.score <= self._sell_threshold:
+                elif cached.score <= self._sell_threshold:
                     action = SignalAction.SELL
                 else:
                     action = SignalAction.HOLD
@@ -85,15 +87,15 @@ class SentimentStrategy(Strategy):
                         confidence=calibrated_confidence,
                         strategy_name=self.name,
                         metadata={
-                            "sentiment_score": sentiment.score,
-                            "raw_confidence": sentiment.confidence,
+                            "sentiment_score": cached.score,
+                            "raw_confidence": cached.confidence,
                             "calibrated_confidence": calibrated_confidence,
-                            "reasoning": sentiment.reasoning,
-                            "news_count": sentiment.news_count,
-                            "headlines_analyzed": sentiment.headlines_analyzed or [],
+                            "reasoning": cached.reasoning,
+                            "news_count": cached.news_count,
+                            "headlines_analyzed": cached.headlines_analyzed or [],
                             "analyzed_at": (
-                                sentiment.timestamp.isoformat()
-                                if sentiment.timestamp
+                                cached.timestamp.isoformat()
+                                if cached.timestamp
                                 else None
                             ),
                         },
@@ -138,7 +140,6 @@ class SentimentStrategy(Strategy):
     def get_stats(self) -> dict:
         """Return strategy usage statistics."""
         return {
-            "api_calls": self._api_calls,
             "symbols_analyzed": self._total_symbols_analyzed,
             "buy_threshold": self._buy_threshold,
             "sell_threshold": self._sell_threshold,
