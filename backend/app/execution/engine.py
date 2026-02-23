@@ -998,6 +998,9 @@ class TradingEngine:
         Only loads OPEN trades (with entry_price).  Stale PENDING trades
         (no entry_price, never filled) are cancelled to avoid blocking
         new trades for those symbols.
+
+        Re-places stop-loss orders at IBKR for all loaded trades since
+        broker-side orders may have been cancelled during restart.
         """
         try:
             result = await self._db.execute(
@@ -1006,10 +1009,37 @@ class TradingEngine:
             trades = result.scalars().all()
             loaded = 0
             cancelled = 0
+            stops_placed = 0
             for trade in trades:
                 if trade.status == TradeStatus.OPEN and trade.entry_price is not None:
                     self._open_trades[trade.symbol] = trade
                     loaded += 1
+
+                    # Re-place stop-loss at broker (may have been lost on restart)
+                    if trade.stop_loss and trade.stop_loss > 0:
+                        try:
+                            await self._order_manager.submit_order(
+                                trade_id=trade.id,
+                                symbol=trade.symbol,
+                                side="SELL",
+                                quantity=trade.quantity,
+                                order_type=OrderType.STOP,
+                                stop_price=trade.stop_loss,
+                            )
+                            stops_placed += 1
+                        except Exception:
+                            logger.exception(
+                                "engine.stop_loss_restore_failed",
+                                symbol=trade.symbol,
+                                stop_price=trade.stop_loss,
+                            )
+
+                    # Set take-profit if missing
+                    if not trade.take_profit and trade.entry_price:
+                        atr_val = self._get_atr(trade.symbol)
+                        tp = calculate_take_profit(trade.entry_price, trade.symbol, atr_val)
+                        trade.take_profit = tp
+
                 elif trade.status == TradeStatus.PENDING:
                     # Stale pending — never filled, cancel it
                     trade.status = TradeStatus.CANCELLED
@@ -1019,6 +1049,7 @@ class TradingEngine:
                     "engine.loaded_open_trades",
                     count=loaded,
                     stale_cancelled=cancelled,
+                    stops_restored=stops_placed,
                 )
                 if cancelled:
                     await send_alert(
