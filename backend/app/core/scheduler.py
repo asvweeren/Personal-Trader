@@ -16,6 +16,9 @@ scheduler = AsyncIOScheduler()
 # Jobs where failure is critical (affects trading)
 _CRITICAL_JOBS = {"trading_cycle", "eod_safety_close", "daily_reset", "broker_watchdog"}
 
+# High-frequency monitoring jobs — missed executions are expected and not alertable
+_HIGH_FREQ_JOBS = {"broker_watchdog", "ws_heartbeat", "eod_safety_close"}
+
 
 def _on_job_event(event) -> None:
     """Handle scheduler job errors and missed executions."""
@@ -48,6 +51,10 @@ def _on_job_event(event) -> None:
             logger.warning("scheduler.alert_send_failed", job_id=job_id)
     else:
         logger.warning("scheduler.job_missed", job_id=job_id, critical=is_critical)
+        # Don't spam alerts for high-frequency monitoring jobs — missed windows
+        # are expected during heavy event-loop load and are not actionable.
+        if job_id in _HIGH_FREQ_JOBS:
+            return
         try:
             from app.monitoring.alerts import send_alert
             loop = asyncio.get_event_loop()
@@ -157,6 +164,7 @@ def schedule_heartbeat() -> None:
         id="ws_heartbeat",
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=60,
     )
     logger.info("scheduler.job_added", job="ws_heartbeat", interval="30s")
 
@@ -464,6 +472,7 @@ def schedule_broker_watchdog(broker) -> None:
         id="broker_watchdog",
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=30,
     )
     logger.info("scheduler.job_added", job="broker_watchdog", interval="10s")
 
@@ -521,6 +530,7 @@ def schedule_eod_safety_close(engine) -> None:
         id="eod_safety_close",
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=120,
     )
     logger.info("scheduler.job_added", job="eod_safety_close", interval="1min")
 
