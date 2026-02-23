@@ -33,15 +33,23 @@ SECTOR_MAP: dict[str, str] = {
     "EFA": "etf_intl", "XLF": "etf_finance", "XLE": "etf_energy",
     "VGK": "etf_eu", "EWG": "etf_eu", "EWN": "etf_eu",
     # EU Tech
-    "ASML.AS": "technology", "SAP.DE": "technology",
+    "ASML.AS": "technology", "SAP.DE": "technology", "IFX.DE": "technology",
+    "ADYEN.AS": "technology", "CAP.PA": "technology",
     # EU Energy
-    "SHEL.L": "energy", "TTE.PA": "energy",
+    "SHEL.L": "energy", "TTE.PA": "energy", "BP.L": "energy",
     # EU Consumer
-    "MC.PA": "consumer", "OR.PA": "consumer",
+    "MC.PA": "consumer", "OR.PA": "consumer", "KER.PA": "consumer",
+    "RI.PA": "consumer",
     # EU Finance
-    "INGA.AS": "finance", "BNP.PA": "finance",
+    "INGA.AS": "finance", "BNP.PA": "finance", "BARC.L": "finance",
+    "LLOY.L": "finance", "LSEG.L": "finance", "CS.PA": "finance",
     # EU Healthcare
-    "SAN.PA": "healthcare", "AZN.L": "healthcare",
+    "SAN.PA": "healthcare", "AZN.L": "healthcare", "GSK.L": "healthcare",
+    "BAYN.DE": "healthcare",
+    # EU Industrials
+    "SIE.DE": "industrials", "AIR.PA": "industrials", "REL.L": "industrials",
+    # EU Telecom / Other
+    "AAL.L": "industrials",
 }
 
 # Dynamic sector cache for symbols discovered by the screener
