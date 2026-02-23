@@ -86,6 +86,8 @@ class TradingEngine:
         self._last_close_time: dict[str, datetime] = {}
         # Track last trailing stop update price to prevent whipsaw
         self._last_stop_update_price: dict[str, float] = {}
+        # Track trades that need stop-loss placement retry (IBKR race condition)
+        self._pending_stop_retries: set[str] = set()
 
     @property
     def state(self) -> EngineState:
@@ -245,6 +247,9 @@ class TradingEngine:
 
             # 4. Take-profit check — sell positions that hit their target
             await self._check_take_profits(snapshot.prices)
+
+            # 4b. Retry failed stop-loss placements (IBKR race condition)
+            await self._retry_pending_stops()
 
             # 5. Check trailing stops on open positions (progressive)
             await self._check_trailing_stops(snapshot.prices)
@@ -733,6 +738,7 @@ class TradingEngine:
                         symbol=signal.symbol,
                         stop_price=stop_price,
                     )
+                    self._pending_stop_retries.add(signal.symbol)
 
                 # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
@@ -802,14 +808,22 @@ class TradingEngine:
                 if filled_price:
                     stop_price = self._calculate_atr_stop(filled_price, symbol)
                     trade.stop_loss = stop_price
-                    await self._order_manager.submit_order(
-                        trade_id=trade.id,
-                        symbol=symbol,
-                        side="SELL",
-                        quantity=trade.quantity,
-                        order_type=OrderType.STOP,
-                        stop_price=stop_price,
-                    )
+                    try:
+                        await self._order_manager.submit_order(
+                            trade_id=trade.id,
+                            symbol=symbol,
+                            side="SELL",
+                            quantity=trade.quantity,
+                            order_type=OrderType.STOP,
+                            stop_price=stop_price,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "engine.stop_loss_on_fill_failed",
+                            symbol=symbol,
+                            stop_price=stop_price,
+                        )
+                        self._pending_stop_retries.add(symbol)
 
                     # Set take-profit target
                     atr_val = self._get_atr(symbol)
@@ -840,6 +854,44 @@ class TradingEngine:
             )
 
         await self._db.flush()
+
+    async def _retry_pending_stops(self) -> None:
+        """Retry placing stop-loss orders that failed due to IBKR race condition.
+
+        After a BUY fill, IBKR sometimes hasn't registered the position yet,
+        causing the immediate STOP SELL order to be rejected. This retries
+        those placements in the next cycle when the position is confirmed.
+        """
+        if not self._pending_stop_retries:
+            return
+
+        for symbol in list(self._pending_stop_retries):
+            trade = self._open_trades.get(symbol)
+            if not trade or not trade.stop_loss or trade.stop_loss <= 0:
+                self._pending_stop_retries.discard(symbol)
+                continue
+
+            try:
+                await self._order_manager.submit_order(
+                    trade_id=trade.id,
+                    symbol=symbol,
+                    side="SELL",
+                    quantity=trade.quantity,
+                    order_type=OrderType.STOP,
+                    stop_price=trade.stop_loss,
+                )
+                self._pending_stop_retries.discard(symbol)
+                logger.info(
+                    "engine.stop_loss_retry_success",
+                    symbol=symbol,
+                    stop_price=trade.stop_loss,
+                )
+            except Exception:
+                logger.warning(
+                    "engine.stop_loss_retry_failed",
+                    symbol=symbol,
+                    stop_price=trade.stop_loss,
+                )
 
     async def _check_trailing_stops(self, prices: dict[str, float]) -> None:
         """Update trailing stops for open positions using progressive tiers."""
