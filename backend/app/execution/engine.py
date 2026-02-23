@@ -564,7 +564,9 @@ class TradingEngine:
         """Calculate stop price using ATR if available, else fallback to 3%."""
         atr_val = self._get_atr(symbol)
         if atr_val and atr_val > 0:
-            stop_price = round(filled_price - settings.atr_stop_multiplier * atr_val, 2)
+            # atr_14 is now a ratio (atr/close), convert back to raw ATR
+            atr_raw = atr_val * filled_price if atr_val < 1.0 else atr_val
+            stop_price = round(filled_price - settings.atr_stop_multiplier * atr_raw, 2)
             min_stop = round(filled_price * (1 - settings.min_stop_loss_pct / 100), 2)
             stop_price = max(stop_price, min_stop)
         else:

@@ -92,61 +92,77 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
 
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute all technical indicators for a DataFrame with OHLCV columns."""
+    """Compute all technical indicators for a DataFrame with OHLCV columns.
+
+    All features are price-scale independent (ratios, percentages, normalized)
+    so the model works across stocks at any price level (USD, GBp, EUR).
+    """
     features = df.copy()
     close = df["close"]
     high = df["high"]
     low = df["low"]
     vol = df["volume"]
 
-    # Moving averages
-    features["sma_10"] = sma(close, 10)
-    features["sma_20"] = sma(close, 20)
-    features["sma_50"] = sma(close, 50)
-    features["ema_10"] = ema(close, 10)
-    features["ema_20"] = ema(close, 20)
+    # Moving averages — normalized as price distance ratios
+    sma_10_raw = sma(close, 10)
+    sma_20_raw = sma(close, 20)
+    sma_50_raw = sma(close, 50)
+    ema_10_raw = ema(close, 10)
+    ema_20_raw = ema(close, 20)
+    features["sma_10"] = close / sma_10_raw - 1
+    features["sma_20"] = close / sma_20_raw - 1
+    features["sma_50"] = close / sma_50_raw - 1
+    features["ema_10"] = close / ema_10_raw - 1
+    features["ema_20"] = close / ema_20_raw - 1
 
-    # RSI
+    # RSI (already 0-100 scale)
     features["rsi_14"] = rsi(close, 14)
 
-    # MACD
+    # MACD — normalized by price to be scale-independent
     macd_data = macd(close)
-    features["macd"] = macd_data["macd"]
-    features["macd_signal"] = macd_data["signal"]
-    features["macd_histogram"] = macd_data["histogram"]
+    macd_raw = macd_data["macd"]
+    macd_signal_raw = macd_data["signal"]
+    macd_hist_raw = macd_data["histogram"]
+    features["macd"] = macd_raw / close
+    features["macd_signal"] = macd_signal_raw / close
+    features["macd_histogram"] = macd_hist_raw / close
 
-    # Bollinger Bands
+    # Bollinger Bands — normalized
     bb = bollinger_bands(close)
-    features["bb_upper"] = bb["upper"]
-    features["bb_middle"] = bb["middle"]
-    features["bb_lower"] = bb["lower"]
+    features["bb_upper"] = (bb["upper"] - close) / close
+    features["bb_middle"] = close / bb["middle"] - 1
+    features["bb_lower"] = (close - bb["lower"]) / close
     features["bb_width"] = (bb["upper"] - bb["lower"]) / bb["middle"]
 
-    # ATR
-    features["atr_14"] = atr(high, low, close, 14)
+    # ATR — normalized by price
+    atr_raw = atr(high, low, close, 14)
+    features["atr_14"] = atr_raw / close
 
-    # ADX (trend strength)
+    # ADX (already 0-100 percentage)
     features["adx_14"] = adx(high, low, close, 14)
 
-    # Volume
-    features["obv"] = obv(close, vol)
-    features["vwap"] = vwap(high, low, close, vol)
-    features["volume_sma_20"] = sma(vol, 20)
+    # Volume — normalized
+    obv_raw = obv(close, vol)
+    vwap_raw = vwap(high, low, close, vol)
+    vol_sma_20 = sma(vol, 20)
+    features["obv"] = obv_raw / (close * vol_sma_20 + 1e-10)
+    features["vwap"] = (close - vwap_raw) / (vwap_raw + 1e-10)
+    features["volume_sma_20"] = vol / (vol_sma_20 + 1e-10)
 
-    # Price features
+    # Price features (already percentage-based)
     features["return_1d"] = close.pct_change(1)
     features["return_5d"] = close.pct_change(5)
     features["volatility_20d"] = close.pct_change().rolling(20).std()
 
-    # Price position relative to moving averages
-    features["price_vs_sma50"] = close / features["sma_50"] - 1
-    features["price_vs_sma10"] = close / features["sma_10"] - 1
+    # Price position relative to moving averages (ratios)
+    features["price_vs_sma50"] = close / sma_50_raw - 1
+    features["price_vs_sma10"] = close / sma_10_raw - 1
 
-    # Momentum
+    # Momentum (ratios)
     features["momentum_10d"] = close / close.shift(10) - 1
     features["momentum_20d"] = close / close.shift(20) - 1
 
-    # Volume dynamics
+    # Volume dynamics (ratios)
     features["volume_change_5d"] = vol / vol.shift(5) - 1
     features["volume_ratio"] = vol / vol.rolling(20).mean()
 
@@ -157,7 +173,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # RSI momentum
     features["rsi_change_5d"] = features["rsi_14"] - features["rsi_14"].shift(5)
 
-    # MACD divergence
+    # MACD divergence (already normalized since macd features are /close)
     features["macd_divergence"] = features["macd"] - features["macd_signal"]
 
     # --- Alternative Data Proxies ---
@@ -187,16 +203,16 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["rsi_sma_cross"] = rsi_val - sma(rsi_val, 14)
 
     # VWAP distance: price distance from VWAP as %
-    features["vwap_distance"] = (close - features["vwap"]) / features["vwap"]
+    features["vwap_distance"] = (close - vwap_raw) / (vwap_raw + 1e-10)
 
-    # Volume-price trend: OBV normalized by price
-    features["volume_price_trend"] = features["obv"] / close
+    # Volume-price trend: OBV normalized by average volume
+    features["volume_price_trend"] = obv_raw / (vol_sma_20 + 1e-10)
 
-    # ATR ratio: ATR/close (normalized volatility)
-    features["atr_ratio"] = features["atr_14"] / close
+    # ATR ratio: same as atr_14 now (both are atr/close)
+    features["atr_ratio"] = features["atr_14"]
 
     # MACD cross: 1=bullish cross, -1=bearish, 0=none
-    macd_diff = features["macd"] - features["macd_signal"]
+    macd_diff = macd_raw - macd_signal_raw
     macd_diff_prev = macd_diff.shift(1)
     features["macd_cross"] = np.where(
         (macd_diff > 0) & (macd_diff_prev <= 0), 1.0,
@@ -227,10 +243,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Vol-of-vol: volatility of volatility (regime change detector)
     features["vol_of_vol"] = features["volatility_20d"].rolling(30).std()
 
-    # OBV momentum: rate of change of OBV
-    obv_series = features["obv"]
-    features["obv_momentum"] = obv_series / (obv_series.shift(5) + 1e-10)
-    features["obv_divergence"] = obv_series - obv_series.rolling(20).mean()
+    # OBV momentum: rate of change of OBV (already a ratio)
+    features["obv_momentum"] = obv_raw / (obv_raw.shift(5) + 1e-10)
+    # OBV divergence: normalized by rolling volume
+    obv_mean = obv_raw.rolling(20).mean()
+    features["obv_divergence"] = (obv_raw - obv_mean) / (obv_mean.abs() + 1e-10)
 
     # --- Stochastic RSI ---
     rsi_14 = features["rsi_14"]
