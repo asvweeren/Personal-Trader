@@ -718,14 +718,21 @@ class TradingEngine:
                     stop_price = round(stop_price + slippage * 0.5, 2)
 
                 trade.stop_loss = stop_price
-                await self._order_manager.submit_order(
-                    trade_id=trade.id,
-                    symbol=signal.symbol,
-                    side="SELL",
-                    quantity=quantity,
-                    order_type=OrderType.STOP,
-                    stop_price=stop_price,
-                )
+                try:
+                    await self._order_manager.submit_order(
+                        trade_id=trade.id,
+                        symbol=signal.symbol,
+                        side="SELL",
+                        quantity=quantity,
+                        order_type=OrderType.STOP,
+                        stop_price=stop_price,
+                    )
+                except Exception:
+                    logger.exception(
+                        "engine.stop_loss_placement_failed",
+                        symbol=signal.symbol,
+                        stop_price=stop_price,
+                    )
 
                 # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
