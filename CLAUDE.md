@@ -334,7 +334,6 @@ When IBKR is not connected, backtests download historical data from yfinance ins
   - Restart backend: `docker compose -f docker-compose.prod.yml restart backend`
   - Connect via VNC (port 5900) for 2FA if needed
   - Enable paper trading from the dashboard
-- **Resend domain verification** - DNS records for edgedigital.nl need to be set up for email deliverability
 - **Model retraining** - current model trained on historical data; should be retrained periodically
 - **Paper trading validation** - need 4+ weeks of paper trading data before going live
 - **Neural net strategy** (nn_strategy.py) - placeholder, not yet implemented
