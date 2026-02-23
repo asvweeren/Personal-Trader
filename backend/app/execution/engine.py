@@ -158,10 +158,37 @@ class TradingEngine:
         logger.info("engine.stopped", cycles=self._cycle_count)
 
     async def run_cycle(self) -> None:
-        """Run one complete trading cycle: data -> signals -> risk -> orders."""
+        """Run one complete trading cycle: data -> signals -> risk -> orders.
+
+        Wrapped in a 4-minute timeout to prevent a hung cycle from blocking
+        all subsequent cycles (APScheduler max_instances=1).
+        """
         if self._state != EngineState.RUNNING:
             return
 
+        try:
+            await asyncio.wait_for(self._run_cycle_inner(), timeout=240)
+        except asyncio.TimeoutError:
+            logger.error(
+                "engine.cycle_timeout",
+                timeout_seconds=240,
+                cycle=self._cycle_count,
+            )
+            await event_bus.publish(SYSTEM_ERROR, {
+                "component": "trading_engine",
+                "error": "Cycle timed out after 240s",
+            })
+            self._cycle_count += 1
+            self._last_cycle_at = datetime.now(timezone.utc)
+        except Exception:
+            logger.exception("engine.cycle_error")
+            await event_bus.publish(SYSTEM_ERROR, {
+                "component": "trading_engine",
+                "error": "Cycle failed",
+            })
+
+    async def _run_cycle_inner(self) -> None:
+        """Inner cycle logic, called with a timeout by run_cycle()."""
         try:
             # Check broker connectivity
             if not await self._ensure_connected():
@@ -377,11 +404,10 @@ class TradingEngine:
             self._last_cycle_at = datetime.now(timezone.utc)
 
         except Exception:
-            logger.exception("engine.cycle_error")
-            await event_bus.publish(SYSTEM_ERROR, {
-                "component": "trading_engine",
-                "error": "Cycle failed",
-            })
+            logger.exception("engine.cycle_inner_error")
+            self._cycle_count += 1
+            self._last_cycle_at = datetime.now(timezone.utc)
+            raise  # Re-raise so run_cycle() wrapper can log/publish
 
     async def _ensure_connected(self) -> bool:
         """Check broker connection and attempt reconnect if needed.
