@@ -244,11 +244,14 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Vol-of-vol: volatility of volatility (regime change detector)
     features["vol_of_vol"] = features["volatility_20d"].rolling(30).std()
 
-    # OBV momentum: rate of change of OBV (already a ratio)
-    features["obv_momentum"] = obv_raw / (obv_raw.shift(5) + 1e-10)
-    # OBV divergence: normalized by rolling volume
+    # OBV momentum: z-score of 5-bar change (clip to avoid extreme values at zero-crossings)
+    obv_diff_5 = obv_raw.diff(5)
+    obv_std = obv_raw.rolling(20).std()
+    features["obv_momentum"] = (obv_diff_5 / (obv_std + 1e-10)).clip(-5, 5)
+
+    # OBV divergence: z-score deviation from 20-bar mean
     obv_mean = obv_raw.rolling(20).mean()
-    features["obv_divergence"] = (obv_raw - obv_mean) / (obv_mean.abs() + 1e-10)
+    features["obv_divergence"] = ((obv_raw - obv_mean) / (obv_std + 1e-10)).clip(-5, 5)
 
     # --- Stochastic RSI ---
     rsi_14 = features["rsi_14"]

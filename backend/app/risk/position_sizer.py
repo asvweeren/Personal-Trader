@@ -150,6 +150,22 @@ def calculate_kelly_fraction(
     return half_kelly
 
 
+def _confidence_to_kelly(confidence: float) -> float:
+    """Map confidence to Kelly fraction using tiered scaling.
+
+    High-confidence trades get proportionally more capital than
+    low-confidence trades (3x ratio between tiers).
+    """
+    if confidence >= 0.85:
+        return 0.90
+    elif confidence >= 0.75:
+        return 0.70
+    elif confidence >= 0.65:
+        return 0.50
+    else:
+        return 0.30
+
+
 def calculate_correlation_factor(
     symbol: str,
     existing_positions: list[str],
@@ -276,8 +292,8 @@ def calculate_position_size(
             avg_loss=1.0,
         )
     else:
-        # Simplified Kelly scaled by confidence
-        kelly_fraction = confidence * 0.8
+        # Tiered Kelly: high-confidence trades get proportionally more capital
+        kelly_fraction = _confidence_to_kelly(confidence)
 
     # Volatility adjustment: reduce size for high-volatility assets
     if volatility and volatility > 0:
