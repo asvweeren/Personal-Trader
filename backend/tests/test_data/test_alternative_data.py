@@ -55,11 +55,11 @@ class TestAlternativeDataFeatures:
         # Should be a ratio > 0
         assert all(vol_regime[vol_regime.notna()] > 0)
 
-    def test_price_vs_sma_features(self):
+    def test_sma_ratio_features(self):
         df = _make_ohlcv()
         features = compute_features(df)
-        assert "price_vs_sma50" in features.columns
-        assert "price_vs_sma10" in features.columns
+        assert "sma_50" in features.columns
+        assert "sma_10" in features.columns
 
     def test_momentum_features(self):
         df = _make_ohlcv()

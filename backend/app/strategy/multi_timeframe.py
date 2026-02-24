@@ -99,13 +99,13 @@ class MultiTimeframeFilter:
     def _assess_trend(self, features: dict) -> float:
         """Assess trend direction from features. Returns -1 to +1.
 
-        Uses: price_vs_sma10, rsi_14, macd_divergence.
+        Uses: sma_10, rsi_14, macd_divergence.
         """
         score = 0.0
         count = 0
 
         # Price vs SMA10 (positive = bullish)
-        pvs = features.get("price_vs_sma10")
+        pvs = features.get("sma_10") or features.get("price_vs_sma10")
         if pvs is not None and pvs == pvs:  # NaN check
             score += 1.0 if pvs > 0.005 else (-1.0 if pvs < -0.005 else 0.0)
             count += 1

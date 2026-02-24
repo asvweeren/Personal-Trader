@@ -20,7 +20,7 @@ def _make_signal(
 
 def _bullish_features() -> dict:
     return {
-        "price_vs_sma10": 0.02,
+        "sma_10": 0.02,
         "rsi_14": 60.0,
         "macd_divergence": 0.5,
         "momentum_10d": 0.03,
@@ -29,7 +29,7 @@ def _bullish_features() -> dict:
 
 def _bearish_features() -> dict:
     return {
-        "price_vs_sma10": -0.02,
+        "sma_10": -0.02,
         "rsi_14": 35.0,
         "macd_divergence": -0.5,
         "momentum_10d": -0.03,
@@ -38,7 +38,7 @@ def _bearish_features() -> dict:
 
 def _neutral_features() -> dict:
     return {
-        "price_vs_sma10": 0.0,
+        "sma_10": 0.0,
         "rsi_14": 50.0,
         "macd_divergence": 0.0,
         "momentum_10d": 0.0,

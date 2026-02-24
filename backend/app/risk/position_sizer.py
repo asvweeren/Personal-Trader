@@ -358,6 +358,24 @@ def calculate_take_profit(
     return round(tp, 2)
 
 
+def check_risk_reward_ratio(
+    entry_price: float,
+    stop_price: float,
+    take_profit: float,
+    min_ratio: float = 2.0,
+) -> tuple[bool, float]:
+    """Check if a trade meets the minimum risk:reward ratio.
+
+    Returns (passes, ratio). A ratio of 2.0 means reward is 2x the risk.
+    """
+    risk = entry_price - stop_price
+    reward = take_profit - entry_price
+    if risk <= 0:
+        return False, 0.0
+    ratio = reward / risk
+    return ratio >= min_ratio, round(ratio, 2)
+
+
 def calculate_progressive_trailing_stop(
     entry_price: float,
     current_price: float,

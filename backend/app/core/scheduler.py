@@ -561,12 +561,12 @@ def schedule_weekly_model_retrain() -> None:
         logger.info("scheduler.retrain_started")
 
         try:
-            # 1. Download 90 days of data for all symbols
+            # 1. Download 1 year of data for all symbols (more data = less overfitting)
             symbols = settings.symbols_list
             frames = []
             for sym in symbols:
                 try:
-                    df = yf.download(sym, period="90d", interval="1d", progress=False)
+                    df = yf.download(sym, period="1y", interval="1d", progress=False)
                     if df.empty:
                         continue
                     df = df.copy()
@@ -595,14 +595,14 @@ def schedule_weekly_model_retrain() -> None:
             # Compute features PER SYMBOL to prevent rolling indicators
             # from crossing symbol boundaries, then concatenate.
             from app.data.indicators import compute_features
-            from app.strategy.feature_pipeline import create_target
+            from app.strategy.feature_pipeline import create_binary_target
 
             feature_dfs = []
             for frame in frames:
                 feat_df = compute_features(frame)
-                feat_df["target"] = create_target(
-                    feat_df, forward_periods=10,
-                    buy_threshold=0.03, sell_threshold=-0.03,
+                feat_df["target"] = create_binary_target(
+                    feat_df, forward_periods=5,
+                    buy_threshold=0.015,
                 )
                 feat_df = feat_df.dropna()
                 if len(feat_df) >= 60:
@@ -632,34 +632,41 @@ def schedule_weekly_model_retrain() -> None:
                 )
                 return
 
-            candidate_accuracy = result.metrics.get("test_accuracy", 0.0)
+            # Use profit_score for binary models, test_accuracy as fallback
+            candidate_score = result.metrics.get(
+                "test_profit_score",
+                result.metrics.get("test_accuracy", 0.0),
+            )
 
             # 3. Compare with current model
             meta_path = MODEL_DIR / "xgboost_model.json"
-            current_accuracy = 0.0
+            current_score = 0.0
             if meta_path.exists():
                 try:
                     with open(meta_path) as f:
                         current_meta = json.load(f)
-                    current_accuracy = current_meta.get("test_accuracy", 0.0)
+                    current_score = current_meta.get(
+                        "test_profit_score",
+                        current_meta.get("test_accuracy", 0.0),
+                    )
                 except Exception:
                     pass
 
-            threshold = current_accuracy * 0.95  # Must be >= 95% of current
+            threshold = current_score * 0.95  # Must be >= 95% of current
 
             # 4. Swap if candidate meets threshold
-            if candidate_accuracy >= threshold:
+            if candidate_score >= threshold:
                 swapped = strategy.hot_swap_model()
                 if swapped:
                     msg = (
                         f"Model retrained and deployed.\n"
-                        f"Old accuracy: {current_accuracy:.4f}\n"
-                        f"New accuracy: {candidate_accuracy:.4f}"
+                        f"Old score: {current_score:.4f}\n"
+                        f"New score: {candidate_score:.4f}"
                     )
                     logger.info(
                         "scheduler.retrain_swapped",
-                        old=current_accuracy,
-                        new=candidate_accuracy,
+                        old=current_score,
+                        new=candidate_score,
                     )
                     await send_alert("Model Retrain Success", msg)
                 else:
@@ -670,14 +677,14 @@ def schedule_weekly_model_retrain() -> None:
             else:
                 msg = (
                     f"Candidate rejected (below threshold).\n"
-                    f"Current: {current_accuracy:.4f}\n"
-                    f"Candidate: {candidate_accuracy:.4f}\n"
+                    f"Current: {current_score:.4f}\n"
+                    f"Candidate: {candidate_score:.4f}\n"
                     f"Threshold (95%): {threshold:.4f}"
                 )
                 logger.info(
                     "scheduler.retrain_rejected",
-                    current=current_accuracy,
-                    candidate=candidate_accuracy,
+                    current=current_score,
+                    candidate=candidate_score,
                 )
                 await send_alert("Model Retrain Skipped", msg)
 

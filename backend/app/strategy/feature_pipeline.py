@@ -37,8 +37,10 @@ class FeaturePipelineConfig:
     forward_periods: int = 10  # Look ahead N bars for return
     buy_threshold: float = 0.008  # +0.8% = BUY (class 2)
     sell_threshold: float = -0.008  # -0.8% = SELL (class 0)
+    # Binary mode: BUY vs NOT_BUY (ignores sell_threshold)
+    binary_mode: bool = True
     # Feature selection
-    correlation_threshold: float = 0.95  # Remove features above this correlation
+    correlation_threshold: float = 0.85  # Remove features above this correlation
     min_variance: float = 1e-8  # Remove near-constant features
     # Split ratios (time-based)
     train_pct: float = 0.70
@@ -64,6 +66,23 @@ def create_target(
     target[forward_return > buy_threshold] = 2   # BUY
     target[forward_return < sell_threshold] = 0  # SELL
 
+    return target
+
+
+def create_binary_target(
+    df: pd.DataFrame,
+    forward_periods: int = 5,
+    buy_threshold: float = 0.015,
+) -> pd.Series:
+    """Create a binary target: 1=BUY (profitable entry), 0=NOT_BUY.
+
+    Uses max forward return (highest point in window), not close-to-close,
+    to capture the best exit moment within the lookahead window.
+    """
+    future_highs = df["high"].shift(-1).rolling(forward_periods).max()
+    max_forward_return = future_highs / df["close"] - 1
+    target = (max_forward_return > buy_threshold).astype(int)
+    target.name = "target"
     return target
 
 
@@ -204,12 +223,19 @@ def prepare_ml_data(
         features_df = compute_features(raw_df)
 
         # 2. Create target
-        features_df["target"] = create_target(
-            features_df,
-            forward_periods=config.forward_periods,
-            buy_threshold=config.buy_threshold,
-            sell_threshold=config.sell_threshold,
-        )
+        if config.binary_mode:
+            features_df["target"] = create_binary_target(
+                features_df,
+                forward_periods=config.forward_periods,
+                buy_threshold=config.buy_threshold,
+            )
+        else:
+            features_df["target"] = create_target(
+                features_df,
+                forward_periods=config.forward_periods,
+                buy_threshold=config.buy_threshold,
+                sell_threshold=config.sell_threshold,
+            )
 
     # 3. Drop rows with NaN (from indicators warmup + forward labeling)
     features_df = features_df.dropna()
@@ -241,8 +267,10 @@ def prepare_ml_data(
     X_test = test_df[feature_cols]
     y_test = test_df["target"].astype(int)
 
-    # 5b. Balance training classes (undersample majority)
-    X_train, y_train = balance_classes(X_train, y_train)
+    # 5b. Balance training classes
+    # In binary mode, skip oversampling — use XGBoost scale_pos_weight instead
+    if not config.binary_mode:
+        X_train, y_train = balance_classes(X_train, y_train)
 
     # 6. Normalize
     if normalize:

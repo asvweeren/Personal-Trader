@@ -71,19 +71,19 @@ class Settings(BaseSettings):
     )
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 5.0
-    max_position_pct: float = 10.0
+    max_position_pct: float = 12.0
     max_open_positions: int = 8
-    min_cash_reserve_pct: float = 30.0
+    min_cash_reserve_pct: float = 25.0
     max_sector_concentration_pct: float = 35.0
     confidence_threshold: float = 0.75     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
-    atr_stop_multiplier: float = 2.5       # ATR multiplier for stop-loss distance
+    atr_stop_multiplier: float = 3.0       # ATR multiplier for stop-loss distance
     min_stop_loss_pct: float = 3.0         # Minimum stop-loss percentage as floor
 
     # Take-profit
-    atr_take_profit_multiplier: float = 4.0  # Take-profit at 4x ATR above entry
-    min_take_profit_pct: float = 5.0         # Minimum 5% profit target as floor
+    atr_take_profit_multiplier: float = 5.0  # Take-profit at 5x ATR above entry
+    min_take_profit_pct: float = 6.0         # Minimum 6% profit target as floor
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
 
     # Trade management
     min_hold_minutes: int = 30               # Min hold time before SELL signal can close
-    reentry_cooldown_minutes: int = 240      # Min wait time before re-entering same symbol
+    reentry_cooldown_minutes: int = 120      # Min wait time before re-entering same symbol
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
 
     # Progressive trailing stop tiers: "gain%:trail%,..."
     # Only start trailing after 3% gain, with generous trail widths
-    trailing_stop_tiers: str = "3.0:1.5,5.0:2.0,8.0:2.5,10.0:3.0"
+    trailing_stop_tiers: str = "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
 
     @property
     def trailing_stop_tiers_parsed(self) -> list[tuple[float, float]]:

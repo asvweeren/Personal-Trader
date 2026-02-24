@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 import structlog
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+)
 
 from sklearn.calibration import CalibratedClassifierCV
 
@@ -122,26 +128,60 @@ class MLStrategy(Strategy):
                     training_std=round(std, 4),
                 )
 
+    def _is_binary_model(self) -> bool:
+        """Check if the loaded model is a binary classifier."""
+        return self._model_metadata.get("model_type") == "binary"
+
+    def _get_probability_gate(self) -> float:
+        """Get minimum probability gate based on training class distribution.
+
+        For binary models, random chance is ~base_rate for BUY class.
+        Gate must exceed base_rate + margin to ensure the model adds value.
+        """
+        class_dist = self._model_metadata.get("class_distribution", {})
+        if not class_dist:
+            return 0.55
+        # class_dist keys may be strings (from JSON) or ints
+        total = sum(class_dist.values())
+        if total == 0:
+            return 0.55
+        buy_rate = class_dist.get(1, class_dist.get("1", 0)) / total
+        return max(0.55, buy_rate + 0.15)
+
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
 
-        For a 3-class classifier (BUY/HOLD/SELL), random chance = 33%.
-        Model accuracy is ~71%, so thresholds should be well below that.
+        For binary models, random chance = ~50%, so thresholds are higher.
+        For 3-class models, random chance = 33%.
         """
+        base = self._confidence_threshold
         try:
             from app.strategy.regime import MarketRegime
 
             regime = getattr(self, "_current_regime", None)
             if regime is not None:
-                if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                    return 0.45  # Relaxed in clear trends
-                elif regime.regime == MarketRegime.RANGING:
-                    return 0.55  # More conservative in ranges
-                elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                    return 0.60  # Conservative in high vol
+                if self._is_binary_model():
+                    if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
+                        base = 0.55
+                    elif regime.regime == MarketRegime.RANGING:
+                        base = 0.65
+                    elif regime.regime == MarketRegime.HIGH_VOLATILITY:
+                        base = 0.70
+                else:
+                    if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
+                        return 0.45
+                    elif regime.regime == MarketRegime.RANGING:
+                        return 0.55
+                    elif regime.regime == MarketRegime.HIGH_VOLATILITY:
+                        return 0.60
         except Exception:
             pass
-        return self._confidence_threshold
+
+        # For binary models, also enforce the probability gate
+        if self._is_binary_model():
+            gate = self._get_probability_gate()
+            return max(base, gate)
+        return base
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
         signals = []
@@ -191,19 +231,37 @@ class MLStrategy(Strategy):
                 # Check for feature drift
                 self._check_feature_drift(latest, symbol)
 
-                # Model predicts: 0=SELL, 1=HOLD, 2=BUY
                 proba = self._model.predict_proba(latest)[0]
-                pred_class = int(np.argmax(proba))
-                confidence = float(proba[pred_class])
 
-                if confidence < confidence_threshold:
-                    action = SignalAction.HOLD
-                elif pred_class == 2:
-                    action = SignalAction.BUY
-                elif pred_class == 0:
-                    action = SignalAction.SELL
+                if self._is_binary_model():
+                    # Binary model: 0=NOT_BUY, 1=BUY
+                    buy_prob = float(proba[1]) if len(proba) > 1 else float(proba[0])
+                    confidence = buy_prob
+                    if buy_prob >= confidence_threshold:
+                        action = SignalAction.BUY
+                    else:
+                        action = SignalAction.HOLD
+                    prob_metadata = {
+                        "not_buy": float(proba[0]),
+                        "buy": buy_prob,
+                    }
                 else:
-                    action = SignalAction.HOLD
+                    # Legacy 3-class model: 0=SELL, 1=HOLD, 2=BUY
+                    pred_class = int(np.argmax(proba))
+                    confidence = float(proba[pred_class])
+                    if confidence < confidence_threshold:
+                        action = SignalAction.HOLD
+                    elif pred_class == 2:
+                        action = SignalAction.BUY
+                    elif pred_class == 0:
+                        action = SignalAction.SELL
+                    else:
+                        action = SignalAction.HOLD
+                    prob_metadata = {
+                        "sell": float(proba[0]),
+                        "hold": float(proba[1]),
+                        "buy": float(proba[2]),
+                    }
 
                 # Also add pre-computed features from the pipeline if available
                 enriched_features = market_data.features.get(symbol, {})
@@ -220,11 +278,7 @@ class MLStrategy(Strategy):
                         strategy_name=self.name,
                         features_snapshot=feature_snapshot,
                         metadata={
-                            "probabilities": {
-                                "sell": float(proba[0]),
-                                "hold": float(proba[1]),
-                                "buy": float(proba[2]),
-                            },
+                            "probabilities": prob_metadata,
                         },
                     )
                 )
@@ -233,34 +287,77 @@ class MLStrategy(Strategy):
 
         return signals
 
+    @staticmethod
+    def _profit_score(y_true, y_pred) -> float:
+        """CV scoring: 70% precision + 30% F1 on BUY class.
+
+        Penalizes models that never predict BUY (signal_rate < 5%).
+        """
+        buy_mask = y_pred == 1
+        if buy_mask.sum() == 0:
+            return 0.0
+        prec = precision_score(y_true, y_pred, pos_label=1, zero_division=0.0)
+        signal_rate = buy_mask.sum() / len(y_pred)
+        if signal_rate < 0.05:
+            return prec * 0.5  # Too few signals
+        f1 = f1_score(y_true, y_pred, pos_label=1, zero_division=0.0)
+        return 0.7 * prec + 0.3 * f1
+
     async def train(
         self, historical_data: pd.DataFrame, features_precomputed: bool = False,
     ) -> TrainResult:
-        """Train the XGBoost model with full feature pipeline."""
+        """Train the XGBoost model with full feature pipeline.
+
+        Uses binary classification (BUY vs NOT_BUY) by default.
+        Backward compatible: set binary_mode=False in config for legacy 3-class.
+        """
         try:
             import xgboost as xgb
 
+            binary_mode = True  # Default to binary
+
             # Prepare data through feature pipeline
             config = FeaturePipelineConfig(
-                forward_periods=10,
-                buy_threshold=0.03,
-                sell_threshold=-0.03,
-                correlation_threshold=0.95,
+                forward_periods=5,
+                buy_threshold=0.015,
+                sell_threshold=-0.015,
+                correlation_threshold=0.85,
                 train_pct=0.70,
                 val_pct=0.15,
+                binary_mode=binary_mode,
             )
             data = prepare_ml_data(
                 historical_data, config, normalize=False,
                 features_precomputed=features_precomputed,
             )
 
-            # Calculate class weights for imbalanced data
-            class_counts = data.y_train.value_counts()
-            total = len(data.y_train)
-            n_classes = len(class_counts)
-            sample_weights = data.y_train.map(
-                lambda c: total / (n_classes * class_counts.get(c, 1))
-            )
+            if binary_mode:
+                # Binary: scale_pos_weight handles class imbalance
+                n_negative = int((data.y_train == 0).sum())
+                n_positive = int((data.y_train == 1).sum())
+                scale_pos_weight = n_negative / max(n_positive, 1)
+                logger.info(
+                    "ml_strategy.binary_class_balance",
+                    n_positive=n_positive,
+                    n_negative=n_negative,
+                    scale_pos_weight=round(scale_pos_weight, 2),
+                )
+                sample_weights = None
+                xgb_objective = "binary:logistic"
+                xgb_eval_metric = "logloss"
+                xgb_extra = {"scale_pos_weight": scale_pos_weight}
+            else:
+                # Legacy 3-class
+                class_counts = data.y_train.value_counts()
+                total = len(data.y_train)
+                n_classes = len(class_counts)
+                sample_weights = data.y_train.map(
+                    lambda c: total / (n_classes * class_counts.get(c, 1))
+                )
+                xgb_objective = "multi:softprob"
+                xgb_eval_metric = "mlogloss"
+                xgb_extra = {"num_class": 3}
+                scale_pos_weight = 1.0
 
             # Hyperparameter candidates (12 configs with varying regularization)
             param_grid = [
@@ -288,15 +385,15 @@ class MLStrategy(Strategy):
                     n_estimators=params["n_estimators"],
                     max_depth=params["max_depth"],
                     learning_rate=params["learning_rate"],
-                    objective="multi:softprob",
-                    num_class=3,
-                    eval_metric="mlogloss",
+                    objective=xgb_objective,
+                    eval_metric=xgb_eval_metric,
                     subsample=0.8,
                     colsample_bytree=0.8,
                     reg_alpha=params.get("reg_alpha", 0.1),
                     reg_lambda=params.get("reg_lambda", 1.0),
                     min_child_weight=3,
                     use_label_encoder=False,
+                    **xgb_extra,
                 )
 
                 # Time-series cross-validation on training set
@@ -308,15 +405,21 @@ class MLStrategy(Strategy):
                     y_tr = data.y_train.iloc[train_idx]
                     X_va = data.X_train.iloc[val_idx]
                     y_va = data.y_train.iloc[val_idx]
-                    sw_tr = sample_weights.iloc[train_idx]
 
-                    model.fit(
-                        X_tr, y_tr,
-                        sample_weight=sw_tr,
-                        eval_set=[(X_va, y_va)],
-                        verbose=False,
-                    )
-                    score = accuracy_score(y_va, model.predict(X_va))
+                    fit_kwargs = {
+                        "eval_set": [(X_va, y_va)],
+                        "verbose": False,
+                    }
+                    if sample_weights is not None:
+                        fit_kwargs["sample_weight"] = sample_weights.iloc[train_idx]
+
+                    model.fit(X_tr, y_tr, **fit_kwargs)
+
+                    y_pred = model.predict(X_va)
+                    if binary_mode:
+                        score = self._profit_score(y_va.values, y_pred)
+                    else:
+                        score = accuracy_score(y_va, y_pred)
                     fold_scores.append(score)
 
                 avg_score = np.mean(fold_scores)
@@ -336,22 +439,23 @@ class MLStrategy(Strategy):
                 n_estimators=best_params["n_estimators"],
                 max_depth=best_params["max_depth"],
                 learning_rate=best_params["learning_rate"],
-                objective="multi:softprob",
-                num_class=3,
-                eval_metric="mlogloss",
+                objective=xgb_objective,
+                eval_metric=xgb_eval_metric,
                 subsample=0.8,
                 colsample_bytree=0.8,
                 reg_alpha=best_params.get("reg_alpha", 0.1),
                 reg_lambda=best_params.get("reg_lambda", 1.0),
                 min_child_weight=3,
                 use_label_encoder=False,
+                **xgb_extra,
             )
-            best_model.fit(
-                data.X_train, data.y_train,
-                sample_weight=sample_weights,
-                eval_set=[(data.X_val, data.y_val)],
-                verbose=False,
-            )
+            fit_kwargs = {
+                "eval_set": [(data.X_val, data.y_val)],
+                "verbose": False,
+            }
+            if sample_weights is not None:
+                fit_kwargs["sample_weight"] = sample_weights
+            best_model.fit(data.X_train, data.y_train, **fit_kwargs)
 
             # Calibrate probabilities using isotonic regression on validation set
             try:
@@ -370,19 +474,37 @@ class MLStrategy(Strategy):
             val_accuracy = accuracy_score(data.y_val, val_preds)
             test_accuracy = accuracy_score(data.y_test, test_preds)
 
-            # Per-class metrics (confusion matrix + classification report)
-            target_names = ["SELL", "HOLD", "BUY"]
-            test_report = classification_report(
-                data.y_test, test_preds, target_names=target_names, output_dict=True
-            )
-            test_confusion = confusion_matrix(data.y_test, test_preds).tolist()
-            logger.info(
-                "ml_strategy.per_class_metrics",
-                sell_f1=round(test_report["SELL"]["f1-score"], 3),
-                hold_f1=round(test_report["HOLD"]["f1-score"], 3),
-                buy_f1=round(test_report["BUY"]["f1-score"], 3),
-                confusion_matrix=test_confusion,
-            )
+            # Per-class metrics
+            if binary_mode:
+                target_names = ["NOT_BUY", "BUY"]
+                test_report = classification_report(
+                    data.y_test, test_preds, target_names=target_names, output_dict=True
+                )
+                test_confusion = confusion_matrix(data.y_test, test_preds).tolist()
+                buy_precision = test_report.get("BUY", {}).get("precision", 0.0)
+                buy_f1 = test_report.get("BUY", {}).get("f1-score", 0.0)
+                test_profit_score = self._profit_score(data.y_test.values, test_preds)
+                logger.info(
+                    "ml_strategy.binary_metrics",
+                    buy_precision=round(buy_precision, 3),
+                    buy_f1=round(buy_f1, 3),
+                    profit_score=round(test_profit_score, 3),
+                    confusion_matrix=test_confusion,
+                )
+            else:
+                target_names = ["SELL", "HOLD", "BUY"]
+                test_report = classification_report(
+                    data.y_test, test_preds, target_names=target_names, output_dict=True
+                )
+                test_confusion = confusion_matrix(data.y_test, test_preds).tolist()
+                test_profit_score = 0.0
+                logger.info(
+                    "ml_strategy.per_class_metrics",
+                    sell_f1=round(test_report["SELL"]["f1-score"], 3),
+                    hold_f1=round(test_report["HOLD"]["f1-score"], 3),
+                    buy_f1=round(test_report["BUY"]["f1-score"], 3),
+                    confusion_matrix=test_confusion,
+                )
 
             # Feature importance
             importance = get_feature_importance(
@@ -402,15 +524,18 @@ class MLStrategy(Strategy):
             # Save model with metadata
             metadata = {
                 "trained_at": datetime.now(timezone.utc).isoformat(),
+                "model_type": "binary" if binary_mode else "multiclass",
                 "best_params": best_params,
-                "cv_mean_accuracy": float(best_score),
+                "cv_profit_score": float(best_score) if binary_mode else 0.0,
+                "cv_mean_accuracy": float(best_score) if not binary_mode else float(accuracy_score(data.y_val, val_preds)),
                 "val_accuracy": float(val_accuracy),
                 "test_accuracy": float(test_accuracy),
+                "test_profit_score": float(test_profit_score) if binary_mode else 0.0,
                 "feature_count": len(data.feature_columns),
                 "train_samples": len(data.X_train),
                 "val_samples": len(data.X_val),
                 "test_samples": len(data.X_test),
-                "class_distribution": data.y_train.value_counts().to_dict(),
+                "class_distribution": {int(k): int(v) for k, v in data.y_train.value_counts().to_dict().items()},
                 "feature_importance": importance,
                 "cv_results": cv_results,
                 "classification_report": test_report,
@@ -423,9 +548,11 @@ class MLStrategy(Strategy):
             self._model_metadata = metadata
             self._save_model(best_model, data.feature_columns, metadata)
 
+            score_label = "profit_score" if binary_mode else "accuracy"
             logger.info(
                 "ml_strategy.trained",
-                cv_accuracy=round(best_score, 4),
+                mode="binary" if binary_mode else "multiclass",
+                cv_score=round(best_score, 4),
                 val_accuracy=round(val_accuracy, 4),
                 test_accuracy=round(test_accuracy, 4),
                 features=len(data.feature_columns),
@@ -434,14 +561,16 @@ class MLStrategy(Strategy):
             return TrainResult(
                 success=True,
                 metrics={
-                    "cv_accuracy": float(best_score),
+                    f"cv_{score_label}": float(best_score),
                     "val_accuracy": float(val_accuracy),
                     "test_accuracy": float(test_accuracy),
+                    "test_profit_score": float(test_profit_score) if binary_mode else 0.0,
                     "best_params": best_params,
                     "feature_importance": importance,
                 },
                 message=(
-                    f"Model trained: CV={best_score:.4f}, "
+                    f"Model trained ({('binary' if binary_mode else '3-class')}): "
+                    f"CV {score_label}={best_score:.4f}, "
                     f"Val={val_accuracy:.4f}, Test={test_accuracy:.4f}"
                 ),
             )

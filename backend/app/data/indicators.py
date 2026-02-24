@@ -154,9 +154,11 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["return_5d"] = close.pct_change(5)
     features["volatility_20d"] = close.pct_change().rolling(20).std()
 
-    # Price position relative to moving averages (ratios)
-    features["price_vs_sma50"] = close / sma_50_raw - 1
-    features["price_vs_sma10"] = close / sma_10_raw - 1
+    # Day of week (0=Monday, 4=Friday) normalized to 0-1 scale
+    if "timestamp" in df.columns:
+        features["day_of_week"] = pd.to_datetime(df["timestamp"]).dt.dayofweek / 4.0
+    elif df.index.dtype == "datetime64[ns]" or hasattr(df.index, "dayofweek"):
+        features["day_of_week"] = df.index.dayofweek / 4.0
 
     # Momentum (ratios)
     features["momentum_10d"] = close / close.shift(10) - 1
@@ -208,8 +210,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # Volume-price trend: OBV normalized by average volume
     features["volume_price_trend"] = obv_raw / (vol_sma_20 + 1e-10)
 
-    # ATR ratio: same as atr_14 now (both are atr/close)
-    features["atr_ratio"] = features["atr_14"]
+    # (atr_ratio removed — duplicate of atr_14)
 
     # MACD cross: 1=bullish cross, -1=bearish, 0=none
     macd_diff = macd_raw - macd_signal_raw
@@ -223,13 +224,13 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     bb_range = bb["upper"] - bb["lower"]
     features["bb_position"] = np.where(bb_range > 0, (close - bb["lower"]) / bb_range, 0.5)
 
-    # Trend strength: ADX × sign(price_vs_sma50)
-    features["trend_strength"] = features["adx_14"] * np.sign(features["price_vs_sma50"])
+    # Trend strength: ADX × sign(sma_50)
+    features["trend_strength"] = features["adx_14"] * np.sign(features["sma_50"])
 
     # --- Regime Features ---
 
     features["regime_trending"] = (features["adx_14"] > 25.0).astype(float)
-    features["regime_breadth_proxy"] = (features["price_vs_sma50"] > 0).astype(float)
+    features["regime_breadth_proxy"] = (features["sma_50"] > 0).astype(float)
     features["regime_mean_reversion"] = (features["rsi_14"] - 50).abs() / 50
 
     # --- Additional Quantitative Features ---
@@ -273,5 +274,21 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
     kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
     features["ichimoku_signal"] = (tenkan - kijun) / close
+
+    # Feature validation: warn if any feature has extreme values
+    _SCALE_EXEMPT = {"rsi_14", "adx_14", "mfi_14", "williams_r"}
+    for col in features.columns:
+        if col in ("timestamp", "open", "high", "low", "close", "volume"):
+            continue
+        if col in _SCALE_EXEMPT:
+            continue
+        col_abs_max = features[col].abs().max()
+        if col_abs_max > 100:
+            import structlog as _sl
+            _sl.get_logger().warning(
+                "indicators.extreme_feature_value",
+                feature=col,
+                abs_max=round(float(col_abs_max), 2),
+            )
 
     return features

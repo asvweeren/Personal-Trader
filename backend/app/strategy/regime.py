@@ -79,7 +79,7 @@ class RegimeDetector:
                 adx_val = latest.get("adx_14")
                 if adx_val is None or adx_val != adx_val:  # NaN check
                     # Estimate trend strength from price vs SMA ratio
-                    pvs = latest.get("price_vs_sma50", 0.0)
+                    pvs = latest.get("sma_50", latest.get("price_vs_sma50", 0.0))
                     adx_val = min(abs(pvs) * 200, 60.0) if pvs == pvs else 20.0
                 adx_values.append(float(adx_val))
 
@@ -89,7 +89,7 @@ class RegimeDetector:
                     vol_ratios.append(float(vr))
 
                 # Breadth: is price above SMA50?
-                pvs50 = latest.get("price_vs_sma50", 0.0)
+                pvs50 = latest.get("sma_50", latest.get("price_vs_sma50", 0.0))
                 if pvs50 is not None and pvs50 == pvs50 and pvs50 > 0:
                     above_sma50_count += 1
                 total_symbols += 1

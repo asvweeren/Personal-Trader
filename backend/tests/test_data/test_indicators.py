@@ -72,7 +72,6 @@ def test_compute_features():
     assert "rsi_sma_cross" in features.columns
     assert "vwap_distance" in features.columns
     assert "volume_price_trend" in features.columns
-    assert "atr_ratio" in features.columns
     assert "macd_cross" in features.columns
     assert "bb_position" in features.columns
     assert "trend_strength" in features.columns

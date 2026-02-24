@@ -16,7 +16,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 from app.data.indicators import compute_features
-from app.strategy.feature_pipeline import create_target
+from app.strategy.feature_pipeline import create_binary_target, create_target
 from app.strategy.ml_strategy import MLStrategy
 
 DATA_DIR = Path(__file__).parent.parent / "ml" / "data"
@@ -65,12 +65,20 @@ def parse_args() -> argparse.Namespace:
         help="Forward return look-ahead in bars (default: 5)",
     )
     parser.add_argument(
-        "--buy-threshold", type=float, default=0.02,
-        help="Forward return threshold for BUY label (default: 0.02 = 2%%)",
+        "--buy-threshold", type=float, default=0.015,
+        help="Forward return threshold for BUY label (default: 0.015 = 1.5%%)",
     )
     parser.add_argument(
-        "--sell-threshold", type=float, default=-0.02,
-        help="Forward return threshold for SELL label (default: -0.02 = -2%%)",
+        "--sell-threshold", type=float, default=-0.015,
+        help="Forward return threshold for SELL label (default: -0.015 = -1.5%%)",
+    )
+    parser.add_argument(
+        "--binary", action="store_true", default=True,
+        help="Use binary classification (BUY vs NOT_BUY, default: True)",
+    )
+    parser.add_argument(
+        "--multiclass", action="store_true", default=False,
+        help="Use legacy 3-class classification (BUY/HOLD/SELL)",
     )
     return parser.parse_args()
 
@@ -93,15 +101,24 @@ async def main():
         fwd = args.forward_periods
         buy_thr = args.buy_threshold
         sell_thr = args.sell_threshold
+        use_binary = args.binary and not args.multiclass
+        mode_str = "binary (BUY vs NOT_BUY)" if use_binary else "3-class (BUY/HOLD/SELL)"
         print(f"\nComputing features per symbol for {len(datasets)} symbols...")
+        print(f"Mode: {mode_str}")
         print(f"Target: forward_periods={fwd}, buy_threshold={buy_thr}, sell_threshold={sell_thr}")
         feature_dfs = []
         for sym, df in datasets.items():
             feat_df = compute_features(df)
-            feat_df["target"] = create_target(
-                feat_df, forward_periods=fwd,
-                buy_threshold=buy_thr, sell_threshold=sell_thr,
-            )
+            if use_binary:
+                feat_df["target"] = create_binary_target(
+                    feat_df, forward_periods=fwd,
+                    buy_threshold=buy_thr,
+                )
+            else:
+                feat_df["target"] = create_target(
+                    feat_df, forward_periods=fwd,
+                    buy_threshold=buy_thr, sell_threshold=sell_thr,
+                )
             feat_df = feat_df.dropna()
             feature_dfs.append(feat_df)
             print(f"  {sym}: {len(df)} bars → {len(feat_df)} samples")

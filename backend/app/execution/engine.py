@@ -605,6 +605,23 @@ class TradingEngine:
         self, signal: TradingSignal, quantity: int, price: float, signal_id: int
     ) -> None:
         """Execute a BUY signal with retry logic and alerts."""
+        # R:R gate: check risk/reward ratio before executing
+        stop_price_est = self._calculate_atr_stop(price, signal.symbol)
+        atr_val = self._get_atr(signal.symbol)
+        tp_est = calculate_take_profit(price, signal.symbol, atr_val)
+        risk = price - stop_price_est
+        reward = tp_est - price
+        if risk > 0 and (reward / risk) < 2.0:
+            logger.info(
+                "engine.insufficient_rr",
+                symbol=signal.symbol,
+                rr=round(reward / risk, 2),
+                price=price,
+                stop=stop_price_est,
+                tp=tp_est,
+            )
+            return
+
         # Create trade record
         trade = Trade(
             symbol=signal.symbol,
