@@ -5,7 +5,6 @@ import pytest
 
 from app.data.market_data import MarketSnapshot
 from app.data.sentiment import SentimentResult
-from app.data.news_fetcher import NewsItem
 from app.strategy.base import SignalAction
 from app.strategy.sentiment_strategy import SentimentStrategy
 
