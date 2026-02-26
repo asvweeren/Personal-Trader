@@ -372,6 +372,7 @@ def schedule_broker_watchdog(broker) -> None:
     """
     _initializing = {"active": False}
     _broker_down_since: dict[str, float | None] = {"ts": None}
+    _alert_sent: dict[str, bool] = {"offline": False}
 
     async def broker_watchdog():
         try:
@@ -394,6 +395,18 @@ def schedule_broker_watchdog(broker) -> None:
                     broker._reconnecting = False
                     reconnecting = False
 
+                # Send one-time alert after 5 minutes offline
+                if down_seconds > 300 and not _alert_sent["offline"]:
+                    try:
+                        from app.monitoring.alerts import send_alert
+                        asyncio.create_task(send_alert(
+                            "Broker Offline",
+                            f"IBKR verbinding offline sinds {int(down_seconds // 60)} minuten. Auto-recovery actief.",
+                        ))
+                    except Exception:
+                        logger.warning("watchdog.offline_alert_failed", exc_info=True)
+                    _alert_sent["offline"] = True
+
                 if not reconnecting:
                     logger.warning("watchdog.broker_offline", down_seconds=int(down_seconds))
                     try:
@@ -412,10 +425,22 @@ def schedule_broker_watchdog(broker) -> None:
 
             # Broker is connected — reset down timer
             if _broker_down_since["ts"] is not None:
+                down_seconds = time.monotonic() - _broker_down_since["ts"]
                 logger.info(
                     "watchdog.broker_recovered",
-                    down_seconds=int(time.monotonic() - _broker_down_since["ts"]),
+                    down_seconds=int(down_seconds),
                 )
+                # Send recovery alert if we previously sent an offline alert
+                if _alert_sent["offline"]:
+                    try:
+                        from app.monitoring.alerts import send_alert
+                        asyncio.create_task(send_alert(
+                            "Broker Hersteld",
+                            f"IBKR verbinding hersteld na {int(down_seconds // 60)} minuten offline.",
+                        ))
+                    except Exception:
+                        logger.warning("watchdog.recovery_alert_failed", exc_info=True)
+                    _alert_sent["offline"] = False
                 _broker_down_since["ts"] = None
 
             # Broker is connected — check if engine needs lazy initialization
