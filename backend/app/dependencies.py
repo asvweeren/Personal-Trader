@@ -126,7 +126,22 @@ def load_strategies() -> list[Strategy]:
     if len(strategies) >= 2:
         try:
             from app.strategy.ensemble import EnsembleStrategy
-            ensemble = EnsembleStrategy(strategies=list(strategies))
+            # Initial weights based on model characteristics:
+            # XGBoost (~80% acc) > Sentiment (LLM) > LSTM (new, needs proving)
+            initial_weights = {}
+            for s in strategies:
+                if s.name == "ml_xgboost":
+                    initial_weights[s.name] = 1.5
+                elif s.name == "sentiment":
+                    initial_weights[s.name] = 1.0
+                elif s.name == "nn_lstm":
+                    initial_weights[s.name] = 0.7
+                else:
+                    initial_weights[s.name] = 1.0
+            ensemble = EnsembleStrategy(
+                strategies=list(strategies),
+                weights=initial_weights,
+            )
             strategies.append(ensemble)
             logger.info("strategies.loaded", name="ensemble", sub_strategies=len(strategies) - 1)
         except Exception:

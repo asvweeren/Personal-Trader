@@ -129,6 +129,19 @@ function formatMessage(msg: WSMessage): { message: string; severity: FeedItem["s
         message: `System: broker ${data.broker_connected ? "connected" : "disconnected"}, engine ${data.engine_state}`,
         severity: data.broker_connected ? "info" : "warning",
       };
+    case "reconciliation.update": {
+      if (data.is_clean) {
+        return {
+          message: `Reconciliation OK: ${data.match_count} positions matched`,
+          severity: "info",
+        };
+      }
+      const issues = Number(data.mismatch_count || 0) + Number(data.orphaned_broker_count || 0) + Number(data.orphaned_internal_count || 0);
+      return {
+        message: `Reconciliation: ${issues} issue(s) found — ${data.mismatch_count} mismatches, ${data.orphaned_broker_count} orphaned broker, ${data.orphaned_internal_count} orphaned internal`,
+        severity: "warning",
+      };
+    }
     default:
       return {
         message: `${msg.type}: ${JSON.stringify(data)}`,

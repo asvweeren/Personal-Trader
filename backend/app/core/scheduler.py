@@ -513,6 +513,14 @@ def schedule_daily_reset(engine) -> None:
     async def daily_reset():
         try:
             engine.reset_daily()
+            # Update ensemble weights based on accumulated performance
+            for strategy in engine._strategies:
+                if hasattr(strategy, "update_weights_from_history"):
+                    try:
+                        new_weights = strategy.update_weights_from_history(engine._performance)
+                        logger.info("scheduler.ensemble_weights_updated", weights=new_weights)
+                    except Exception:
+                        logger.debug("scheduler.ensemble_weight_update_skipped", exc_info=True)
         except Exception:
             logger.exception("scheduler.daily_reset_error")
 

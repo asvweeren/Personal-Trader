@@ -106,10 +106,9 @@ async def main():
         feature_dfs = []
         for sym, df in datasets.items():
             feat_df = compute_features(df)
-            feat_df["target"] = create_target(
+            feat_df["target"] = create_binary_target(
                 feat_df, forward_periods=fwd,
                 buy_threshold=args.buy_threshold,
-                sell_threshold=args.sell_threshold,
             )
             feat_df = feat_df.dropna()
             if len(feat_df) >= 60:

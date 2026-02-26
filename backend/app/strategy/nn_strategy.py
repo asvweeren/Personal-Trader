@@ -1,4 +1,4 @@
-"""PyTorch LSTM neural network strategy for sequence-based prediction."""
+"""PyTorch LSTM neural network strategy for binary prediction (BUY vs NOT_BUY)."""
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TradingSignal, TrainResult
 from app.strategy.feature_pipeline import (
-    create_target,
+    create_binary_target,
     normalize_features,
     remove_highly_correlated,
     remove_low_variance,
@@ -47,10 +47,10 @@ def _create_sequences(
 
 
 class NNStrategy(Strategy):
-    """PyTorch LSTM strategy for time-series classification.
+    """PyTorch LSTM strategy for time-series binary classification.
 
     Uses a sequence of technical indicators over a lookback window
-    to predict BUY/HOLD/SELL.
+    to predict BUY vs NOT_BUY (matching the XGBoost binary approach).
     """
 
     @property
@@ -63,7 +63,7 @@ class NNStrategy(Strategy):
         hidden_size: int = 64,
         num_layers: int = 2,
         dropout: float = 0.3,
-        confidence_threshold: float = 0.45,
+        confidence_threshold: float = 0.55,
         model_path: str | None = None,
     ):
         self._lookback = lookback
@@ -74,6 +74,7 @@ class NNStrategy(Strategy):
         self._model = None
         self._feature_columns: list[str] = []
         self._norm_stats: dict | None = None
+        self._n_classes: int = 2
         self._model_path = Path(model_path) if model_path else MODEL_DIR / "lstm_model.pkl"
         self._load_model()
 
@@ -85,15 +86,21 @@ class NNStrategy(Strategy):
             saved = torch.load(self._model_path, weights_only=False)
             self._feature_columns = saved["feature_columns"]
             self._norm_stats = saved["norm_stats"]
+            self._n_classes = saved.get("config", {}).get("n_classes", 2)
             n_features = len(self._feature_columns)
 
             model = _LSTMClassifier(
-                n_features, self._hidden_size, self._num_layers, self._dropout
+                n_features, self._hidden_size, self._num_layers, self._dropout,
+                n_classes=self._n_classes,
             )
             model.load_state_dict(saved["state_dict"])
             model.eval()
             self._model = model
-            logger.info("nn_strategy.model_loaded", features=n_features)
+            logger.info(
+                "nn_strategy.model_loaded",
+                features=n_features,
+                n_classes=self._n_classes,
+            )
         except Exception:
             logger.warning("nn_strategy.model_load_error")
 
@@ -140,17 +147,25 @@ class NNStrategy(Strategy):
                     logits = self._model(x_tensor)
                     proba = torch.softmax(logits, dim=1).numpy()[0]
 
-                pred_class = int(np.argmax(proba))
-                confidence = float(proba[pred_class])
+                # Binary: class 0 = NOT_BUY, class 1 = BUY
+                buy_prob = float(proba[1]) if self._n_classes == 2 else float(proba[2])
 
-                if confidence < self._confidence_threshold:
-                    action = SignalAction.HOLD
-                elif pred_class == 2:
+                if buy_prob >= self._confidence_threshold:
                     action = SignalAction.BUY
-                elif pred_class == 0:
-                    action = SignalAction.SELL
+                    confidence = buy_prob
                 else:
                     action = SignalAction.HOLD
+                    confidence = 1.0 - buy_prob
+
+                metadata = {"buy_probability": round(buy_prob, 4)}
+                if self._n_classes == 2:
+                    metadata["not_buy_probability"] = round(float(proba[0]), 4)
+                else:
+                    metadata["probabilities"] = {
+                        "sell": float(proba[0]),
+                        "hold": float(proba[1]),
+                        "buy": float(proba[2]),
+                    }
 
                 signals.append(
                     TradingSignal(
@@ -158,13 +173,7 @@ class NNStrategy(Strategy):
                         action=action,
                         confidence=confidence,
                         strategy_name=self.name,
-                        metadata={
-                            "probabilities": {
-                                "sell": float(proba[0]),
-                                "hold": float(proba[1]),
-                                "buy": float(proba[2]),
-                            },
-                        },
+                        metadata=metadata,
                     )
                 )
             except Exception:
@@ -173,7 +182,7 @@ class NNStrategy(Strategy):
         return signals
 
     async def train(self, historical_data: pd.DataFrame) -> TrainResult:
-        """Train the LSTM model."""
+        """Train the LSTM model using binary classification (BUY vs NOT_BUY)."""
         try:
             import torch
             import torch.nn as nn
@@ -185,7 +194,7 @@ class NNStrategy(Strategy):
             else:
                 features_df = compute_features(historical_data)
             if "target" not in features_df.columns:
-                features_df["target"] = create_target(features_df)
+                features_df["target"] = create_binary_target(features_df)
             features_df = features_df.dropna()
 
             if len(features_df) < 200:
@@ -243,16 +252,19 @@ class NNStrategy(Strategy):
             train_loader = DataLoader(train_ds, batch_size=32, shuffle=False)
             val_loader = DataLoader(val_ds, batch_size=32, shuffle=False)
 
-            # Model
+            # Model — binary classification (2 classes)
             n_features = len(feature_cols)
+            n_classes = 2
+            self._n_classes = n_classes
             model = _LSTMClassifier(
-                n_features, self._hidden_size, self._num_layers, self._dropout
+                n_features, self._hidden_size, self._num_layers, self._dropout,
+                n_classes=n_classes,
             )
 
-            # Class weights
-            class_counts = np.bincount(y_tr_seq, minlength=3).astype(np.float32)
+            # Class weights for imbalanced binary target
+            class_counts = np.bincount(y_tr_seq, minlength=n_classes).astype(np.float32)
             class_counts[class_counts == 0] = 1
-            weights = len(y_tr_seq) / (3 * class_counts)
+            weights = len(y_tr_seq) / (n_classes * class_counts)
             criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor(weights))
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -312,6 +324,14 @@ class NNStrategy(Strategy):
             val_acc = float(np.mean(val_preds == y_va_seq))
             test_acc = float(np.mean(test_preds == y_te_seq))
 
+            # Precision/recall for BUY class (class 1)
+            buy_mask_val = y_va_seq == 1
+            buy_mask_test = y_te_seq == 1
+            val_buy_recall = float(np.mean(val_preds[buy_mask_val] == 1)) if buy_mask_val.sum() > 0 else 0.0
+            test_buy_recall = float(np.mean(test_preds[buy_mask_test] == 1)) if buy_mask_test.sum() > 0 else 0.0
+            pred_buy_val = val_preds == 1
+            val_buy_precision = float(np.mean(y_va_seq[pred_buy_val] == 1)) if pred_buy_val.sum() > 0 else 0.0
+
             # Save
             self._model = model
             self._model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,6 +345,7 @@ class NNStrategy(Strategy):
                         "hidden_size": self._hidden_size,
                         "num_layers": self._num_layers,
                         "dropout": self._dropout,
+                        "n_classes": n_classes,
                     },
                 },
                 self._model_path,
@@ -334,6 +355,8 @@ class NNStrategy(Strategy):
                 "nn_strategy.trained",
                 val_accuracy=round(val_acc, 4),
                 test_accuracy=round(test_acc, 4),
+                val_buy_precision=round(val_buy_precision, 4),
+                val_buy_recall=round(val_buy_recall, 4),
                 epochs=epoch + 1,
             )
 
@@ -342,10 +365,17 @@ class NNStrategy(Strategy):
                 metrics={
                     "val_accuracy": val_acc,
                     "test_accuracy": test_acc,
+                    "val_buy_precision": val_buy_precision,
+                    "val_buy_recall": val_buy_recall,
+                    "test_buy_recall": test_buy_recall,
                     "epochs_trained": epoch + 1,
                     "best_val_loss": float(best_val_loss),
+                    "n_classes": n_classes,
                 },
-                message=f"LSTM trained: Val={val_acc:.4f}, Test={test_acc:.4f}",
+                message=(
+                    f"LSTM binary trained: Val={val_acc:.4f}, Test={test_acc:.4f}, "
+                    f"BUY precision={val_buy_precision:.4f}, recall={val_buy_recall:.4f}"
+                ),
             )
 
         except Exception as e:
@@ -357,13 +387,20 @@ class NNStrategy(Strategy):
 
 
 class _LSTMClassifier:
-    """LSTM classifier for 3-class time series classification.
+    """LSTM classifier for binary time series classification.
 
     This is a plain class wrapping PyTorch modules. The actual torch.nn.Module
     is created internally so the import is deferred.
     """
 
-    def __new__(cls, n_features: int, hidden_size: int, num_layers: int, dropout: float):
+    def __new__(
+        cls,
+        n_features: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        n_classes: int = 2,
+    ):
         import torch.nn as nn
 
         class LSTMModule(nn.Module):
@@ -379,7 +416,7 @@ class _LSTMClassifier:
                 self.dropout = nn.Dropout(dropout)
                 self.fc1 = nn.Linear(hidden_size, 32)
                 self.relu = nn.ReLU()
-                self.fc2 = nn.Linear(32, 3)
+                self.fc2 = nn.Linear(32, n_classes)
 
             def forward(self, x):
                 lstm_out, _ = self.lstm(x)

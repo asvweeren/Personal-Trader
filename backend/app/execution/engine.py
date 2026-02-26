@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, OrderType
 from app.config import settings
-from app.core.event_bus import RISK_DAILY_STOP, SIGNAL_GENERATED, SYSTEM_ERROR, event_bus
+from app.core.event_bus import RECONCILIATION_UPDATE, RISK_DAILY_STOP, SIGNAL_GENERATED, SYSTEM_ERROR, event_bus
 from app.data.correlation import get_correlation_matrix
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
@@ -223,6 +223,7 @@ class TradingEngine:
                     portfolio_for_recon = await self._portfolio_tracker.get_current()
                     recon_result = await reconcile(self._open_trades, portfolio_for_recon)
                     set_last_result(recon_result)
+                    await event_bus.publish(RECONCILIATION_UPDATE, recon_result.to_dict())
                     if not recon_result.is_clean:
                         actions = await auto_fix(recon_result, self, self._db)
                         if actions:
