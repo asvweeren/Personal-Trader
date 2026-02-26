@@ -80,6 +80,10 @@ def parse_args() -> argparse.Namespace:
         "--multiclass", action="store_true", default=False,
         help="Use legacy 3-class classification (BUY/HOLD/SELL)",
     )
+    parser.add_argument(
+        "--model-type", choices=["xgboost", "lstm"], default="xgboost",
+        help="Model type to train (default: xgboost)",
+    )
     return parser.parse_args()
 
 
@@ -93,6 +97,37 @@ async def main():
 
     if not datasets:
         print("No data files found. Run download_historical_data.py first.")
+        return
+
+    # LSTM training path
+    if args.model_type == "lstm":
+        print(f"\nTraining LSTM model on {len(datasets)} symbols...")
+        fwd = args.forward_periods
+        feature_dfs = []
+        for sym, df in datasets.items():
+            feat_df = compute_features(df)
+            feat_df["target"] = create_target(feat_df, forward_periods=fwd)
+            feat_df = feat_df.dropna()
+            if len(feat_df) >= 60:
+                feature_dfs.append(feat_df)
+                print(f"  {sym}: {len(df)} bars -> {len(feat_df)} samples")
+
+        if not feature_dfs:
+            print("Not enough data for LSTM training.")
+            return
+
+        combined = pd.concat(feature_dfs, ignore_index=True)
+        combined = combined.sort_values("timestamp").reset_index(drop=True)
+        print(f"Combined dataset: {len(combined)} samples")
+
+        from app.strategy.nn_strategy import NNStrategy
+        nn = NNStrategy()
+        result = await nn.train(combined)
+        print(f"\nResult: {result.message}")
+        if result.metrics:
+            for key, value in result.metrics.items():
+                print(f"  {key}: {value}")
+        print("\nLSTM training complete! Model saved to ml/models/lstm_model.pkl")
         return
 
     if args.combine:

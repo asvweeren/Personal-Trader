@@ -6,7 +6,9 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import Portfolio
+from app.config import settings
 from app.models.risk_event import RiskEvent, RiskEventSeverity, RiskEventType
+from app.risk.ai_sizing import AISizingAdvisor
 from app.risk.hard_limits import HardLimitCheck, check_all_hard_limits
 from app.risk.market_hours import get_exchange_for_symbol, is_market_open
 from app.risk.position_sizer import (
@@ -24,6 +26,7 @@ class RiskDecision:
     signal: TradingSignal
     adjusted_quantity: int | None = None
     reason: str = ""
+    ai_modifier: float = 1.0
 
 
 @dataclass
@@ -64,6 +67,10 @@ class RiskManager:
         # Drawdown tracking
         self._peak_value: float = 0.0
         self._max_drawdown_pct: float = 0.0
+        # AI sizing advisor
+        self._ai_advisor: AISizingAdvisor | None = None
+        if settings.ai_sizing_enabled and settings.anthropic_api_key:
+            self._ai_advisor = AISizingAdvisor()
 
     def set_daily_start_value(self, value: float) -> None:
         self.daily_start_value = value
@@ -131,6 +138,55 @@ class RiskManager:
             except Exception:
                 pass
 
+        # AI sizing modifier
+        ai_modifier = 1.0
+        if self._ai_advisor:
+            try:
+                portfolio_summary = {
+                    "total_value": portfolio.account_summary.total_value,
+                    "cash": portfolio.account_summary.cash,
+                    "positions": len(portfolio.positions),
+                    "unrealized_pnl": portfolio.account_summary.unrealized_pnl,
+                }
+                features = (
+                    signal.features_snapshot if hasattr(signal, "features_snapshot") else None
+                )
+                sentiment_data = None
+                if features and isinstance(features, dict):
+                    sentiment_data = {
+                        k: v for k, v in features.items()
+                        if "sentiment" in k.lower()
+                    } or None
+
+                ai_result = await self._ai_advisor.get_modifier(
+                    symbol=signal.symbol,
+                    signal_confidence=signal.confidence,
+                    strategy_name=signal.strategy_name,
+                    portfolio_summary=portfolio_summary,
+                    features=features if isinstance(features, dict) else None,
+                    sentiment=sentiment_data,
+                )
+                ai_modifier = ai_result.modifier
+                logger.info(
+                    "risk.ai_sizing",
+                    symbol=signal.symbol,
+                    modifier=ai_result.modifier,
+                    reasoning=ai_result.reasoning,
+                    risk_factors=ai_result.risk_factors,
+                )
+            except Exception:
+                logger.warning("risk.ai_sizing_error", symbol=signal.symbol)
+                ai_modifier = 1.0
+
+        # Save AI sizing data in features_snapshot for persistence
+        if ai_modifier != 1.0:
+            if signal.features_snapshot is None:
+                signal.features_snapshot = {}
+            if isinstance(signal.features_snapshot, dict):
+                signal.features_snapshot["ai_sizing_modifier"] = ai_result.modifier
+                signal.features_snapshot["ai_sizing_reasoning"] = ai_result.reasoning
+                signal.features_snapshot["ai_sizing_risk_factors"] = ai_result.risk_factors
+
         # For BUY signals, run full risk checks
         quantity = calculate_position_size(
             portfolio=portfolio,
@@ -139,6 +195,7 @@ class RiskManager:
             confidence=signal.confidence,
             symbol=signal.symbol,
             correlation_matrix=correlation_matrix,
+            ai_modifier=ai_modifier,
         )
         order_value = quantity * estimated_price
 
@@ -228,7 +285,9 @@ class RiskManager:
             quantity=quantity,
         )
 
-        return RiskDecision(approved=True, signal=signal, adjusted_quantity=quantity)
+        return RiskDecision(
+            approved=True, signal=signal, adjusted_quantity=quantity, ai_modifier=ai_modifier,
+        )
 
     async def check_portfolio_health(self, portfolio: Portfolio) -> HealthReport:
         """Check overall portfolio health with comprehensive metrics."""

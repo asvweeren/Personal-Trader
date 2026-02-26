@@ -132,6 +132,7 @@ export function SettingsPage() {
     ensemble_method: "weighted_average",
     weights: {},
     trading_enabled: false,
+    ai_sizing_enabled: true,
   });
   const [availableStrategies, setAvailableStrategies] = useState<
     AvailableStrategy[]
@@ -263,6 +264,7 @@ export function SettingsPage() {
         active_strategies: strategyConfig.active_strategies,
         confidence_threshold: strategyConfig.confidence_threshold,
         ensemble_method: strategyConfig.ensemble_method,
+        ai_sizing_enabled: strategyConfig.ai_sizing_enabled,
         symbols,
       });
       setStrategyConfig(updated);
@@ -572,6 +574,23 @@ export function SettingsPage() {
               </select>
             </div>
 
+            {/* AI Position Sizing toggle */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <label className="text-sm text-gray-200">AI Position Sizing</label>
+                <div className="text-xs text-gray-500">Claude advises on position size (0.5x - 1.5x)</div>
+              </div>
+              <ToggleSwitch
+                enabled={strategyConfig.ai_sizing_enabled}
+                onToggle={() =>
+                  setStrategyConfig((prev) => ({
+                    ...prev,
+                    ai_sizing_enabled: !prev.ai_sizing_enabled,
+                  }))
+                }
+              />
+            </div>
+
             {/* Symbol list */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5">
@@ -698,7 +717,7 @@ export function SettingsPage() {
                     {engine.cycle_count}
                   </span>
                 </div>
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2 border-b border-gray-800">
                   <span className="text-sm text-gray-300">
                     Reconnect Attempts
                   </span>
@@ -706,6 +725,14 @@ export function SettingsPage() {
                     {engine.reconnect_attempts}
                   </span>
                 </div>
+                {engine.api_costs && (
+                  <div className="flex items-center justify-between py-2">
+                    <span className="text-sm text-gray-300">API Costs Today</span>
+                    <span className="text-sm text-gray-400">
+                      {engine.api_costs.calls} calls (~${engine.api_costs.estimated_cost_usd.toFixed(4)})
+                    </span>
+                  </div>
+                )}
               </>
             )}
           </div>

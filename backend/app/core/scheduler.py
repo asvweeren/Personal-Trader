@@ -722,6 +722,24 @@ def schedule_weekly_model_retrain() -> None:
                 )
                 await send_alert("Model Retrain Skipped", msg)
 
+            # ── LSTM retrain ──────────────────────────────────────────
+            try:
+                from app.strategy.nn_strategy import NNStrategy
+                nn = NNStrategy()
+                nn_result = await nn.train(historical_data)
+                if nn_result.success:
+                    logger.info("scheduler.lstm_retrained", metrics=nn_result.metrics)
+                    await send_alert(
+                        "LSTM Retrain Success",
+                        nn_result.message,
+                    )
+                else:
+                    logger.warning("scheduler.lstm_retrain_failed", msg=nn_result.message)
+            except ImportError:
+                logger.info("scheduler.lstm_skip_no_torch")
+            except Exception:
+                logger.exception("scheduler.lstm_retrain_error")
+
         except Exception:
             logger.exception("scheduler.retrain_error")
             try:

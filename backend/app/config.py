@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
 
+    # AI Position Sizing
+    ai_sizing_enabled: bool = True
+    ai_sizing_cache_ttl: int = 900  # 15 minutes
+
     # Stock Screener
     screener_enabled: bool = True
     screener_max_candidates: int = 40

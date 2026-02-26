@@ -250,6 +250,7 @@ def calculate_position_size(
     avg_win_loss_ratio: float | None = None,
     correlation_matrix: dict[tuple[str, str], float] | None = None,
     symbol: str | None = None,
+    ai_modifier: float = 1.0,
 ) -> int:
     """Calculate the number of shares to buy.
 
@@ -316,8 +317,11 @@ def calculate_position_size(
     else:
         sector_factor = 1.0
 
+    # AI sizing modifier (clamped to 0.5–1.5)
+    ai_factor = max(0.5, min(1.5, ai_modifier))
+
     target_allocation = (
-        max_allocation * kelly_fraction * vol_factor * corr_factor * sector_factor
+        max_allocation * kelly_fraction * vol_factor * corr_factor * sector_factor * ai_factor
     )
 
     # Never exceed available funds (keep 10% buffer)
@@ -335,6 +339,7 @@ def calculate_position_size(
             vol_factor=round(vol_factor, 2),
             corr_factor=round(corr_factor, 2),
             sector_factor=round(sector_factor, 2),
+            ai_factor=round(ai_factor, 2),
         )
 
     return max(0, quantity)

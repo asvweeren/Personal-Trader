@@ -28,11 +28,11 @@ class BacktestConfig:
     commission_pct: float = 0.1
     slippage_pct: float = 0.05
     spread_pct: float = 0.02
-    max_position_pct: float = 20.0
+    max_position_pct: float = 30.0
     stop_loss_pct: float = 3.0
-    take_profit_pct: float = 2.0
+    take_profit_pct: float = 6.0
     enable_eod_close: bool = True
-    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
+    trailing_stop_tiers: str = "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
     min_bars: int = 100
 
 
@@ -306,8 +306,11 @@ class BacktestEngine:
                     if config.enable_eod_close and self._is_last_bar_of_day(data, i):
                         continue
 
-                    # Calculate position size
-                    max_value = cash * (config.max_position_pct / 100)
+                    # Calculate position size (equity-based, not cash-only)
+                    equity = cash + sum(
+                        pos.quantity * bar_close for pos in positions.values()
+                    )
+                    max_value = equity * (config.max_position_pct / 100)
                     quantity = int(max_value / bar_close)
                     if quantity <= 0:
                         continue

@@ -104,6 +104,7 @@ export interface StrategyConfig {
   ensemble_method: string;
   weights: Record<string, number>;
   trading_enabled: boolean;
+  ai_sizing_enabled: boolean;
 }
 
 export interface SystemHealth {
@@ -128,6 +129,10 @@ export interface EngineStatus {
   symbols: string[];
   strategies: string[];
   reconnect_attempts: number;
+  api_costs?: {
+    calls: number;
+    estimated_cost_usd: number;
+  };
 }
 
 export interface PortfolioSnapshot {
@@ -347,4 +352,5 @@ export interface StrategyConfigUpdate {
   weights?: Record<string, number>;
   trading_enabled?: boolean;
   symbols?: string[];
+  ai_sizing_enabled?: boolean;
 }

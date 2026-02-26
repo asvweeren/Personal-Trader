@@ -214,3 +214,64 @@ def test_get_sector_known():
 
 def test_get_sector_unknown():
     assert get_sector("RANDOM_TICKER") == "unknown"
+
+
+# ── AI modifier ──────────────────────────────────────────────
+
+
+def test_ai_modifier_increases_position():
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    qty_normal = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=1.0,
+    )
+    qty_boosted = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=1.5,
+    )
+    assert qty_boosted >= qty_normal
+
+
+def test_ai_modifier_decreases_position():
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    qty_normal = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=1.0,
+    )
+    qty_reduced = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=0.5,
+    )
+    assert qty_reduced <= qty_normal
+
+
+def test_ai_modifier_clamped_above():
+    """Modifier above 1.5 should be clamped to 1.5."""
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    qty_clamped = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=3.0,
+    )
+    qty_max = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=1.5,
+    )
+    assert qty_clamped == qty_max
+
+
+def test_ai_modifier_clamped_below():
+    """Modifier below 0.5 should be clamped to 0.5."""
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    qty_clamped = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=0.1,
+    )
+    qty_min = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=0.5,
+    )
+    assert qty_clamped == qty_min
+
+
+def test_ai_modifier_default_no_effect():
+    """Default ai_modifier=1.0 should not change position size."""
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    qty_without = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8,
+    )
+    qty_with = calculate_position_size(
+        portfolio, price=100, max_position_pct=20, confidence=0.8, ai_modifier=1.0,
+    )
+    assert qty_without == qty_with

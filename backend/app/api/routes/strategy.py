@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db
 from app.models.strategy_config import StrategyConfig
 from app.models.trade import Trade, TradeStatus
@@ -30,6 +31,7 @@ class StrategyConfigUpdate(BaseModel):
     weights: dict[str, float] | None = None
     trading_enabled: bool | None = None
     symbols: list[str] | None = None
+    ai_sizing_enabled: bool | None = None
 
 
 async def _get_or_create_config(db: AsyncSession) -> StrategyConfig:
@@ -60,6 +62,7 @@ def _config_to_dict(config: StrategyConfig) -> dict:
         "weights": config.weights,
         "symbols": config.symbols,
         "trading_enabled": config.trading_enabled,
+        "ai_sizing_enabled": settings.ai_sizing_enabled,
     }
 
 
@@ -115,6 +118,9 @@ async def update_strategy_config(update: StrategyConfigUpdate, db: AsyncSession 
             engine.update_symbols(update.symbols)
         except RuntimeError:
             logger.warning("strategy.symbols_update_no_engine")
+    if update.ai_sizing_enabled is not None:
+        settings.ai_sizing_enabled = update.ai_sizing_enabled
+        logger.info("strategy.ai_sizing_toggled", enabled=update.ai_sizing_enabled)
 
     await db.commit()
     await db.refresh(config)

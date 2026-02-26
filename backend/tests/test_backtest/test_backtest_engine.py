@@ -455,3 +455,46 @@ async def test_result_config_populated():
     assert result.config["initial_capital"] == 10000.0
     assert result.config["commission_pct"] == 0.2
     assert result.config["start_date"] == "2025-01-01"
+
+
+# ── Defaults ─────────────────────────────────────────────────
+
+
+def test_backtest_config_defaults():
+    """Verify updated defaults for better Sharpe ratio."""
+    config = BacktestConfig(
+        strategy=HoldStrategy(),
+        symbol="AAPL",
+        start_date="2025-01-01",
+        end_date="2025-06-01",
+    )
+    assert config.take_profit_pct == 6.0
+    assert config.max_position_pct == 30.0
+    assert config.trailing_stop_tiers == "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
+
+
+@pytest.mark.asyncio
+async def test_equity_based_position_sizing():
+    """Position sizing should be based on equity (cash + positions), not just cash."""
+    engine = BacktestEngine()
+    config = BacktestConfig(
+        strategy=AlwaysBuyStrategy(),
+        symbol="AAPL",
+        start_date="2025-01-01",
+        end_date="2025-06-01",
+        initial_capital=10000.0,
+        max_position_pct=50.0,
+    )
+    data = make_uptrend_data(200)
+    result = await engine.run(config, data)
+    # With equity-based sizing and 50% max, we should get trades
+    assert len(result.trades) > 0
+
+
+def test_nn_lstm_in_backtest_registry():
+    """nn_lstm should be registered in the backtest strategy registry."""
+    from app.api.routes.backtest import _STRATEGY_REGISTRY
+    assert "nn_lstm" in _STRATEGY_REGISTRY
+    # Verify the factory returns a strategy-like object
+    strategy = _STRATEGY_REGISTRY["nn_lstm"]({})
+    assert strategy.name == "nn_lstm"

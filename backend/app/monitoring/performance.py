@@ -67,6 +67,8 @@ class PerformanceTracker:
     daily_start_value: float = 0.0
     last_reset: datetime = field(default_factory=lambda: datetime.now(UTC))
     strategy_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
+    api_calls_today: int = 0
+    api_cost_today_usd: float = 0.0
 
     def __post_init__(self):
         if self.peak_value == 0.0:
@@ -147,9 +149,16 @@ class PerformanceTracker:
         self.unrealized_pnl = unrealized_pnl
         self._update_drawdown()
 
+    def record_api_call(self, cost_usd: float = 0.0003) -> None:
+        """Record an API call and its estimated cost."""
+        self.api_calls_today += 1
+        self.api_cost_today_usd += cost_usd
+
     def reset_daily(self) -> None:
         self.daily_start_value = self.total_value
         self.daily_pnl = 0.0
+        self.api_calls_today = 0
+        self.api_cost_today_usd = 0.0
         self.last_reset = datetime.now(UTC)
         logger.info("performance.daily_reset", start_value=self.daily_start_value)
 
@@ -193,4 +202,6 @@ class PerformanceTracker:
             "max_drawdown": round(self.max_drawdown, 2),
             "total_commission": round(self.total_commission, 2),
             "strategy_breakdown": self.get_strategy_breakdown(),
+            "api_calls_today": self.api_calls_today,
+            "api_cost_today_usd": round(self.api_cost_today_usd, 6),
         }

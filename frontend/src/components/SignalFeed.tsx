@@ -70,11 +70,15 @@ export function SignalFeed({ lastMessage }: Props) {
 function formatMessage(msg: WSMessage): { message: string; severity: FeedItem["severity"] } {
   const data = msg.data;
   switch (msg.type) {
-    case "signal.generated":
+    case "signal.generated": {
+      const aiTag = data.ai_modifier && (data.ai_modifier as number) !== 1.0
+        ? ` [AI: ${(data.ai_modifier as number).toFixed(1)}x]`
+        : "";
       return {
-        message: `Signal: ${data.action} ${data.symbol} (${((data.confidence as number) * 100).toFixed(0)}% conf, ${data.strategy})`,
+        message: `Signal: ${data.action} ${data.symbol} (${((data.confidence as number) * 100).toFixed(0)}% conf, ${data.strategy})${aiTag}`,
         severity: "info",
       };
+    }
     case "order.placed":
       return {
         message: `Order placed: ${data.side} ${data.quantity}x ${data.symbol}`,

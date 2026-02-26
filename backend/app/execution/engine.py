@@ -381,6 +381,16 @@ class TradingEngine:
                     regime=regime_state,
                 )
 
+                # Re-broadcast signal with AI modifier from risk evaluation
+                if decision.ai_modifier != 1.0:
+                    await event_bus.publish(SIGNAL_GENERATED, {
+                        "symbol": signal.symbol,
+                        "action": signal.action.value,
+                        "confidence": signal.confidence,
+                        "strategy": signal.strategy_name,
+                        "ai_modifier": decision.ai_modifier,
+                    })
+
                 if not decision.approved:
                     logger.info(
                         "engine.signal_rejected",
@@ -1144,6 +1154,14 @@ class TradingEngine:
     def get_status(self) -> dict:
         """Return current engine status for the API."""
         regime = self._regime_detector.current_regime
+        # Collect AI sizing API costs from risk manager
+        ai_advisor = getattr(self._risk_manager, "_ai_advisor", None)
+        api_costs = None
+        if ai_advisor:
+            api_costs = {
+                "calls": ai_advisor.call_count,
+                "estimated_cost_usd": round(ai_advisor.estimated_cost_usd, 6),
+            }
         return {
             "state": self._state.value,
             "trading_enabled": self._trading_enabled,
@@ -1157,4 +1175,5 @@ class TradingEngine:
             "strategies": [s.name for s in self._strategies],
             "reconnect_attempts": self._reconnect_attempts,
             "market_regime": regime.to_dict() if regime else None,
+            "api_costs": api_costs,
         }

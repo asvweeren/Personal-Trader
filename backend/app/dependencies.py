@@ -110,7 +110,19 @@ def load_strategies() -> list[Strategy]:
     else:
         logger.warning("strategies.skipped", name="sentiment", reason="no API key")
 
-    # 3. Ensemble Strategy - combines ML + Sentiment when both are available
+    # 3. Neural Network Strategy (LSTM) - if trained model exists
+    try:
+        from app.strategy.nn_strategy import NNStrategy
+        nn = NNStrategy()
+        if nn._model is not None:
+            strategies.append(nn)
+            logger.info("strategies.loaded", name="nn_lstm")
+        else:
+            logger.info("strategies.skipped", name="nn_lstm", reason="no trained model")
+    except Exception:
+        logger.exception("strategies.load_error", name="nn_lstm")
+
+    # 4. Ensemble Strategy - combines all available strategies
     if len(strategies) >= 2:
         try:
             from app.strategy.ensemble import EnsembleStrategy

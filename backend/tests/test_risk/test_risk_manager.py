@@ -259,3 +259,65 @@ def test_daily_reset_clears_flag():
     rm.set_daily_start_value(5000)
     assert rm.daily_loss_triggered is False
     assert rm.daily_start_value == 5000
+
+
+# ── RiskDecision.ai_modifier ────────────────────────────────
+
+
+def test_risk_decision_has_ai_modifier():
+    from app.risk.manager import RiskDecision
+    signal = make_signal()
+    decision = RiskDecision(approved=True, signal=signal, ai_modifier=1.3)
+    assert decision.ai_modifier == 1.3
+
+
+def test_risk_decision_default_ai_modifier():
+    from app.risk.manager import RiskDecision
+    signal = make_signal()
+    decision = RiskDecision(approved=True, signal=signal)
+    assert decision.ai_modifier == 1.0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_signal_returns_ai_modifier():
+    """When AI sizing is active, the decision should carry the ai_modifier."""
+    rm = RiskManager()
+    rm.set_daily_start_value(5000)
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    signal = make_signal(confidence=0.8)
+
+    with patch("app.risk.hard_limits.is_market_open", return_value=True):
+        decision = await rm.evaluate_signal(signal, portfolio, 100.0)
+
+    assert decision.approved is True
+    # With no AI advisor configured, modifier should be 1.0
+    assert decision.ai_modifier == 1.0
+
+
+@pytest.mark.asyncio
+async def test_features_snapshot_gets_ai_sizing_data():
+    """AI sizing data should be saved in signal.features_snapshot when modifier != 1.0."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.risk.ai_sizing import AISizingResult
+
+    rm = RiskManager()
+    rm.set_daily_start_value(5000)
+    # Inject a mock AI advisor
+    mock_advisor = MagicMock()
+    mock_advisor.get_modifier = AsyncMock(return_value=AISizingResult(
+        modifier=1.2, reasoning="Strong setup", risk_factors=["momentum"],
+    ))
+    rm._ai_advisor = mock_advisor
+
+    portfolio = make_portfolio(total_value=5000, cash=3000)
+    signal = make_signal(confidence=0.8)
+    signal.features_snapshot = {"rsi": 55}
+
+    with patch("app.risk.hard_limits.is_market_open", return_value=True):
+        decision = await rm.evaluate_signal(signal, portfolio, 100.0)
+
+    assert decision.ai_modifier == 1.2
+    assert signal.features_snapshot["ai_sizing_modifier"] == 1.2
+    assert signal.features_snapshot["ai_sizing_reasoning"] == "Strong setup"
+    assert signal.features_snapshot["ai_sizing_risk_factors"] == ["momentum"]

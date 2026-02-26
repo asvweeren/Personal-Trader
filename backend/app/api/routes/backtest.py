@@ -28,6 +28,16 @@ _STRATEGY_REGISTRY = {
     ),
 }
 
+# Register nn_lstm only if torch is available
+try:
+    from app.strategy.nn_strategy import NNStrategy
+
+    _STRATEGY_REGISTRY["nn_lstm"] = lambda params: NNStrategy(
+        confidence_threshold=params.get("confidence_threshold", 0.6),
+    )
+except ImportError:
+    pass
+
 
 class BacktestRequest(BaseModel):
     strategy_name: str
@@ -37,11 +47,11 @@ class BacktestRequest(BaseModel):
     initial_capital: float = 5000.0
     commission_pct: float = 0.1
     slippage_pct: float = 0.05
-    max_position_pct: float = 20.0
-    stop_loss_pct: float = 1.5
-    take_profit_pct: float = 2.0
+    max_position_pct: float = 30.0
+    stop_loss_pct: float = 3.0
+    take_profit_pct: float = 6.0
     enable_eod_close: bool = True
-    trailing_stop_tiers: str = "1.0:0.5,2.0:0.75,3.0:1.0,5.0:1.5"
+    trailing_stop_tiers: str = "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
     interval: str = "1h"
     params: dict | None = None
 
