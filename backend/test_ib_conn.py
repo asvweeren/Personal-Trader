@@ -1,5 +1,7 @@
 import asyncio
+
 from ib_insync import IB
+
 
 async def t():
     ib = IB()
