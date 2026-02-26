@@ -173,3 +173,11 @@ def test_parse_lowercase_suffix():
     assert bare == "asml"
     assert currency == "EUR"
     assert exchange == "AEB"
+
+
+def test_parse_bp_override():
+    """BP.L needs IBKR symbol 'BP.' (trailing dot), not 'BP'."""
+    bare, currency, exchange = parse_symbol_for_ibkr("BP.L")
+    assert bare == "BP."
+    assert currency == "GBP"
+    assert exchange == "LSE"

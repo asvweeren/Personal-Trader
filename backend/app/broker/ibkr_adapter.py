@@ -32,6 +32,11 @@ _IBKR_EXCHANGE_TO_SUFFIX = {
     "LSE": ".L",
 }
 
+# Reverse of _IBKR_SYMBOL_OVERRIDES: IBKR symbol → our symbol
+_IBKR_SYMBOL_REVERSE = {
+    "BP.": "BP.L",
+}
+
 
 class IBKRAdapter(BrokerAdapter):
     """Interactive Brokers adapter using ib_insync.
@@ -525,9 +530,12 @@ class IBKRAdapter(BrokerAdapter):
 
     def _reverse_map_symbol(self, contract) -> str:
         """Map IBKR contract back to suffixed symbol (e.g. ASML on AEB → ASML.AS)."""
+        sym = contract.symbol
+        if sym in _IBKR_SYMBOL_REVERSE:
+            return _IBKR_SYMBOL_REVERSE[sym]
         exchange = getattr(contract, 'primaryExchange', '') or getattr(contract, 'exchange', '')
         suffix = _IBKR_EXCHANGE_TO_SUFFIX.get(exchange, "")
-        return f"{contract.symbol}{suffix}"
+        return f"{sym}{suffix}"
 
     def _make_order(self, order: OrderRequest):
         """Convert OrderRequest to an ib_insync order object."""

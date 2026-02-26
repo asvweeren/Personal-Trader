@@ -168,6 +168,13 @@ SUFFIX_TO_IBKR: dict[str, dict[str, str]] = {
 }
 
 
+# Symbols where the IBKR contract symbol differs from the Yahoo Finance ticker.
+# e.g. Yahoo "BP.L" strips to "BP", but IBKR needs "BP." (trailing dot).
+_IBKR_SYMBOL_OVERRIDES: dict[str, str] = {
+    "BP.L": "BP.",
+}
+
+
 def parse_symbol_for_ibkr(symbol: str) -> tuple[str, str, str | None]:
     """Parse a suffixed symbol into IBKR contract parameters.
 
@@ -179,9 +186,10 @@ def parse_symbol_for_ibkr(symbol: str) -> tuple[str, str, str | None]:
         primary_exchange is None for US stocks (SMART routing handles it).
     """
     upper = symbol.upper()
+    override = _IBKR_SYMBOL_OVERRIDES.get(upper)
     for suffix, info in SUFFIX_TO_IBKR.items():
         if upper.endswith(suffix):
-            bare = symbol[: -len(suffix)]
+            bare = override if override else symbol[: -len(suffix)]
             return bare, info["currency"], info["primary_exchange"]
     # US stock — no suffix
     return symbol, "USD", None
