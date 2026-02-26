@@ -58,8 +58,10 @@ def advisor_with_client():
         mock_settings.redis_url = "redis://localhost:6379"
         mock_settings.ai_sizing_cache_ttl = 900
         advisor = AISizingAdvisor()
-    # Replace with a mock client
+    # Replace with a mock client and disable Redis to avoid cross-test cache
     advisor._client = MagicMock()
+    advisor._redis = None
+    advisor._get_redis = AsyncMock(return_value=None)
     return advisor
 
 

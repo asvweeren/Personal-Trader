@@ -96,7 +96,11 @@ class BacktestEngine:
 
     @staticmethod
     def _is_last_bar_of_day(data: pd.DataFrame, current_idx: int) -> bool:
-        """Check if the current bar is the last bar of its trading day."""
+        """Check if the current bar is the last bar of its trading day.
+
+        Returns False for daily data (where each bar is a separate day) since
+        there is no intraday EOD close to worry about.
+        """
         if "timestamp" not in data.columns:
             return False
         try:
@@ -104,6 +108,11 @@ class BacktestEngine:
             if current_idx + 1 >= len(data):
                 return True  # Last bar in dataset
             next_ts = pd.Timestamp(data.iloc[current_idx + 1]["timestamp"])
+            # For daily data, every bar is a different day — don't treat as EOD
+            if current_idx > 0:
+                prev_ts = pd.Timestamp(data.iloc[current_idx - 1]["timestamp"])
+                if prev_ts.date() != current_ts.date() and current_ts.date() != next_ts.date():
+                    return False  # Daily bars — no intraday EOD logic
             return current_ts.date() != next_ts.date()
         except Exception:
             return False

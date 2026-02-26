@@ -63,7 +63,7 @@ class NNStrategy(Strategy):
         hidden_size: int = 64,
         num_layers: int = 2,
         dropout: float = 0.3,
-        confidence_threshold: float = 0.6,
+        confidence_threshold: float = 0.45,
         model_path: str | None = None,
     ):
         self._lookback = lookback
@@ -179,9 +179,13 @@ class NNStrategy(Strategy):
             import torch.nn as nn
             from torch.utils.data import DataLoader, TensorDataset
 
-            # Prepare features
-            features_df = compute_features(historical_data)
-            features_df["target"] = create_target(features_df)
+            # Prepare features (skip if already computed)
+            if "rsi_14" in historical_data.columns:
+                features_df = historical_data.copy()
+            else:
+                features_df = compute_features(historical_data)
+            if "target" not in features_df.columns:
+                features_df["target"] = create_target(features_df)
             features_df = features_df.dropna()
 
             if len(features_df) < 200:
