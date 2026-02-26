@@ -261,10 +261,13 @@ class IBKRAdapter(BrokerAdapter):
                 min_tick = details[0].minTick
                 if min_tick and min_tick > 0:
                     self._tick_cache[symbol] = min_tick
-                    logger.debug("ibkr.min_tick_cached", symbol=symbol, min_tick=min_tick)
+                    logger.info("ibkr.min_tick_cached", symbol=symbol, min_tick=min_tick)
                     return min_tick
-        except Exception:
-            logger.warning("ibkr.min_tick_fetch_failed", symbol=symbol)
+                logger.warning("ibkr.min_tick_zero", symbol=symbol, raw=min_tick)
+            else:
+                logger.warning("ibkr.min_tick_no_details", symbol=symbol)
+        except Exception as e:
+            logger.warning("ibkr.min_tick_fetch_failed", symbol=symbol, error=str(e))
         self._tick_cache[symbol] = 0.01
         return 0.01
 
@@ -275,8 +278,8 @@ class IBKRAdapter(BrokerAdapter):
             if order.stop_price is not None:
                 rounded = round_to_tick(order.stop_price, min_tick)
                 if rounded != order.stop_price:
-                    logger.debug(
-                        "ibkr.price_rounded",
+                    logger.info(
+                        "ibkr.stop_price_rounded",
                         symbol=order.symbol,
                         original=order.stop_price,
                         rounded=rounded,
