@@ -250,44 +250,58 @@ class IBKRAdapter(BrokerAdapter):
             logger.warning("ibkr.is_connected_check_failed", exc_info=True)
             return False
 
-    async def _get_min_tick(self, symbol: str) -> float:
-        """Get minimum price increment for a symbol from IBKR (cached)."""
-        if symbol in self._tick_cache:
-            return self._tick_cache[symbol]
-        try:
-            contract = self._make_contract(symbol)
-            details = await self._sync(self._ib.reqContractDetails, contract)
-            if details:
-                min_tick = details[0].minTick
-                if min_tick and min_tick > 0:
-                    self._tick_cache[symbol] = min_tick
-                    logger.info("ibkr.min_tick_cached", symbol=symbol, min_tick=min_tick)
-                    return min_tick
-                logger.warning("ibkr.min_tick_zero", symbol=symbol, raw=min_tick)
-            else:
-                logger.warning("ibkr.min_tick_no_details", symbol=symbol)
-        except Exception as e:
-            logger.warning("ibkr.min_tick_fetch_failed", symbol=symbol, error=str(e))
-        self._tick_cache[symbol] = 0.01
+    @staticmethod
+    def _lse_tick(price: float) -> float:
+        """LSE tick size table for stocks priced in GBX (pence)."""
+        if price >= 10000:
+            return 10.0
+        if price >= 5000:
+            return 5.0
+        if price >= 1000:
+            return 1.0
+        if price >= 500:
+            return 0.50
+        if price >= 100:
+            return 0.10
+        if price >= 50:
+            return 0.05
+        if price >= 10:
+            return 0.01
+        return 0.005
+
+    def _get_min_tick(self, symbol: str, price: float = 0) -> float:
+        """Get minimum price increment for a symbol.
+
+        IBKR's SMART routing returns tiny minTick values for non-US exchanges
+        (1e-06 for LSE, 0.0001 for Euronext) which don't reflect actual exchange
+        tick sizes. We use exchange-specific rules for EU/UK stocks.
+        """
+        # LSE stocks: price-dependent tick table (not cached — varies with price)
+        if symbol.endswith(".L") and price > 0:
+            return self._lse_tick(price)
+        # Euronext / Xetra stocks: use 0.01 (covers most liquid stocks)
+        if symbol.endswith((".PA", ".AS", ".DE", ".BR")):
+            return 0.05 if price >= 50 else 0.01
+        # US stocks: 0.01 (IBKR returns correct tick)
         return 0.01
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
         # Round stop/limit prices to the contract's tick size
-        if order.stop_price is not None or order.limit_price is not None:
-            min_tick = await self._get_min_tick(order.symbol)
-            if order.stop_price is not None:
-                rounded = round_to_tick(order.stop_price, min_tick)
-                if rounded != order.stop_price:
-                    logger.info(
-                        "ibkr.stop_price_rounded",
-                        symbol=order.symbol,
-                        original=order.stop_price,
-                        rounded=rounded,
-                        min_tick=min_tick,
-                    )
-                order.stop_price = rounded
-            if order.limit_price is not None:
-                order.limit_price = round_to_tick(order.limit_price, min_tick)
+        if order.stop_price is not None:
+            min_tick = self._get_min_tick(order.symbol, order.stop_price)
+            rounded = round_to_tick(order.stop_price, min_tick)
+            if rounded != order.stop_price:
+                logger.info(
+                    "ibkr.stop_price_rounded",
+                    symbol=order.symbol,
+                    original=order.stop_price,
+                    rounded=rounded,
+                    min_tick=min_tick,
+                )
+            order.stop_price = rounded
+        if order.limit_price is not None:
+            min_tick = self._get_min_tick(order.symbol, order.limit_price)
+            order.limit_price = round_to_tick(order.limit_price, min_tick)
 
         # Safety net: prevent SELL orders from exceeding current position
         if order.side == OrderSide.SELL:

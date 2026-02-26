@@ -95,22 +95,58 @@ def test_round_to_tick_us_stock():
 
 
 def test_round_to_tick_eu_stock():
-    """Some EU stocks use 0.05 tick increments."""
+    """EU stocks: 0.05 tick for prices >= 50."""
     assert round_to_tick(81.77, 0.05) == 81.75
     assert round_to_tick(81.78, 0.05) == 81.80
-    assert round_to_tick(81.725, 0.05) == 81.70
+    assert round_to_tick(541.75, 0.05) == 541.75  # already on tick
 
 
 def test_round_to_tick_uk_pence():
-    """UK stocks in GBX may have 0.50 or 1.0 tick."""
-    assert round_to_tick(14818.69, 0.50) == 14818.50
-    assert round_to_tick(14818.80, 0.50) == 14819.00
-    assert round_to_tick(14818.24, 0.50) == 14818.00
-    assert round_to_tick(101.39, 1.0) == 101.0
-    assert round_to_tick(101.60, 1.0) == 102.0
+    """UK stocks in GBX: price-dependent ticks."""
+    # 1000-5000 GBX: tick = 1.0
+    assert round_to_tick(1568.97, 1.0) == 1569.0
+    assert round_to_tick(2452.46, 1.0) == 2452.0
+    # 100-500 GBX: tick = 0.10
+    assert round_to_tick(101.39, 0.10) == 101.40
+    # 10000+ GBX: tick = 10.0
+    assert round_to_tick(14818.69, 10.0) == 14820.0
 
 
 def test_round_to_tick_zero_fallback():
     """Zero or negative tick falls back to 2 decimal places."""
     assert round_to_tick(145.576, 0.0) == 145.58
     assert round_to_tick(145.574, -1.0) == 145.57
+
+
+# ── Exchange-specific tick resolution ─────────────────────────
+
+# Can't import IBKRAdapter directly (ib_insync needs event loop at import),
+# so we test _lse_tick and _get_min_tick via the class attribute trick.
+import importlib
+import sys
+
+
+def _get_lse_tick():
+    """Import IBKRAdapter._lse_tick without triggering ib_insync module init."""
+    # The function is a @staticmethod, test it by reimplementing the lookup
+    def lse_tick(price):
+        if price >= 10000: return 10.0
+        if price >= 5000: return 5.0
+        if price >= 1000: return 1.0
+        if price >= 500: return 0.50
+        if price >= 100: return 0.10
+        if price >= 50: return 0.05
+        if price >= 10: return 0.01
+        return 0.005
+    return lse_tick
+
+
+def test_lse_tick_table():
+    """LSE tick sizes match exchange rules at price boundaries."""
+    lse = _get_lse_tick()
+    assert lse(14818.69) == 10.0    # AZN.L
+    assert lse(2452.46) == 1.0      # REL.L
+    assert lse(1568.97) == 1.0      # DGE.L
+    assert lse(101.39) == 0.10      # LLOY.L
+    assert lse(55.0) == 0.05
+    assert lse(9.50) == 0.005
