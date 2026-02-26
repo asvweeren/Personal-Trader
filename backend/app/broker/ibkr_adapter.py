@@ -16,6 +16,7 @@ from app.broker.base import (
     OrderType,
     Portfolio,
     Position,
+    round_to_tick,
 )
 from app.core.exceptions import BrokerConnectionError, BrokerOrderError
 from app.risk.market_hours import parse_symbol_for_ibkr
@@ -50,6 +51,7 @@ class IBKRAdapter(BrokerAdapter):
         self._market_data_callbacks: dict[str, callable] = {}
         self._auto_reconnect = True
         self._reconnecting = False
+        self._tick_cache: dict[str, float] = {}
 
     def _ensure_ib_loop(self):
         """Ensure the dedicated ib_insync event loop is running (idempotent)."""
@@ -248,7 +250,42 @@ class IBKRAdapter(BrokerAdapter):
             logger.warning("ibkr.is_connected_check_failed", exc_info=True)
             return False
 
+    async def _get_min_tick(self, symbol: str) -> float:
+        """Get minimum price increment for a symbol from IBKR (cached)."""
+        if symbol in self._tick_cache:
+            return self._tick_cache[symbol]
+        try:
+            contract = self._make_contract(symbol)
+            details = await self._sync(self._ib.reqContractDetails, contract)
+            if details:
+                min_tick = details[0].minTick
+                if min_tick and min_tick > 0:
+                    self._tick_cache[symbol] = min_tick
+                    logger.debug("ibkr.min_tick_cached", symbol=symbol, min_tick=min_tick)
+                    return min_tick
+        except Exception:
+            logger.warning("ibkr.min_tick_fetch_failed", symbol=symbol)
+        self._tick_cache[symbol] = 0.01
+        return 0.01
+
     async def place_order(self, order: OrderRequest) -> OrderResult:
+        # Round stop/limit prices to the contract's tick size
+        if order.stop_price is not None or order.limit_price is not None:
+            min_tick = await self._get_min_tick(order.symbol)
+            if order.stop_price is not None:
+                rounded = round_to_tick(order.stop_price, min_tick)
+                if rounded != order.stop_price:
+                    logger.debug(
+                        "ibkr.price_rounded",
+                        symbol=order.symbol,
+                        original=order.stop_price,
+                        rounded=rounded,
+                        min_tick=min_tick,
+                    )
+                order.stop_price = rounded
+            if order.limit_price is not None:
+                order.limit_price = round_to_tick(order.limit_price, min_tick)
+
         # Safety net: prevent SELL orders from exceeding current position
         if order.side == OrderSide.SELL:
             try:

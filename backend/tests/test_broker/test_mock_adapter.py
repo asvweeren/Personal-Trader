@@ -79,3 +79,38 @@ async def test_historical_data(broker):
     assert "close" in df.columns
     assert "volume" in df.columns
     assert len(df) == 100
+
+
+# ── Tick-size rounding ────────────────────────────────────────
+
+from app.broker.base import round_to_tick
+
+
+def test_round_to_tick_us_stock():
+    """US stocks: 0.01 tick → 2 decimal places."""
+    assert round_to_tick(145.576, 0.01) == 145.58
+    assert round_to_tick(145.574, 0.01) == 145.57
+    assert round_to_tick(145.53, 0.01) == 145.53
+    assert round_to_tick(100.0, 0.01) == 100.0
+
+
+def test_round_to_tick_eu_stock():
+    """Some EU stocks use 0.05 tick increments."""
+    assert round_to_tick(81.77, 0.05) == 81.75
+    assert round_to_tick(81.78, 0.05) == 81.80
+    assert round_to_tick(81.725, 0.05) == 81.70
+
+
+def test_round_to_tick_uk_pence():
+    """UK stocks in GBX may have 0.50 or 1.0 tick."""
+    assert round_to_tick(14818.69, 0.50) == 14818.50
+    assert round_to_tick(14818.80, 0.50) == 14819.00
+    assert round_to_tick(14818.24, 0.50) == 14818.00
+    assert round_to_tick(101.39, 1.0) == 101.0
+    assert round_to_tick(101.60, 1.0) == 102.0
+
+
+def test_round_to_tick_zero_fallback():
+    """Zero or negative tick falls back to 2 decimal places."""
+    assert round_to_tick(145.576, 0.0) == 145.58
+    assert round_to_tick(145.574, -1.0) == 145.57

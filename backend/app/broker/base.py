@@ -73,6 +73,13 @@ class BarData:
     volume: int
 
 
+def round_to_tick(price: float, min_tick: float) -> float:
+    """Round a price to the nearest valid tick increment."""
+    if min_tick <= 0:
+        return round(price, 2)
+    return round(round(price / min_tick) * min_tick, 8)
+
+
 class BrokerAdapter(ABC):
     """Abstract interface for broker interactions. Supports both paper and live trading."""
 
