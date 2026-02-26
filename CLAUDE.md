@@ -202,7 +202,7 @@ Usage: `ssh trader-server "command"` — no password needed.
 # Run commands remotely via SSH
 ssh trader-server "cd /root/trader && git pull origin master"
 ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml up -d --build backend frontend-build"
-ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml restart nginx"
+ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload"
 
 # Run Alembic migrations
 ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head"
@@ -223,7 +223,7 @@ ssh trader-server "cd /root/trader && docker compose -f docker-compose.prod.yml 
 
 ### Full deploy (one-liner)
 ```bash
-git push origin master && ssh trader-server "cd /root/trader && git pull origin master && docker compose -f docker-compose.prod.yml up -d --build backend frontend-build && docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head && docker compose -f docker-compose.prod.yml restart nginx"
+git push origin master && ssh trader-server "cd /root/trader && git pull origin master && docker compose -f docker-compose.prod.yml up -d --build backend frontend-build && docker compose -f docker-compose.prod.yml exec -T -w /app backend uv run alembic upgrade head && docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload"
 ```
 
 ### File uploads
