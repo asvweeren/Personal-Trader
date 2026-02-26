@@ -1,12 +1,12 @@
 """Event-driven backtesting engine using the same Strategy interface as live trading."""
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import structlog
 
-from app.backtest.metrics import calculate_metrics, calculate_benchmark_comparison
+from app.backtest.metrics import calculate_benchmark_comparison, calculate_metrics
 from app.backtest.simulator import (
     FillStatus,
     MarketSimulator,
@@ -283,7 +283,7 @@ class BacktestEngine:
             # 5. Create market snapshot from historical window
             window = data.iloc[max(0, i - lookback):i + 1].copy()
             snapshot = MarketSnapshot(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 prices={config.symbol: bar_close},
                 ohlcv={config.symbol: window},
                 features={},

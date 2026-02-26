@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis.asyncio as redis
 import structlog
@@ -30,7 +30,7 @@ class FeatureStore:
         key = f"features:{symbol}"
         data = {
             "features": features,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         await self._redis.setex(key, ttl, json.dumps(data, default=str))
 

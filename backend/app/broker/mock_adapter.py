@@ -1,9 +1,9 @@
 import uuid
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import structlog
 
 from app.broker.base import (
@@ -168,7 +168,7 @@ class MockBrokerAdapter(BrokerAdapter):
         n_bars = 100
         base_price = self._prices.get(symbol, 100.0)
 
-        dates = pd.date_range(end=datetime.now(timezone.utc), periods=n_bars, freq="h")
+        dates = pd.date_range(end=datetime.now(UTC), periods=n_bars, freq="h")
         returns = rng.normal(0, 0.02, n_bars)
         prices = base_price * np.cumprod(1 + returns)
 

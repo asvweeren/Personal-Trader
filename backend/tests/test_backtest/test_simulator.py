@@ -2,7 +2,6 @@ import pytest
 
 from app.backtest.simulator import FillStatus, MarketSimulator, SimulatedPosition
 
-
 # ── Basic fill tests ─────────────────────────────────────────
 
 

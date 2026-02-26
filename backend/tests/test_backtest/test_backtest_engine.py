@@ -7,7 +7,6 @@ from app.backtest.engine import BacktestConfig, BacktestEngine
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TradingSignal
 
-
 # ── Test strategy implementations ────────────────────────────
 
 

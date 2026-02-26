@@ -1,7 +1,7 @@
 """Tests for multi-timeframe confirmation filter."""
 
 
-from app.strategy.base import TradingSignal, SignalAction
+from app.strategy.base import SignalAction, TradingSignal
 from app.strategy.multi_timeframe import MultiTimeframeFilter
 
 

@@ -13,14 +13,14 @@ if TYPE_CHECKING:
     from app.models.trade import Trade
 
 
-class OrderType(str, enum.Enum):
+class OrderType(enum.StrEnum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
     STOP = "STOP"
     STOP_LIMIT = "STOP_LIMIT"
 
 
-class OrderStatus(str, enum.Enum):
+class OrderStatus(enum.StrEnum):
     SUBMITTED = "SUBMITTED"
     FILLED = "FILLED"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
@@ -56,4 +56,4 @@ class Order(Base):
     expected_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     slippage: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    trade: Mapped["Trade"] = relationship(back_populates="orders")
+    trade: Mapped[Trade] = relationship(back_populates="orders")

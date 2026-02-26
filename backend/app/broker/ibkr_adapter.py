@@ -5,7 +5,7 @@ from datetime import datetime
 import nest_asyncio
 import pandas as pd
 import structlog
-from ib_insync import IB, Contract, MarketOrder, LimitOrder, StopOrder, Trade
+from ib_insync import IB, Contract, LimitOrder, MarketOrder, StopOrder, Trade
 
 from app.broker.base import (
     AccountSummary,

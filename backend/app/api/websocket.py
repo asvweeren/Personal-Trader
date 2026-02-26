@@ -1,9 +1,9 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
-import structlog
 
 from app.config import settings
 
@@ -44,7 +44,7 @@ async def broadcast_update(event_type: str, data: dict):
     await manager.broadcast({
         "type": event_type,
         "data": data,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     })
 
 

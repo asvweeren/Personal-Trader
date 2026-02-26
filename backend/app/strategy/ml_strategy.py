@@ -3,13 +3,13 @@
 import json
 import pickle
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import structlog
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -17,16 +17,15 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
 )
-
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import TimeSeriesSplit
 
 from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
-from app.strategy.base import SignalAction, Strategy, TrainResult, TradingSignal
+from app.strategy.base import SignalAction, Strategy, TradingSignal, TrainResult
 from app.strategy.feature_pipeline import (
     FeaturePipelineConfig,
-    prepare_ml_data,
     get_feature_importance,
+    prepare_ml_data,
 )
 
 logger = structlog.get_logger()
@@ -103,7 +102,7 @@ class MLStrategy(Strategy):
         if not trained_at:
             return True
         trained_dt = datetime.fromisoformat(str(trained_at))
-        days_old = (datetime.now(timezone.utc) - trained_dt).days
+        days_old = (datetime.now(UTC) - trained_dt).days
         return days_old > days_threshold
 
     def _check_feature_drift(self, latest: pd.DataFrame, symbol: str) -> None:
@@ -360,20 +359,22 @@ class MLStrategy(Strategy):
                 scale_pos_weight = 1.0
 
             # Hyperparameter candidates (12 configs with varying regularization)
+            # fmt: off
             param_grid = [
-                {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.1, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.1, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 150, "max_depth": 4, "learning_rate": 0.08, "reg_alpha": 0.5, "reg_lambda": 1.5},
-                {"n_estimators": 150, "max_depth": 5, "learning_rate": 0.08, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05, "reg_alpha": 0.01, "reg_lambda": 0.5},
-                {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.05, "reg_alpha": 0.5, "reg_lambda": 2.0},
-                {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.03, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.03, "reg_alpha": 0.5, "reg_lambda": 1.5},
-                {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.03, "reg_alpha": 1.0, "reg_lambda": 3.0},
-                {"n_estimators": 400, "max_depth": 4, "learning_rate": 0.02, "reg_alpha": 0.1, "reg_lambda": 1.0},
-                {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.02, "reg_alpha": 0.5, "reg_lambda": 2.0},
+                {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.10, "reg_alpha": 0.01, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.10, "reg_alpha": 0.10, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 150, "max_depth": 4, "learning_rate": 0.08, "reg_alpha": 0.50, "reg_lambda": 1.5},  # noqa: E501
+                {"n_estimators": 150, "max_depth": 5, "learning_rate": 0.08, "reg_alpha": 0.10, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05, "reg_alpha": 0.01, "reg_lambda": 0.5},  # noqa: E501
+                {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.05, "reg_alpha": 0.10, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.05, "reg_alpha": 0.50, "reg_lambda": 2.0},  # noqa: E501
+                {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.03, "reg_alpha": 0.10, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.03, "reg_alpha": 0.50, "reg_lambda": 1.5},  # noqa: E501
+                {"n_estimators": 300, "max_depth": 6, "learning_rate": 0.03, "reg_alpha": 1.00, "reg_lambda": 3.0},  # noqa: E501
+                {"n_estimators": 400, "max_depth": 4, "learning_rate": 0.02, "reg_alpha": 0.10, "reg_lambda": 1.0},  # noqa: E501
+                {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.02, "reg_alpha": 0.50, "reg_lambda": 2.0},  # noqa: E501
             ]
+            # fmt: on
 
             best_score = -1
             best_model = None
@@ -523,11 +524,14 @@ class MLStrategy(Strategy):
 
             # Save model with metadata
             metadata = {
-                "trained_at": datetime.now(timezone.utc).isoformat(),
+                "trained_at": datetime.now(UTC).isoformat(),
                 "model_type": "binary" if binary_mode else "multiclass",
                 "best_params": best_params,
                 "cv_profit_score": float(best_score) if binary_mode else 0.0,
-                "cv_mean_accuracy": float(best_score) if not binary_mode else float(accuracy_score(data.y_val, val_preds)),
+                "cv_mean_accuracy": (
+                    float(best_score) if not binary_mode
+                    else float(accuracy_score(data.y_val, val_preds))
+                ),
                 "val_accuracy": float(val_accuracy),
                 "test_accuracy": float(test_accuracy),
                 "test_profit_score": float(test_profit_score) if binary_mode else 0.0,
@@ -535,7 +539,10 @@ class MLStrategy(Strategy):
                 "train_samples": len(data.X_train),
                 "val_samples": len(data.X_val),
                 "test_samples": len(data.X_test),
-                "class_distribution": {int(k): int(v) for k, v in data.y_train.value_counts().to_dict().items()},
+                "class_distribution": {
+                    int(k): int(v)
+                    for k, v in data.y_train.value_counts().to_dict().items()
+                },
                 "feature_importance": importance,
                 "cv_results": cv_results,
                 "classification_report": test_report,

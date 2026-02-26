@@ -1,9 +1,10 @@
 """Tests for walk-forward validation."""
 
-import pytest
-import pandas as pd
-import numpy as np
 from unittest.mock import MagicMock
+
+import numpy as np
+import pandas as pd
+import pytest
 
 from app.backtest.walk_forward import (
     WalkForwardConfig,

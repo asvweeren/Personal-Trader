@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ def make_signal(symbol="AAPL", action=SignalAction.BUY, confidence=0.8, strategy
 
 def make_snapshot():
     return MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices={"AAPL": 150.0},
         ohlcv={},
         features={},

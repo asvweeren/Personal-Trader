@@ -2,7 +2,7 @@
 
 import structlog
 
-from app.strategy.base import TradingSignal, SignalAction
+from app.strategy.base import SignalAction, TradingSignal
 
 logger = structlog.get_logger()
 

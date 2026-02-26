@@ -1,12 +1,13 @@
 """Tests for position reconciliation."""
 
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timezone
 
-from app.broker.base import Portfolio, AccountSummary, Position
+import pytest
+
+from app.broker.base import AccountSummary, Portfolio, Position
 from app.models.trade import Trade, TradeSide, TradeStatus
-from app.risk.reconciliation import reconcile, auto_fix, ReconciliationResult
+from app.risk.reconciliation import ReconciliationResult, auto_fix, reconcile
 
 
 def _make_trade(symbol: str, qty: int) -> Trade:
@@ -20,7 +21,7 @@ def _make_trade(symbol: str, qty: int) -> Trade:
     )
     trade.id = 1
     trade.entry_price = 100.0
-    trade.created_at = datetime.now(timezone.utc)
+    trade.created_at = datetime.now(UTC)
     return trade
 
 

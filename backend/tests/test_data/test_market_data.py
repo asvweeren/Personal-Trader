@@ -1,17 +1,16 @@
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
 
-from app.data.market_data import Tick, BarAccumulator, MarketDataService
 from app.broker.mock_adapter import MockBrokerAdapter
-
+from app.data.market_data import BarAccumulator, MarketDataService, Tick
 
 # ── BarAccumulator tests ─────────────────────────────────────────
 
 
 def make_tick(symbol: str, price: float, volume: int = 100, minutes_offset: int = 0) -> Tick:
-    ts = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc) + timedelta(minutes=minutes_offset)
+    ts = datetime(2026, 1, 1, 10, 0, tzinfo=UTC) + timedelta(minutes=minutes_offset)
     return Tick(symbol=symbol, price=price, volume=volume, timestamp=ts)
 
 
@@ -79,10 +78,10 @@ def test_bar_accumulator_aligns_to_boundary():
     # Tick at 10:03 should align bar start to 10:00
     tick = Tick(
         symbol="AAPL", price=150.0, volume=100,
-        timestamp=datetime(2026, 1, 1, 10, 3, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 1, 10, 3, tzinfo=UTC),
     )
     acc.add_tick(tick)
-    assert acc.bar_start == datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    assert acc.bar_start == datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
 
 
 # ── MarketDataService tests ──────────────────────────────────────
@@ -106,7 +105,7 @@ async def test_market_data_service_cache_clear():
     broker = MockBrokerAdapter(initial_cash=5000.0)
     service = MarketDataService(broker)
     service._historical_cache["AAPL_30 D_1 hour"] = pd.DataFrame()
-    service._cache_timestamps["AAPL_30 D_1 hour"] = datetime.now(timezone.utc)
+    service._cache_timestamps["AAPL_30 D_1 hour"] = datetime.now(UTC)
 
     service.clear_cache()
     assert len(service._historical_cache) == 0
@@ -119,8 +118,8 @@ async def test_market_data_service_invalidate_cache():
     service = MarketDataService(broker)
     service._historical_cache["AAPL_30 D_1 hour"] = pd.DataFrame()
     service._historical_cache["MSFT_30 D_1 hour"] = pd.DataFrame()
-    service._cache_timestamps["AAPL_30 D_1 hour"] = datetime.now(timezone.utc)
-    service._cache_timestamps["MSFT_30 D_1 hour"] = datetime.now(timezone.utc)
+    service._cache_timestamps["AAPL_30 D_1 hour"] = datetime.now(UTC)
+    service._cache_timestamps["MSFT_30 D_1 hour"] = datetime.now(UTC)
 
     service._invalidate_cache("AAPL")
     assert "AAPL_30 D_1 hour" not in service._historical_cache

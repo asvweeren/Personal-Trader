@@ -1,10 +1,13 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.broker.base import (
-    AccountSummary, BrokerAdapter, OrderResult, Portfolio,
+    AccountSummary,
+    BrokerAdapter,
+    OrderResult,
+    Portfolio,
 )
 from app.data.market_data import MarketSnapshot
 from app.execution.engine import EngineState, TradingEngine
@@ -12,7 +15,6 @@ from app.models.trade import Trade, TradeSide
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskDecision, RiskManager
 from app.strategy.base import SignalAction, Strategy, TradingSignal
-
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -29,7 +31,7 @@ def make_portfolio(total=5000.0, cash=3000.0, positions=None):
 
 def make_snapshot(prices=None):
     return MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices=prices or {"AAPL": 150.0},
         ohlcv={},
         features={},
@@ -219,7 +221,7 @@ async def test_cycle_sell_signal_closes_position():
     mock_trade.entry_price = 145.0
     mock_trade.stop_loss = 140.0
     mock_trade.strategy_name = "mock"
-    mock_trade.created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    mock_trade.created_at = datetime.now(UTC) - timedelta(minutes=31)
     engine._open_trades["AAPL"] = mock_trade
 
     await engine.run_cycle()

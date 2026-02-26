@@ -7,7 +7,7 @@ anomalies, generates summary reports, and determines live-trading readiness.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -433,7 +433,7 @@ class PaperTradingValidator:
             report_date: The date to report on. Defaults to today (UTC).
         """
         if report_date is None:
-            report_date = datetime.now(timezone.utc).date()
+            report_date = datetime.now(UTC).date()
 
         summary = await self._build_single_day_summary(report_date)
         all_summaries = await self._build_daily_summaries()
@@ -441,7 +441,7 @@ class PaperTradingValidator:
         deviation = await self._calculate_backtest_deviation(cumulative) if cumulative else None
 
         # Count risk events for the day
-        day_start = datetime.combine(report_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        day_start = datetime.combine(report_date, datetime.min.time()).replace(tzinfo=UTC)
         day_end = day_start + timedelta(days=1)
         risk_count_result = await self._db.execute(
             select(func.count(RiskEvent.id)).where(
@@ -539,7 +539,7 @@ class PaperTradingValidator:
         """
         cutoff = None
         if lookback_days is not None:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Fetch closed trades
         trade_query = (

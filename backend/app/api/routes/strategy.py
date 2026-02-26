@@ -1,9 +1,8 @@
+import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func, case
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import structlog
 
 from app.dependencies import get_db
 from app.models.strategy_config import StrategyConfig

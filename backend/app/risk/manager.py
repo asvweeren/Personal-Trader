@@ -6,9 +6,9 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import Portfolio
-from app.models.risk_event import RiskEvent, RiskEventType, RiskEventSeverity
-from app.risk.hard_limits import check_all_hard_limits, HardLimitCheck
-from app.risk.market_hours import is_market_open, get_exchange_for_symbol
+from app.models.risk_event import RiskEvent, RiskEventSeverity, RiskEventType
+from app.risk.hard_limits import HardLimitCheck, check_all_hard_limits
+from app.risk.market_hours import get_exchange_for_symbol, is_market_open
 from app.risk.position_sizer import (
     calculate_position_size,
     get_sector,

@@ -4,34 +4,43 @@ import structlog
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.auth import router as auth_router, get_current_user
+from app.api.auth import get_current_user
+from app.api.auth import router as auth_router
 from app.api.routes import (
-    portfolio, trades, strategy, risk, backtest,
-    system, validation, screener, models,
+    backtest,
+    models,
+    portfolio,
+    risk,
+    screener,
+    strategy,
+    system,
+    trades,
+    validation,
 )
-from app.api.websocket import router as ws_router, broadcast_update
+from app.api.websocket import broadcast_update
+from app.api.websocket import router as ws_router
 from app.config import settings
 from app.core.event_bus import (
-    event_bus,
-    SIGNAL_GENERATED,
     ORDER_FILLED,
     PORTFOLIO_UPDATED,
-    RISK_DAILY_STOP,
     POSITION_CLOSED,
+    RISK_DAILY_STOP,
+    SIGNAL_GENERATED,
+    event_bus,
 )
 from app.core.scheduler import (
-    start_scheduler,
-    stop_scheduler,
     schedule_broker_watchdog,
-    schedule_data_pipeline,
-    schedule_trading_engine,
     schedule_daily_reset,
-    schedule_eod_safety_close,
-    schedule_daily_validation_report,
     schedule_daily_screener,
+    schedule_daily_validation_report,
+    schedule_data_pipeline,
+    schedule_economic_calendar,
+    schedule_eod_safety_close,
     schedule_heartbeat,
     schedule_snapshot_cleanup,
-    schedule_economic_calendar,
+    schedule_trading_engine,
+    start_scheduler,
+    stop_scheduler,
 )
 from app.dependencies import get_broker, get_data_pipeline, get_startup_symbols, init_trading_engine
 from app.models.database import async_session as session_factory

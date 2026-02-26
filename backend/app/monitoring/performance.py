@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -65,7 +65,7 @@ class PerformanceTracker:
     consecutive_losses: int = 0
     trade_pnls: list[float] = field(default_factory=list)
     daily_start_value: float = 0.0
-    last_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_reset: datetime = field(default_factory=lambda: datetime.now(UTC))
     strategy_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -150,7 +150,7 @@ class PerformanceTracker:
     def reset_daily(self) -> None:
         self.daily_start_value = self.total_value
         self.daily_pnl = 0.0
-        self.last_reset = datetime.now(timezone.utc)
+        self.last_reset = datetime.now(UTC)
         logger.info("performance.daily_reset", start_value=self.daily_start_value)
 
     def should_alert_consecutive_losses(self, threshold: int) -> bool:

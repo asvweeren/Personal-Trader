@@ -69,6 +69,19 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# ML convention: X_train, X_val, X_test etc.
+"app/strategy/feature_pipeline.py" = ["N803", "N806"]
+"app/strategy/ml_strategy.py" = ["N806"]
+"app/strategy/nn_strategy.py" = ["N803", "N806"]
+"tests/test_strategy/test_feature_pipeline.py" = ["N806"]
+# Exception naming convention (RiskLimitExceeded is well-established)
+"app/core/exceptions.py" = ["N818"]
+# Alembic auto-generated migrations
+"alembic/versions/*" = ["E501"]
+# ML convention in indicators
+"app/data/indicators.py" = ["N806"]
+
 [tool.ruff.format]
 quote-style = "double"
 

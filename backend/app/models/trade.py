@@ -13,12 +13,12 @@ if TYPE_CHECKING:
     from app.models.order import Order
 
 
-class TradeSide(str, enum.Enum):
+class TradeSide(enum.StrEnum):
     BUY = "BUY"
     SELL = "SELL"
 
 
-class TradeStatus(str, enum.Enum):
+class TradeStatus(enum.StrEnum):
     PENDING = "PENDING"
     OPEN = "OPEN"
     CLOSED = "CLOSED"
@@ -54,4 +54,4 @@ class Trade(Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    orders: Mapped[list["Order"]] = relationship(back_populates="trade")
+    orders: Mapped[list[Order]] = relationship(back_populates="trade")

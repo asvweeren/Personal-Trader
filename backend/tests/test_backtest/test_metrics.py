@@ -2,15 +2,14 @@ import numpy as np
 import pytest
 
 from app.backtest.metrics import (
-    calculate_metrics,
-    calculate_benchmark_comparison,
-    _max_drawdown_with_duration,
+    _annualized_return,
     _max_consecutive,
+    _max_drawdown_with_duration,
     _sharpe_ratio,
     _sortino_ratio,
-    _annualized_return,
+    calculate_benchmark_comparison,
+    calculate_metrics,
 )
-
 
 # ── calculate_metrics tests ──────────────────────────────────
 

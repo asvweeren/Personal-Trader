@@ -1,7 +1,7 @@
 """Tests for Monte Carlo simulation."""
 
 
-from app.backtest.monte_carlo import MonteCarloSimulator, MonteCarloConfig, MonteCarloResult
+from app.backtest.monte_carlo import MonteCarloConfig, MonteCarloResult, MonteCarloSimulator
 
 
 class TestMonteCarloResult:

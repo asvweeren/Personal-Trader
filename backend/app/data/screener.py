@@ -436,7 +436,7 @@ class StockScreener:
 
 def _get_sector_hint(symbol: str) -> str:
     """Return a sector hint based on known symbols or suffix."""
-    from app.risk.position_sizer import SECTOR_MAP, DEFAULT_SECTOR
+    from app.risk.position_sizer import DEFAULT_SECTOR, SECTOR_MAP
     sector = SECTOR_MAP.get(symbol, "")
     if sector:
         return sector

@@ -1,13 +1,13 @@
 import asyncio
 import time
 import traceback
+from datetime import UTC
 
+import structlog
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-
-import structlog
 
 logger = structlog.get_logger()
 
@@ -131,7 +131,8 @@ def schedule_heartbeat() -> None:
     """Send periodic system status over WebSocket so clients stay informed."""
 
     async def send_heartbeat():
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from app.api.websocket import broadcast_update
         from app.dependencies import get_broker
 
@@ -153,7 +154,7 @@ def schedule_heartbeat() -> None:
             await broadcast_update("system.heartbeat", {
                 "broker_connected": connected,
                 "engine_state": engine_state,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             })
         except Exception:
             logger.warning("scheduler.heartbeat_error", exc_info=True)
@@ -300,13 +301,15 @@ def schedule_snapshot_cleanup() -> None:
     """
 
     async def cleanup_snapshots():
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
+
         from sqlalchemy import text
+
         from app.models.database import async_session
 
         try:
             async with async_session() as session:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 cutoff_90d = now - timedelta(days=90)
                 cutoff_7d = now - timedelta(days=7)
 
@@ -399,9 +402,10 @@ def schedule_broker_watchdog(broker) -> None:
                 if down_seconds > 300 and not _alert_sent["offline"]:
                     try:
                         from app.monitoring.alerts import send_alert
+                        mins = int(down_seconds // 60)
                         asyncio.create_task(send_alert(
                             "Broker Offline",
-                            f"IBKR verbinding offline sinds {int(down_seconds // 60)} minuten. Auto-recovery actief.",
+                            f"IBKR offline sinds {mins} min. Auto-recovery actief.",
                         ))
                     except Exception:
                         logger.warning("watchdog.offline_alert_failed", exc_info=True)
@@ -434,9 +438,10 @@ def schedule_broker_watchdog(broker) -> None:
                 if _alert_sent["offline"]:
                     try:
                         from app.monitoring.alerts import send_alert
+                        mins = int(down_seconds // 60)
                         asyncio.create_task(send_alert(
                             "Broker Hersteld",
-                            f"IBKR verbinding hersteld na {int(down_seconds // 60)} minuten offline.",
+                            f"IBKR hersteld na {mins} min offline.",
                         ))
                     except Exception:
                         logger.warning("watchdog.recovery_alert_failed", exc_info=True)
@@ -581,7 +586,7 @@ def schedule_weekly_model_retrain() -> None:
             logger.error("scheduler.retrain_yfinance_missing")
             return
 
-        from app.strategy.ml_strategy import MLStrategy, MODEL_DIR
+        from app.strategy.ml_strategy import MODEL_DIR, MLStrategy
 
         logger.info("scheduler.retrain_started")
 
@@ -643,7 +648,11 @@ def schedule_weekly_model_retrain() -> None:
 
             historical_data = pd.concat(feature_dfs, ignore_index=True)
             historical_data = historical_data.sort_values("timestamp").reset_index(drop=True)
-            logger.info("scheduler.retrain_features", symbols=len(feature_dfs), samples=len(historical_data))
+            logger.info(
+                "scheduler.retrain_features",
+                symbols=len(feature_dfs),
+                samples=len(historical_data),
+            )
 
             # 2. Train candidate (features already computed per-symbol)
             strategy = MLStrategy()

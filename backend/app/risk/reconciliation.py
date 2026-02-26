@@ -1,7 +1,7 @@
 """Position reconciliation: ensures internal state matches broker reality."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ logger = structlog.get_logger()
 
 @dataclass
 class ReconciliationResult:
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     matches: list[str] = field(default_factory=list)
     mismatches: list[dict] = field(default_factory=list)
     orphaned_broker: list[dict] = field(default_factory=list)
@@ -128,7 +128,7 @@ async def auto_fix(
             trade = engine._open_trades.pop(symbol, None)
             if trade:
                 trade.status = TradeStatus.CLOSED
-                trade.closed_at = datetime.now(timezone.utc)
+                trade.closed_at = datetime.now(UTC)
             # Place BUY order to flatten the short
             short_qty = abs(broker_qty)
             try:
@@ -218,7 +218,7 @@ async def auto_fix(
         trade = engine._open_trades.pop(symbol, None)
         if trade:
             trade.status = TradeStatus.CLOSED
-            trade.closed_at = datetime.now(timezone.utc)
+            trade.closed_at = datetime.now(UTC)
             actions.append(f"Closed orphaned internal trade: {symbol}")
             logger.warning(
                 "reconciliation.orphaned_internal_closed",

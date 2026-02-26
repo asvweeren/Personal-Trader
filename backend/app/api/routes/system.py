@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.broker.base import BrokerAdapter
 from app.config import settings
 from app.data.pipeline import DataPipeline
-from app.dependencies import get_broker, get_data_pipeline, get_trading_engine, get_db
+from app.dependencies import get_broker, get_data_pipeline, get_db, get_trading_engine
 from app.models.strategy_config import StrategyConfig
 from app.monitoring.alerts import send_alert
 
@@ -61,7 +61,7 @@ async def health_check(
     all_ok = broker_connected and db_connected and redis_connected
     return {
         "status": "healthy" if all_ok else "degraded",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "components": {
             "broker": {"status": broker_status},
             "database": {"status": "connected" if db_connected else "disconnected"},
@@ -153,7 +153,7 @@ async def get_reconciliation():
 @router.post("/system/reconciliation/run")
 async def run_reconciliation(db: AsyncSession = Depends(get_db)):
     """Force an immediate position reconciliation with auto-fix."""
-    from app.risk.reconciliation import reconcile, auto_fix, set_last_result
+    from app.risk.reconciliation import auto_fix, reconcile, set_last_result
 
     try:
         engine = get_trading_engine()

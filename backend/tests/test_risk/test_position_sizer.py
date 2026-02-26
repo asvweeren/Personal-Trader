@@ -1,8 +1,8 @@
 from app.broker.base import AccountSummary, Portfolio, Position
 from app.risk.position_sizer import (
-    calculate_position_size,
-    calculate_kelly_fraction,
     calculate_correlation_factor,
+    calculate_kelly_fraction,
+    calculate_position_size,
     calculate_sector_factor,
     calculate_trailing_stop,
     get_sector,

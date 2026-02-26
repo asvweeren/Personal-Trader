@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter
-from app.dependencies import get_broker, get_risk_manager, get_db
+from app.dependencies import get_broker, get_db, get_risk_manager
 from app.models.risk_event import RiskEvent
 from app.risk.manager import RiskManager
 
@@ -31,8 +31,8 @@ async def get_risk_metrics(
         var_data = {}
         if portfolio.positions:
             try:
-                from app.risk.var_calculator import VaRCalculator
                 from app.dependencies import get_data_pipeline
+                from app.risk.var_calculator import VaRCalculator
                 pipeline = get_data_pipeline()
                 var_calc = VaRCalculator()
                 var_result = await var_calc.calculate_portfolio_var(

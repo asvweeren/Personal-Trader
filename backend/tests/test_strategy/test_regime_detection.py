@@ -1,11 +1,12 @@
 """Tests for market regime detection."""
 
-import pandas as pd
+from datetime import UTC, datetime
+
 import numpy as np
-from datetime import datetime, timezone
+import pandas as pd
 
 from app.data.market_data import MarketSnapshot
-from app.strategy.regime import RegimeDetector, MarketRegime, RegimeState
+from app.strategy.regime import MarketRegime, RegimeDetector, RegimeState
 
 
 def _make_snapshot(
@@ -47,7 +48,7 @@ def _make_snapshot(
         prices[symbol] = float(close[-1])
 
     return MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices=prices,
         ohlcv=ohlcv,
         features={},
@@ -87,7 +88,7 @@ class TestRegimeDetector:
     def test_empty_snapshot(self):
         detector = RegimeDetector()
         snapshot = MarketSnapshot(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             prices={},
             ohlcv={},
             features={},

@@ -3,16 +3,16 @@ import pandas as pd
 import pytest
 
 from app.strategy.feature_pipeline import (
+    FeaturePipelineConfig,
     balance_classes,
     create_target,
-    select_feature_columns,
-    remove_low_variance,
-    remove_highly_correlated,
-    normalize_features,
-    time_based_split,
-    prepare_ml_data,
-    FeaturePipelineConfig,
     get_feature_importance,
+    normalize_features,
+    prepare_ml_data,
+    remove_highly_correlated,
+    remove_low_variance,
+    select_feature_columns,
+    time_based_split,
 )
 
 

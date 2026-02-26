@@ -1,7 +1,7 @@
 """Tests for alternative data features in indicators."""
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from app.data.indicators import compute_features
 

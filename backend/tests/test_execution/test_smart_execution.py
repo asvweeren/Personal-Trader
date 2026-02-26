@@ -1,10 +1,11 @@
 """Tests for VWAP/TWAP smart execution."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.execution.smart_execution import SmartExecutor, ExecutionAlgo
+import pytest
+
 from app.broker.base import OrderResult
+from app.execution.smart_execution import ExecutionAlgo, SmartExecutor
 
 
 class TestExecutionAlgo:

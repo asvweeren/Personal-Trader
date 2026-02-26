@@ -65,7 +65,10 @@ def calculate_metrics(
 
     # Recovery factor: net profit / max drawdown
     net_profit = float(equity[-1] - initial_capital)
-    recovery_factor = net_profit / (max_dd * initial_capital) if max_dd > 0 and initial_capital > 0 else 0.0
+    if max_dd > 0 and initial_capital > 0:
+        recovery_factor = net_profit / (max_dd * initial_capital)
+    else:
+        recovery_factor = 0.0
 
     # Return distribution stats
     return_skew = float(scipy_stats.skew(returns)) if len(returns) > 2 else 0.0

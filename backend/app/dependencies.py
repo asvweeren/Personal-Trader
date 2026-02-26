@@ -1,17 +1,17 @@
 from datetime import date, timedelta
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import structlog
 
 from app.broker.base import BrokerAdapter
 from app.broker.mock_adapter import MockBrokerAdapter
 from app.config import settings
-from app.core.event_bus import event_bus, EventBus
+from app.core.event_bus import EventBus, event_bus
 from app.data.pipeline import DataPipeline
 from app.execution.engine import TradingEngine
-from app.models.database import get_session, async_session as _session_factory
+from app.models.database import async_session as _session_factory
+from app.models.database import get_session
 from app.models.strategy_config import StrategyConfig
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager

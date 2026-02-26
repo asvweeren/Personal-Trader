@@ -1,5 +1,5 @@
 from datetime import datetime
-from enum import Enum as PyEnum
+from enum import StrEnum
 
 from sqlalchemy import DateTime, Enum, Float, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.database import Base
 
 
-class RiskEventType(str, PyEnum):
+class RiskEventType(StrEnum):
     DAILY_LOSS_TRIGGERED = "DAILY_LOSS_TRIGGERED"
     POSITION_SIZE_EXCEEDED = "POSITION_SIZE_EXCEEDED"
     MAX_POSITIONS_EXCEEDED = "MAX_POSITIONS_EXCEEDED"
@@ -21,7 +21,7 @@ class RiskEventType(str, PyEnum):
     TRADING_RESUMED = "TRADING_RESUMED"
 
 
-class RiskEventSeverity(str, PyEnum):
+class RiskEventSeverity(StrEnum):
     INFO = "INFO"
     WARNING = "WARNING"
     CRITICAL = "CRITICAL"

@@ -1,5 +1,5 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 def sma(series: pd.Series, period: int) -> pd.Series:

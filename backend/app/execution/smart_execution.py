@@ -2,18 +2,18 @@
 
 import asyncio
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import structlog
 
-from app.broker.base import BrokerAdapter, OrderType, OrderResult
+from app.broker.base import BrokerAdapter, OrderResult, OrderType
 from app.config import settings
 from app.execution.order_manager import OrderManager
 
 logger = structlog.get_logger()
 
 
-class ExecutionAlgo(str, Enum):
+class ExecutionAlgo(StrEnum):
     MARKET = "market"
     VWAP = "vwap"
     TWAP = "twap"

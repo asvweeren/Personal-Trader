@@ -1,8 +1,8 @@
 """Main trading orchestrator - the heart of the system."""
 
 import asyncio
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 import structlog
 from sqlalchemy import select
@@ -10,15 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, OrderType
 from app.config import settings
-from app.core.event_bus import event_bus, SIGNAL_GENERATED, RISK_DAILY_STOP, SYSTEM_ERROR
+from app.core.event_bus import RISK_DAILY_STOP, SIGNAL_GENERATED, SYSTEM_ERROR, event_bus
+from app.data.correlation import get_correlation_matrix
 from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
 from app.execution.portfolio_tracker import PortfolioTracker
 from app.execution.smart_execution import SmartExecutor
 from app.models.order import OrderStatus
-from app.models.signal import Signal as DBSignal, SignalAction as DBSignalAction
+from app.models.signal import Signal as DBSignal
+from app.models.signal import SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
-from app.data.correlation import get_correlation_matrix
 from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskManager
@@ -29,18 +30,18 @@ from app.risk.position_sizer import (
     calculate_trailing_stop,
 )
 from app.risk.reconciliation import (
-    reconcile,
     auto_fix,
+    reconcile,
     set_last_result,
 )
 from app.strategy.base import SignalAction, Strategy, TradingSignal
-from app.strategy.regime import RegimeDetector
 from app.strategy.multi_timeframe import MultiTimeframeFilter
+from app.strategy.regime import RegimeDetector
 
 logger = structlog.get_logger()
 
 
-class EngineState(str, Enum):
+class EngineState(StrEnum):
     STOPPED = "STOPPED"
     STARTING = "STARTING"
     RUNNING = "RUNNING"
@@ -170,7 +171,7 @@ class TradingEngine:
 
         try:
             await asyncio.wait_for(self._run_cycle_inner(), timeout=240)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "engine.cycle_timeout",
                 timeout_seconds=240,
@@ -181,7 +182,7 @@ class TradingEngine:
                 "error": "Cycle timed out after 240s",
             })
             self._cycle_count += 1
-            self._last_cycle_at = datetime.now(timezone.utc)
+            self._last_cycle_at = datetime.now(UTC)
         except Exception:
             logger.exception("engine.cycle_error")
             await event_bus.publish(SYSTEM_ERROR, {
@@ -205,7 +206,7 @@ class TradingEngine:
             snapshot = await self._market_data.get_snapshot(self._symbols)
 
             # 2a. Staleness check: skip cycle if data is too old
-            data_age = (datetime.now(timezone.utc) - snapshot.timestamp).total_seconds()
+            data_age = (datetime.now(UTC) - snapshot.timestamp).total_seconds()
             if data_age > 300:
                 logger.warning(
                     "engine.stale_data_skip",
@@ -213,7 +214,7 @@ class TradingEngine:
                     threshold=300,
                 )
                 self._cycle_count += 1
-                self._last_cycle_at = datetime.now(timezone.utc)
+                self._last_cycle_at = datetime.now(UTC)
                 return
 
             # 2b. Reconciliation every 3rd cycle (~15 min)
@@ -276,7 +277,7 @@ class TradingEngine:
 
             if not all_signals:
                 self._cycle_count += 1
-                self._last_cycle_at = datetime.now(timezone.utc)
+                self._last_cycle_at = datetime.now(UTC)
                 return
 
             # 6b. Multi-timeframe confirmation
@@ -362,7 +363,7 @@ class TradingEngine:
                 last_close = self._last_close_time.get(signal.symbol)
                 if last_close and settings.reentry_cooldown_minutes > 0:
                     mins_since = (
-                        datetime.now(timezone.utc) - last_close
+                        datetime.now(UTC) - last_close
                     ).total_seconds() / 60
                     if mins_since < settings.reentry_cooldown_minutes:
                         logger.info(
@@ -417,12 +418,12 @@ class TradingEngine:
             await self._db.commit()
 
             self._cycle_count += 1
-            self._last_cycle_at = datetime.now(timezone.utc)
+            self._last_cycle_at = datetime.now(UTC)
 
         except Exception:
             logger.exception("engine.cycle_inner_error")
             self._cycle_count += 1
-            self._last_cycle_at = datetime.now(timezone.utc)
+            self._last_cycle_at = datetime.now(UTC)
             raise  # Re-raise so run_cycle() wrapper can log/publish
 
     async def _ensure_connected(self) -> bool:
@@ -490,7 +491,7 @@ class TradingEngine:
         # Enforce minimum hold time before allowing signal-based close
         if open_trade.created_at and settings.min_hold_minutes > 0:
             held_minutes = (
-                datetime.now(timezone.utc) - open_trade.created_at
+                datetime.now(UTC) - open_trade.created_at
             ).total_seconds() / 60
             if held_minutes < settings.min_hold_minutes:
                 logger.info(
@@ -502,7 +503,7 @@ class TradingEngine:
                 return
 
         # Cancel any pending SELL orders (e.g. stop-loss) before placing new sell
-        cancelled = await self._cancel_pending_sells(signal.symbol)
+        await self._cancel_pending_sells(signal.symbol)
         # Verify no pending sells remain to avoid accidental short
         remaining = len(self._order_manager._pending_by_symbol.get(signal.symbol, set()))
         if remaining > 0:
@@ -529,11 +530,11 @@ class TradingEngine:
                 open_trade, result.filled_price
             )
             self._open_trades.pop(signal.symbol, None)
-            self._last_close_time[signal.symbol] = datetime.now(timezone.utc)
+            self._last_close_time[signal.symbol] = datetime.now(UTC)
             pnl = open_trade.realized_pnl or 0.0
             hold_mins = ""
             if open_trade.created_at:
-                delta = datetime.now(timezone.utc) - open_trade.created_at
+                delta = datetime.now(UTC) - open_trade.created_at
                 hold_mins = f" | Hold: {delta.total_seconds() / 60:.0f}min"
             logger.info(
                 "engine.position_closed",
@@ -853,11 +854,11 @@ class TradingEngine:
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
             self._open_trades.pop(symbol, None)
-            self._last_close_time[symbol] = datetime.now(timezone.utc)
+            self._last_close_time[symbol] = datetime.now(UTC)
             pnl = trade.realized_pnl or 0.0
             hold_mins = ""
             if trade.created_at:
-                delta = datetime.now(timezone.utc) - trade.created_at
+                delta = datetime.now(UTC) - trade.created_at
                 hold_mins = f" | Hold: {delta.total_seconds() / 60:.0f}min"
             logger.info(
                 "engine.position_closed_on_fill",
@@ -945,7 +946,8 @@ class TradingEngine:
                 # Whipsaw protection: only update if price moved >1% since last update
                 last_update_price = self._last_stop_update_price.get(symbol, 0.0)
                 if last_update_price > 0:
-                    price_change_pct = abs(current_price - last_update_price) / last_update_price * 100
+                    price_move = abs(current_price - last_update_price)
+                    price_change_pct = price_move / last_update_price * 100
                     if price_change_pct < 1.0:
                         continue
 
@@ -1002,7 +1004,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
-                    self._last_close_time[symbol] = datetime.now(timezone.utc)
+                    self._last_close_time[symbol] = datetime.now(UTC)
                     await send_alert(
                         "Take-Profit Hit",
                         f"{symbol}: sold at {result.filled_price:.2f} "
@@ -1014,7 +1016,7 @@ class TradingEngine:
         if not self._trading_enabled:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for symbol, trade in list(self._open_trades.items()):
             if trade.status != TradeStatus.OPEN:
@@ -1053,7 +1055,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
-                    self._last_close_time[symbol] = datetime.now(timezone.utc)
+                    self._last_close_time[symbol] = datetime.now(UTC)
                     pnl = trade.realized_pnl or 0.0
                     await send_alert(
                         "EOD Close",

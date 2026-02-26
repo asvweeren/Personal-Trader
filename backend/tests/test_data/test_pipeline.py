@@ -1,12 +1,13 @@
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from app.broker.mock_adapter import MockBrokerAdapter
 from app.data.pipeline import DataPipeline
 from app.data.sentiment import SentimentResult
-from app.broker.mock_adapter import MockBrokerAdapter
 
 
 def make_ohlcv(n=100):
@@ -115,11 +116,12 @@ async def test_get_enriched_snapshot_merges_features(pipeline):
     )
 
     # Mock the snapshot call
+    from datetime import datetime
+
     from app.data.market_data import MarketSnapshot
-    from datetime import datetime, timezone
 
     mock_snapshot = MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices={"AAPL": 150.0, "MSFT": 380.0},
         ohlcv={},
         features={},

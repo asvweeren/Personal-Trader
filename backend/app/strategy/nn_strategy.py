@@ -10,11 +10,11 @@ from app.data.indicators import compute_features
 from app.data.market_data import MarketSnapshot
 from app.strategy.base import SignalAction, Strategy, TradingSignal, TrainResult
 from app.strategy.feature_pipeline import (
-    select_feature_columns,
-    remove_low_variance,
-    remove_highly_correlated,
     create_target,
     normalize_features,
+    remove_highly_correlated,
+    remove_low_variance,
+    select_feature_columns,
     time_based_split,
 )
 

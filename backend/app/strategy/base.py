@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import pandas as pd
 
 from app.data.market_data import MarketSnapshot
 
 
-class SignalAction(str, Enum):
+class SignalAction(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"

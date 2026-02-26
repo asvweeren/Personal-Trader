@@ -1,11 +1,11 @@
 """Tests for economic event calendar."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.data.economic_calendar import (
+    FOMC_DATES,
     EconomicCalendar,
     EconomicEvent,
-    FOMC_DATES,
 )
 
 
@@ -15,7 +15,7 @@ def _make_event(
     symbol: str | None = None,
     title: str = "Test Event",
 ) -> EconomicEvent:
-    ts = datetime.now(timezone.utc) + timedelta(hours=hours_ahead)
+    ts = datetime.now(UTC) + timedelta(hours=hours_ahead)
     return EconomicEvent(
         timestamp=ts,
         title=title,

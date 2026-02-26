@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from app.data.indicators import rsi, macd, bollinger_bands, atr, compute_features
+from app.data.indicators import atr, bollinger_bands, compute_features, macd, rsi
 
 
 def make_ohlcv(n=100):

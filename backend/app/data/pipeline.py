@@ -10,7 +10,7 @@ from app.data.indicators import compute_features
 from app.data.market_data import MarketDataService, MarketSnapshot
 from app.data.news_fetcher import NewsFetcher
 from app.data.sentiment import SentimentAnalyzer, SentimentResult
-from app.risk.market_hours import is_market_open, Exchange
+from app.risk.market_hours import Exchange, is_market_open
 
 logger = structlog.get_logger()
 
@@ -96,7 +96,9 @@ class DataPipeline:
 
         for symbol in self._symbols:
             try:
-                df = await self._market_data.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
+                df = await self._market_data.get_historical_data(
+                    symbol, duration="1 Y", bar_size="1 day",
+                )
                 # Drop today's incomplete bar to match training data (completed bars only)
                 df = self._market_data._drop_incomplete_daily_bar(df)
                 if df.empty or len(df) < 50:

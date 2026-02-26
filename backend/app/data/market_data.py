@@ -1,14 +1,14 @@
-from dataclasses import dataclass
-from datetime import date, datetime, timezone, timedelta
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import structlog
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter
-from app.core.event_bus import event_bus, MARKET_DATA_UPDATE
+from app.core.event_bus import MARKET_DATA_UPDATE, event_bus
 from app.models.market_data_bar import MarketDataBar
 
 logger = structlog.get_logger()
@@ -154,7 +154,7 @@ class MarketDataService:
             symbol=symbol,
             price=price,
             volume=volume,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         # Update current price
@@ -206,7 +206,7 @@ class MarketDataService:
         # Check in-memory cache with TTL
         if cache_key in self._historical_cache:
             cached_at = self._cache_timestamps.get(cache_key)
-            if cached_at and datetime.now(timezone.utc) - cached_at < self._cache_ttl:
+            if cached_at and datetime.now(UTC) - cached_at < self._cache_ttl:
                 return self._historical_cache[cache_key]
 
         # Try loading from DB
@@ -214,7 +214,7 @@ class MarketDataService:
             df = await self._load_from_db(symbol, duration, bar_size)
             if not df.empty:
                 self._historical_cache[cache_key] = df
-                self._cache_timestamps[cache_key] = datetime.now(timezone.utc)
+                self._cache_timestamps[cache_key] = datetime.now(UTC)
                 return df
 
         # Fetch from broker
@@ -222,7 +222,7 @@ class MarketDataService:
         if not df.empty:
             df = self.validate_data(df)
             self._historical_cache[cache_key] = df
-            self._cache_timestamps[cache_key] = datetime.now(timezone.utc)
+            self._cache_timestamps[cache_key] = datetime.now(UTC)
             # Persist to DB in background
             if self._db:
                 await self._persist_dataframe(symbol, df, bar_size)
@@ -254,7 +254,7 @@ class MarketDataService:
         """
         if df.empty or "timestamp" not in df.columns:
             return df
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         last_ts = df["timestamp"].iloc[-1]
         # Handle datetime.date, datetime.datetime, and string dates
         if isinstance(last_ts, datetime):
@@ -286,7 +286,7 @@ class MarketDataService:
                 logger.warning("market_data.fetch_error", symbol=symbol)
 
         return MarketSnapshot(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             prices=prices,
             ohlcv=ohlcv,
             features={},
@@ -411,11 +411,11 @@ class MarketDataService:
         amount = int(parts[0])
         unit = parts[1].upper() if len(parts) > 1 else "D"
         if unit.startswith("Y"):
-            start_date = datetime.now(timezone.utc) - timedelta(days=amount * 365)
+            start_date = datetime.now(UTC) - timedelta(days=amount * 365)
         elif unit.startswith("M"):
-            start_date = datetime.now(timezone.utc) - timedelta(days=amount * 30)
+            start_date = datetime.now(UTC) - timedelta(days=amount * 30)
         else:
-            start_date = datetime.now(timezone.utc) - timedelta(days=amount)
+            start_date = datetime.now(UTC) - timedelta(days=amount)
 
         size_map = {
             "1 min": "1m", "5 mins": "5m",

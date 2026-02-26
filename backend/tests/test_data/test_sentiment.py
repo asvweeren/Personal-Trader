@@ -3,9 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.data.sentiment import RateLimiter, SentimentAnalyzer, SentimentResult
 from app.data.news_fetcher import NewsItem
-
+from app.data.sentiment import RateLimiter, SentimentAnalyzer, SentimentResult
 
 # ── RateLimiter tests ─────────────────────────────────────────
 

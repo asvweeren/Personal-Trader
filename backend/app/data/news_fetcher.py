@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import feedparser
@@ -193,7 +193,7 @@ class NewsFetcher:
 
         # Sort by publication date (newest first)
         items.sort(
-            key=lambda x: x.published_at or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda x: x.published_at or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
 
@@ -262,7 +262,7 @@ class NewsFetcher:
         items = unique_items
 
         items.sort(
-            key=lambda x: x.published_at or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda x: x.published_at or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
         items = items[:limit]
@@ -327,12 +327,12 @@ class NewsFetcher:
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
                         try:
                             published_at = datetime(
-                                *entry.published_parsed[:6], tzinfo=timezone.utc
+                                *entry.published_parsed[:6], tzinfo=UTC
                             )
                         except Exception:
-                            published_at = datetime.now(timezone.utc)
+                            published_at = datetime.now(UTC)
                     else:
-                        published_at = datetime.now(timezone.utc)
+                        published_at = datetime.now(UTC)
 
                     items.append(
                         NewsItem(

@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import anthropic
 import redis.asyncio as aioredis
@@ -41,7 +41,7 @@ class SentimentResult:
             "reasoning": self.reasoning,
             "news_count": self.news_count,
             "headlines_analyzed": self.headlines_analyzed or [],
-            "timestamp": (self.timestamp or datetime.now(timezone.utc)).isoformat(),
+            "timestamp": (self.timestamp or datetime.now(UTC)).isoformat(),
         }
 
     @classmethod
@@ -196,7 +196,7 @@ class SentimentAnalyzer:
                 reasoning="No news available",
                 news_count=0,
                 headlines_analyzed=[],
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
 
         # Check cache first
@@ -308,7 +308,7 @@ class SentimentAnalyzer:
                 reasoning=result.get("reasoning", "No reasoning provided"),
                 news_count=len(batch),
                 headlines_analyzed=headlines,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         except json.JSONDecodeError:
             logger.warning("sentiment.parse_error", symbol=symbol, raw=raw_text[:200])
@@ -354,7 +354,7 @@ class SentimentAnalyzer:
             reasoning=reason,
             news_count=len(news_items),
             headlines_analyzed=[item.title for item in news_items if item.title.strip()],
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
     def to_dict(self, result: SentimentResult) -> dict:

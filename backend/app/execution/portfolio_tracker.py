@@ -1,13 +1,13 @@
 """Portfolio state management: position tracking, P&L calculation, and snapshots."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, Portfolio
 from app.config import settings
-from app.core.event_bus import event_bus, PORTFOLIO_UPDATED, POSITION_CLOSED
+from app.core.event_bus import PORTFOLIO_UPDATED, POSITION_CLOSED, event_bus
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.trade import Trade, TradeStatus
 from app.monitoring.alerts import send_alert
@@ -96,7 +96,7 @@ class PortfolioTracker:
         trade.realized_pnl = round(pnl, 2)
         trade.commission = commission
         trade.status = TradeStatus.CLOSED
-        trade.closed_at = datetime.now(timezone.utc)
+        trade.closed_at = datetime.now(UTC)
 
         # Calculate hold duration
         hold_duration_minutes = 0.0

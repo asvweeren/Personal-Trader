@@ -8,7 +8,7 @@ Data sources (all free, no extra API keys):
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import feedparser
 import redis.asyncio as aioredis
@@ -120,7 +120,7 @@ class EconomicCalendar:
         # Sort by timestamp
         events.sort(key=lambda e: e.timestamp)
         self._events = events
-        self._last_fetch = datetime.now(timezone.utc)
+        self._last_fetch = datetime.now(UTC)
 
         # Cache in Redis
         if r and events:
@@ -135,7 +135,7 @@ class EconomicCalendar:
 
     def has_high_impact_event(self, symbol: str, within_hours: int = 2) -> bool:
         """Check if there's a high-impact event for this symbol within N hours."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now + timedelta(hours=within_hours)
 
         for event in self._events:
@@ -154,7 +154,7 @@ class EconomicCalendar:
 
     def get_upcoming_events(self, hours: int = 24) -> list[EconomicEvent]:
         """Get events in the next N hours."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now + timedelta(hours=hours)
         return [
             e for e in self._events
@@ -162,20 +162,20 @@ class EconomicCalendar:
         ]
 
     def _filter_upcoming(self, days: int) -> list[EconomicEvent]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now + timedelta(days=days)
         return [e for e in self._events if e.timestamp >= now and e.timestamp <= cutoff]
 
     def _get_fomc_events(self, days_ahead: int) -> list[EconomicEvent]:
         """Generate FOMC meeting events from hardcoded calendar."""
         events = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now + timedelta(days=days_ahead)
 
         for date_str in FOMC_DATES:
             try:
                 dt = datetime.strptime(date_str, "%Y-%m-%d").replace(
-                    hour=18, minute=0, tzinfo=timezone.utc  # 2 PM ET
+                    hour=18, minute=0, tzinfo=UTC  # 2 PM ET
                 )
                 if now <= dt <= cutoff:
                     events.append(EconomicEvent(
@@ -216,7 +216,7 @@ class EconomicCalendar:
                             try:
                                 dt = ts.to_pydatetime()
                                 if dt.tzinfo is None:
-                                    dt = dt.replace(tzinfo=timezone.utc)
+                                    dt = dt.replace(tzinfo=UTC)
                                 if dt.date() >= start and dt.date() <= end:
                                     events.append(EconomicEvent(
                                         timestamp=dt,
@@ -252,11 +252,11 @@ class EconomicCalendar:
                     if not title:
                         continue
 
-                    published_at = datetime.now(timezone.utc)
+                    published_at = datetime.now(UTC)
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
                         try:
                             published_at = datetime(
-                                *entry.published_parsed[:6], tzinfo=timezone.utc
+                                *entry.published_parsed[:6], tzinfo=UTC
                             )
                         except Exception:
                             pass

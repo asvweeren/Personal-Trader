@@ -3,7 +3,7 @@ import asyncio
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, desc, func
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.backtest.engine import BacktestConfig, BacktestEngine
@@ -380,7 +380,7 @@ async def run_monte_carlo(
     db: AsyncSession = Depends(get_db),
 ):
     """Run Monte Carlo simulation on an existing backtest's trade results."""
-    from app.backtest.monte_carlo import MonteCarloSimulator, MonteCarloConfig
+    from app.backtest.monte_carlo import MonteCarloConfig, MonteCarloSimulator
 
     bt = await db.get(BacktestResult, request.backtest_id)
     if not bt:

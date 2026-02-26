@@ -1,11 +1,10 @@
 """Market simulator for backtesting with realistic execution modeling."""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-
-class FillStatus(str, Enum):
+class FillStatus(StrEnum):
     FILLED = "FILLED"
     PARTIAL = "PARTIAL"
     REJECTED = "REJECTED"

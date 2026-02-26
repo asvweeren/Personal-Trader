@@ -1,12 +1,11 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
-
 
 from app.risk.market_hours import (
     Exchange,
-    is_market_open,
     get_exchange_for_symbol,
     is_any_market_open,
+    is_market_open,
     next_market_open,
     parse_symbol_for_ibkr,
 )
@@ -15,7 +14,7 @@ from app.risk.market_hours import (
 def _make_dt(year, month, day, hour, minute, tz_name="America/New_York"):
     """Create a timezone-aware datetime."""
     tz = ZoneInfo(tz_name)
-    return datetime(year, month, day, hour, minute, tzinfo=tz).astimezone(timezone.utc)
+    return datetime(year, month, day, hour, minute, tzinfo=tz).astimezone(UTC)
 
 
 # ── is_market_open tests ─────────────────────────────────────

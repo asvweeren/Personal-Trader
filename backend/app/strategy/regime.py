@@ -1,17 +1,17 @@
 """Market regime detection using technical indicators."""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import structlog
 
-from app.data.market_data import MarketSnapshot
 from app.data.indicators import compute_features
+from app.data.market_data import MarketSnapshot
 
 logger = structlog.get_logger()
 
 
-class MarketRegime(str, Enum):
+class MarketRegime(StrEnum):
     TRENDING_UP = "trending_up"
     TRENDING_DOWN = "trending_down"
     RANGING = "ranging"

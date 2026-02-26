@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.database import Base
 
 
-class SignalAction(str, enum.Enum):
+class SignalAction(enum.StrEnum):
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"

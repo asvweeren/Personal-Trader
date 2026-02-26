@@ -1,6 +1,6 @@
 import structlog
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter

@@ -173,7 +173,9 @@ def time_based_split(
     return train, val, test
 
 
-def balance_classes(X: pd.DataFrame, y: pd.Series, random_state: int = 42) -> tuple[pd.DataFrame, pd.Series]:
+def balance_classes(
+    X: pd.DataFrame, y: pd.Series, random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.Series]:
     """Oversample minority classes to the count of the majority class.
 
     Preserves all training data (no information loss) by duplicating

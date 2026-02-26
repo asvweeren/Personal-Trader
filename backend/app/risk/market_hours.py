@@ -1,8 +1,8 @@
 """Market hours enforcement - prevents trading outside exchange hours."""
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone, timedelta
-from enum import Enum
+from datetime import UTC, datetime, time, timedelta
+from enum import StrEnum
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -10,7 +10,7 @@ import structlog
 logger = structlog.get_logger()
 
 
-class Exchange(str, Enum):
+class Exchange(StrEnum):
     NYSE = "NYSE"
     NASDAQ = "NASDAQ"
     EURONEXT = "EURONEXT"
@@ -115,7 +115,7 @@ def is_market_open(
     tz = ZoneInfo(session.timezone)
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     local_now = now.astimezone(tz)
 
@@ -196,7 +196,7 @@ def minutes_until_close(
     tz = ZoneInfo(session.timezone)
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     local_now = now.astimezone(tz)
 
@@ -244,7 +244,7 @@ def next_market_open(exchange: Exchange, now: datetime | None = None) -> datetim
     tz = ZoneInfo(session.timezone)
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     local_now = now.astimezone(tz)
     candidate = local_now.replace(
@@ -262,4 +262,4 @@ def next_market_open(exchange: Exchange, now: datetime | None = None) -> datetim
     while candidate.weekday() >= 5 or candidate.date() in holidays:
         candidate += timedelta(days=1)
 
-    return candidate.astimezone(timezone.utc)
+    return candidate.astimezone(UTC)

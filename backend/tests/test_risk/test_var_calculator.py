@@ -1,12 +1,13 @@
 """Tests for VaR calculator."""
 
-import pytest
-import numpy as np
 from unittest.mock import AsyncMock
-import pandas as pd
 
-from app.broker.base import Portfolio, AccountSummary, Position
-from app.risk.var_calculator import VaRCalculator, VaRResult, STRESS_SCENARIOS
+import numpy as np
+import pandas as pd
+import pytest
+
+from app.broker.base import AccountSummary, Portfolio, Position
+from app.risk.var_calculator import STRESS_SCENARIOS, VaRCalculator, VaRResult
 
 
 def _make_portfolio(positions: list[tuple[str, int, float]]) -> Portfolio:

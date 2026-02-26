@@ -1,14 +1,14 @@
 """Order lifecycle management: submission, tracking, partial fills, and cancellation."""
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide, OrderType
 from app.config import settings
-from app.core.event_bus import event_bus, ORDER_PLACED, ORDER_FILLED, ORDER_CANCELLED
+from app.core.event_bus import ORDER_CANCELLED, ORDER_FILLED, ORDER_PLACED, event_bus
 from app.models.order import Order, OrderStatus
 from app.models.order import OrderType as DBOrderType
 
@@ -108,7 +108,7 @@ class OrderManager:
 
         mapped = self._map_status(result.status)
         if mapped == OrderStatus.FILLED:
-            db_order.filled_at = datetime.now(timezone.utc)
+            db_order.filled_at = datetime.now(UTC)
 
         self._db.add(db_order)
         await self._db.flush()
@@ -130,7 +130,7 @@ class OrderManager:
         elif mapped in _ACTIVE_STATUSES:
             self._pending_orders[result.order_id] = db_order
             self._pending_by_symbol.setdefault(symbol, set()).add(result.order_id)
-            self._submitted_at[result.order_id] = datetime.now(timezone.utc)
+            self._submitted_at[result.order_id] = datetime.now(UTC)
 
         logger.info(
             "order.submitted",
@@ -154,7 +154,7 @@ class OrderManager:
             return []
 
         # Auto-cancel timed-out orders
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timed_out = [
             bid for bid, sub_at in self._submitted_at.items()
             if now - sub_at > self.ORDER_TIMEOUT and bid in self._pending_orders
@@ -187,7 +187,7 @@ class OrderManager:
                 if new_status == OrderStatus.FILLED:
                     db_order.filled_price = result.filled_price
                     db_order.filled_quantity = result.filled_quantity
-                    db_order.filled_at = datetime.now(timezone.utc)
+                    db_order.filled_at = datetime.now(UTC)
                     if db_order.expected_price is not None and result.filled_price is not None:
                         db_order.slippage = result.filled_price - db_order.expected_price
                     to_remove.append(broker_id)

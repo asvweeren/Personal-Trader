@@ -7,7 +7,7 @@ database through :class:`PaperTradingValidator`.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import structlog
@@ -60,7 +60,7 @@ class DailyReporter:
             The persisted :class:`ValidationReport` instance.
         """
         if report_date is None:
-            report_date = datetime.now(timezone.utc).date()
+            report_date = datetime.now(UTC).date()
 
         logger.info("daily_reporter.generating", date=report_date.isoformat())
 

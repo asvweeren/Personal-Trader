@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -25,7 +25,7 @@ def make_ohlcv(n=200):
 
 def make_snapshot(symbols_data: dict[str, pd.DataFrame]) -> MarketSnapshot:
     return MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices={s: df["close"].iloc[-1] for s, df in symbols_data.items()},
         ohlcv=symbols_data,
         features={},

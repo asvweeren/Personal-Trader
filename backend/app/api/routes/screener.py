@@ -2,10 +2,9 @@
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from app.config import settings
 from app.data.screener import StockScreener

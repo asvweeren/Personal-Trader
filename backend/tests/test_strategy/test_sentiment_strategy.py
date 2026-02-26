@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,7 +12,7 @@ from app.strategy.sentiment_strategy import SentimentStrategy
 def make_snapshot(symbols: list[str] = None):
     symbols = symbols or ["AAPL"]
     return MarketSnapshot(
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         prices={s: 150.0 for s in symbols},
         ohlcv={},
         features={},
