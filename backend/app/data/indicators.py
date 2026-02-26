@@ -165,7 +165,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["momentum_20d"] = close / close.shift(20) - 1
 
     # Volume dynamics (ratios)
-    features["volume_change_5d"] = vol / vol.shift(5) - 1
+    features["volume_change_5d"] = (vol / (vol.shift(5) + 1e-10) - 1).clip(-5, 5)
     features["volume_ratio"] = vol / vol.rolling(20).mean()
 
     # Volatility ratio (short vs long)
@@ -207,8 +207,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # VWAP distance: price distance from VWAP as %
     features["vwap_distance"] = (close - vwap_raw) / (vwap_raw + 1e-10)
 
-    # Volume-price trend: OBV normalized by average volume
-    features["volume_price_trend"] = obv_raw / (vol_sma_20 + 1e-10)
+    # Volume-price trend: z-score of OBV relative to rolling mean (clipped)
+    obv_mean_vpt = obv_raw.rolling(50).mean()
+    obv_std_vpt = obv_raw.rolling(50).std()
+    features["volume_price_trend"] = ((obv_raw - obv_mean_vpt) / (obv_std_vpt + 1e-10)).clip(-5, 5)
 
     # (atr_ratio removed — duplicate of atr_14)
 

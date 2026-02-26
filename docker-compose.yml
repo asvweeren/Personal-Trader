@@ -45,7 +45,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
-      - ./ml/models:/app/ml/models:ro
+      - ./backend/ml/models:/app/ml/models:ro
     restart: unless-stopped
 
   frontend:
