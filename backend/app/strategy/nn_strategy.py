@@ -88,7 +88,13 @@ class NNStrategy(Strategy):
             saved = torch.load(self._model_path, weights_only=False)
             self._feature_columns = saved["feature_columns"]
             self._norm_stats = saved["norm_stats"]
-            self._n_classes = saved.get("config", {}).get("n_classes", 2)
+            # Detect n_classes from state_dict (fc2 output layer) if not in config
+            config_classes = saved.get("config", {}).get("n_classes")
+            if config_classes:
+                self._n_classes = config_classes
+            else:
+                fc2_weight = saved["state_dict"].get("fc2.weight")
+                self._n_classes = fc2_weight.shape[0] if fc2_weight is not None else 2
             n_features = len(self._feature_columns)
 
             model = _LSTMClassifier(
@@ -115,7 +121,7 @@ class NNStrategy(Strategy):
                 n_classes=self._n_classes,
             )
         except Exception:
-            logger.warning("nn_strategy.model_load_error")
+            logger.warning("nn_strategy.model_load_error", exc_info=True)
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
         signals = []
