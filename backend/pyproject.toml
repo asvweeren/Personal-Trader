@@ -93,7 +93,11 @@ dev = [
     "pytest-cov>=7.0.0",
 ]
 
-[tool.uv]
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
 # Use CPU-only PyTorch to save ~1.5GB on Docker image (no CUDA needed)
-index-strategy = "unsafe-best-match"
-extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+torch = { index = "pytorch-cpu" }
