@@ -26,6 +26,7 @@ dependencies = [
     "numpy>=2.0.0",
     "xgboost>=2.1.0",
     "scikit-learn>=1.5.0",
+    "torch>=2.5.0",
     "ta>=0.11.0",
     "yfinance>=0.2.36",
     # LLM
@@ -91,3 +92,8 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.uv]
+# Use CPU-only PyTorch to save ~1.5GB on Docker image (no CUDA needed)
+index-strategy = "unsafe-best-match"
+extra-index-url = ["https://download.pytorch.org/whl/cpu"]
