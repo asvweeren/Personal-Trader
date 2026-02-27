@@ -1,5 +1,6 @@
 """Data pipeline orchestrator - coordinates data collection, feature computation, and caching."""
 
+import asyncio
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,21 +157,29 @@ class DataPipeline:
             total=len(self._symbols),
         )
         sentiments = {}
+        sem = asyncio.Semaphore(5)  # Limit concurrent API calls
 
-        for symbol in symbols_to_analyze:
-            try:
+        async def _analyze_one(symbol: str):
+            async with sem:
                 news = await self._news_fetcher.fetch_symbol_news(symbol, limit=10)
                 result = await self._sentiment.analyze(symbol, news)
-                sentiments[symbol] = result
                 self._latest_sentiment[symbol] = result
-
-                # Cache in Redis with 30-min TTL
                 await self._feature_store.store_sentiment(
                     symbol, self._sentiment.to_dict(result), ttl=1800
                 )
+                return symbol, result
 
-            except Exception:
-                logger.exception("pipeline.sentiment_error", symbol=symbol)
+        results = await asyncio.gather(
+            *[_analyze_one(s) for s in symbols_to_analyze],
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.exception("pipeline.sentiment_error", error=str(result))
+                continue
+            symbol, sentiment = result
+            sentiments[symbol] = sentiment
 
         logger.info("pipeline.sentiment_computed", count=len(sentiments))
         return sentiments
@@ -180,14 +189,26 @@ class DataPipeline:
         Intended to be called once per day or on startup.
         """
         logger.info("pipeline.refresh_historical", symbols=len(self._symbols))
-        for symbol in self._symbols:
-            try:
+        sem = asyncio.Semaphore(5)  # Limit concurrent broker calls
+
+        async def _download_one(symbol: str):
+            async with sem:
                 count = await self._market_data.download_and_store(
                     symbol, duration="1 Y", bar_size="1 day"
                 )
                 logger.info("pipeline.historical_stored", symbol=symbol, bars=count)
-            except Exception:
-                logger.exception("pipeline.historical_error", symbol=symbol)
+
+        results = await asyncio.gather(
+            *[_download_one(s) for s in self._symbols],
+            return_exceptions=True,
+        )
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.exception(
+                    "pipeline.historical_error",
+                    symbol=self._symbols[i],
+                    error=str(result),
+                )
 
     # ── Snapshot with enriched features ───────────────────────────
 

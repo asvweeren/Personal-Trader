@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.backtest.engine import BacktestConfig, BacktestEngine
 from app.dependencies import get_broker, get_db
+from app.models.database import async_session as session_factory
 from app.models.backtest_result import BacktestResult
 from app.strategy.ml_strategy import MLStrategy
 from app.strategy.sentiment_strategy import SentimentStrategy
@@ -59,9 +60,20 @@ class BacktestRequest(BaseModel):
 async def _run_backtest_task(
     backtest_id: int,
     request: BacktestRequest,
+    _db_unused: AsyncSession | None = None,
+):
+    """Background task wrapper — creates its own DB session since the
+    request-scoped session is closed by the time the background task runs."""
+    async with session_factory() as db:
+        await _run_backtest_inner(backtest_id, request, db)
+
+
+async def _run_backtest_inner(
+    backtest_id: int,
+    request: BacktestRequest,
     db: AsyncSession,
 ):
-    """Background task to run the actual backtest."""
+    """Actual backtest logic with a fresh DB session."""
 
     try:
         # Get strategy
@@ -238,8 +250,8 @@ async def run_backtest(
     await db.commit()
     await db.refresh(bt)
 
-    # Schedule background task
-    background_tasks.add_task(_run_backtest_task, bt.id, request, db)
+    # Schedule background task (creates its own DB session)
+    background_tasks.add_task(_run_backtest_task, bt.id, request)
 
     return {"id": bt.id, "status": "running"}
 
@@ -312,75 +324,77 @@ async def run_walk_forward(
     await db.commit()
     await db.refresh(bt)
 
-    async def _run_wf(bt_id: int, req: WalkForwardRequest, session: AsyncSession):
-        try:
-            strategy = factory(req.params or {})
-            # Download data
-            data = None
+    async def _run_wf(bt_id: int, req: WalkForwardRequest):
+        """Background walk-forward task — creates its own DB session."""
+        async with session_factory() as session:
             try:
-                import yfinance as yf
-                data = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: yf.download(
-                        req.symbol,
-                        start=req.start_date or None,
-                        end=req.end_date or None,
-                        period="2y" if not req.start_date else None,
-                        interval="1h",
-                        progress=False,
-                    ),
+                strategy = factory(req.params or {})
+                # Download data
+                data = None
+                try:
+                    import yfinance as yf
+                    data = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: yf.download(
+                            req.symbol,
+                            start=req.start_date or None,
+                            end=req.end_date or None,
+                            period="2y" if not req.start_date else None,
+                            interval="1h",
+                            progress=False,
+                        ),
+                    )
+                    if data is not None and not data.empty:
+                        import pandas as _pd
+                        if isinstance(data.columns, _pd.MultiIndex):
+                            data.columns = [
+                                str(c[0]) if isinstance(c, tuple) else str(c)
+                                for c in data.columns
+                            ]
+                        data = data.reset_index()
+                        rename_map = {}
+                        for col in data.columns:
+                            lc = str(col).strip().lower()
+                            if lc in ("datetime", "date", "index"):
+                                rename_map[col] = "timestamp"
+                            elif lc == "open":
+                                rename_map[col] = "open"
+                            elif lc == "high":
+                                rename_map[col] = "high"
+                            elif lc == "low":
+                                rename_map[col] = "low"
+                            elif lc == "close":
+                                rename_map[col] = "close"
+                            elif lc == "volume":
+                                rename_map[col] = "volume"
+                        data = data.rename(columns=rename_map)
+                        data = data.loc[:, ~data.columns.duplicated()]
+                except Exception as e:
+                    await _update_result(session, bt_id, error=f"Data download error: {e}")
+                    return
+
+                if data is None or data.empty or len(data) < 100:
+                    await _update_result(session, bt_id, error="Insufficient data")
+                    return
+
+                config = WalkForwardConfig(
+                    train_days=req.train_days,
+                    test_days=req.test_days,
+                    step_days=req.step_days,
+                    initial_capital=req.initial_capital,
                 )
-                if data is not None and not data.empty:
-                    import pandas as _pd
-                    if isinstance(data.columns, _pd.MultiIndex):
-                        data.columns = [
-                            str(c[0]) if isinstance(c, tuple) else str(c)
-                            for c in data.columns
-                        ]
-                    data = data.reset_index()
-                    rename_map = {}
-                    for col in data.columns:
-                        lc = str(col).strip().lower()
-                        if lc in ("datetime", "date", "index"):
-                            rename_map[col] = "timestamp"
-                        elif lc == "open":
-                            rename_map[col] = "open"
-                        elif lc == "high":
-                            rename_map[col] = "high"
-                        elif lc == "low":
-                            rename_map[col] = "low"
-                        elif lc == "close":
-                            rename_map[col] = "close"
-                        elif lc == "volume":
-                            rename_map[col] = "volume"
-                    data = data.rename(columns=rename_map)
-                    data = data.loc[:, ~data.columns.duplicated()]
+                engine = WalkForwardEngine()
+                result = await engine.run(config, strategy, data, req.symbol)
+
+                bt_row = await session.get(BacktestResult, bt_id)
+                if bt_row:
+                    bt_row.metrics = result.to_dict()
+                    await session.commit()
+
             except Exception as e:
-                await _update_result(session, bt_id, error=f"Data download error: {e}")
-                return
+                await _update_result(session, bt_id, error=str(e))
 
-            if data is None or data.empty or len(data) < 100:
-                await _update_result(session, bt_id, error="Insufficient data")
-                return
-
-            config = WalkForwardConfig(
-                train_days=req.train_days,
-                test_days=req.test_days,
-                step_days=req.step_days,
-                initial_capital=req.initial_capital,
-            )
-            engine = WalkForwardEngine()
-            result = await engine.run(config, strategy, data, req.symbol)
-
-            bt_row = await session.get(BacktestResult, bt_id)
-            if bt_row:
-                bt_row.metrics = result.to_dict()
-                await session.commit()
-
-        except Exception as e:
-            await _update_result(session, bt_id, error=str(e))
-
-    background_tasks.add_task(_run_wf, bt.id, request, db)
+    background_tasks.add_task(_run_wf, bt.id, request)
     return {"id": bt.id, "status": "running", "type": "walk_forward"}
 
 

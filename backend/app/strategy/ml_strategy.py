@@ -211,7 +211,10 @@ class MLStrategy(Strategy):
                 continue
 
             try:
-                features_df = compute_features(df)
+                # Use pre-computed features from snapshot if available
+                features_df = market_data.computed_features_df.get(symbol)
+                if features_df is None:
+                    features_df = compute_features(df)
                 # Ensure all required columns exist
                 missing = set(self._feature_columns) - set(features_df.columns)
                 if missing:

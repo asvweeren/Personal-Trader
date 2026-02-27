@@ -214,6 +214,7 @@ async def init_trading_engine(db: AsyncSession) -> TradingEngine:
         db=db,
         symbols=symbols,
         trading_enabled=trading_enabled,
+        session_factory=_session_factory,
     )
 
     return _trading_engine

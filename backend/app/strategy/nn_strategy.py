@@ -74,6 +74,8 @@ class NNStrategy(Strategy):
         self._model = None
         self._feature_columns: list[str] = []
         self._norm_stats: dict | None = None
+        self._norm_means: np.ndarray | None = None
+        self._norm_stds: np.ndarray | None = None
         self._n_classes: int = 2
         self._model_path = Path(model_path) if model_path else MODEL_DIR / "lstm_model.pkl"
         self._load_model()
@@ -96,6 +98,17 @@ class NNStrategy(Strategy):
             model.load_state_dict(saved["state_dict"])
             model.eval()
             self._model = model
+            # Pre-compute normalization arrays once (avoids rebuilding per symbol per cycle)
+            if self._norm_stats:
+                self._norm_means = np.array([
+                    self._norm_stats["mean"].get(c, 0)
+                    for c in self._feature_columns
+                ], dtype=np.float32)
+                self._norm_stds = np.array([
+                    self._norm_stats["std"].get(c, 1)
+                    for c in self._feature_columns
+                ], dtype=np.float32)
+                self._norm_stds[self._norm_stds == 0] = 1
             logger.info(
                 "nn_strategy.model_loaded",
                 features=n_features,
@@ -116,7 +129,10 @@ class NNStrategy(Strategy):
                 continue
 
             try:
-                features_df = compute_features(df)
+                # Use pre-computed features from snapshot if available
+                features_df = market_data.computed_features_df.get(symbol)
+                if features_df is None:
+                    features_df = compute_features(df)
                 missing = set(self._feature_columns) - set(features_df.columns)
                 if missing:
                     continue
@@ -126,19 +142,10 @@ class NNStrategy(Strategy):
                 if recent.isnull().any().any():
                     continue
 
-                # Normalize using training statistics
+                # Normalize using pre-computed training statistics
                 values = recent.values.astype(np.float32)
-                if self._norm_stats:
-                    means = np.array([
-                        self._norm_stats["mean"].get(c, 0)
-                        for c in self._feature_columns
-                    ])
-                    stds = np.array([
-                        self._norm_stats["std"].get(c, 1)
-                        for c in self._feature_columns
-                    ])
-                    stds[stds == 0] = 1
-                    values = (values - means) / stds
+                if self._norm_means is not None and self._norm_stds is not None:
+                    values = (values - self._norm_means) / self._norm_stds
 
                 # Shape: (1, lookback, n_features)
                 x_tensor = torch.FloatTensor(values).unsqueeze(0)

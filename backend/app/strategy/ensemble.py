@@ -1,5 +1,6 @@
 """Ensemble strategy with dynamic weight adjustment and conflict resolution."""
 
+import asyncio
 from collections import defaultdict
 
 import structlog
@@ -40,19 +41,31 @@ class EnsembleStrategy(Strategy):
         self._max_history = 100
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
-        # Collect signals from all sub-strategies
+        # Collect signals from all sub-strategies in parallel
         all_signals: dict[str, list[tuple[TradingSignal, float]]] = {}
 
-        for strategy in self._strategies:
-            weight = self._weights.get(strategy.name, 1.0)
-            try:
-                signals = await strategy.generate_signals(market_data)
-                for signal in signals:
-                    if signal.symbol not in all_signals:
-                        all_signals[signal.symbol] = []
-                    all_signals[signal.symbol].append((signal, weight))
-            except Exception:
-                logger.exception("ensemble.strategy_error", strategy=strategy.name)
+        async def _run_strategy(strategy: Strategy):
+            return strategy.name, await strategy.generate_signals(market_data)
+
+        results = await asyncio.gather(
+            *[_run_strategy(s) for s in self._strategies],
+            return_exceptions=True,
+        )
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.exception(
+                    "ensemble.strategy_error",
+                    strategy=self._strategies[i].name,
+                    error=str(result),
+                )
+                continue
+            strategy_name, signals = result
+            weight = self._weights.get(strategy_name, 1.0)
+            for signal in signals:
+                if signal.symbol not in all_signals:
+                    all_signals[signal.symbol] = []
+                all_signals[signal.symbol].append((signal, weight))
 
         combined = []
         for symbol, signal_weights in all_signals.items():

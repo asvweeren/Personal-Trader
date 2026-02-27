@@ -72,7 +72,10 @@ class RegimeDetector:
                 continue
 
             try:
-                features = compute_features(df)
+                # Use pre-computed features from snapshot if available
+                features = snapshot.computed_features_df.get(symbol)
+                if features is None:
+                    features = compute_features(df)
                 latest = features.iloc[-1]
 
                 # ADX (use adx_14 if available, else estimate from ATR)

@@ -1,13 +1,15 @@
 import { useState } from "react";
 import type { Portfolio, Performance } from "../types";
 
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 2,
+});
+
 function formatCurrency(value: number | null | undefined): string {
   if (value == null) return "-";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-  }).format(value);
+  return currencyFormatter.format(value);
 }
 
 function formatPct(value: number | null | undefined): string {

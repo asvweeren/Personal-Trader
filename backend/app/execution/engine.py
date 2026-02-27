@@ -6,7 +6,7 @@ from enum import StrEnum
 
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.broker.base import BrokerAdapter, OrderType
 from app.config import settings
@@ -62,6 +62,7 @@ class TradingEngine:
         db: AsyncSession,
         symbols: list[str],
         trading_enabled: bool = False,
+        session_factory: async_sessionmaker | None = None,
     ):
         self._broker = broker
         self._strategies = strategies
@@ -69,6 +70,7 @@ class TradingEngine:
         self._market_data = market_data
         self._performance = performance
         self._db = db
+        self._session_factory = session_factory
         self._symbols = symbols
         self._trading_enabled = trading_enabled
         self._order_manager = OrderManager(broker, db)
@@ -190,9 +192,24 @@ class TradingEngine:
                 "error": "Cycle failed",
             })
 
+    async def _refresh_session(self) -> None:
+        """Create a fresh DB session per cycle to prevent stale data and memory leaks."""
+        if self._session_factory is None:
+            return
+        try:
+            await self._db.close()
+        except Exception:
+            pass
+        self._db = self._session_factory()
+        self._order_manager._db = self._db
+        self._portfolio_tracker._db = self._db
+
     async def _run_cycle_inner(self) -> None:
         """Inner cycle logic, called with a timeout by run_cycle()."""
         try:
+            # Refresh DB session each cycle to prevent stale connections / memory leaks
+            await self._refresh_session()
+
             # Check broker connectivity
             if not await self._ensure_connected():
                 return
@@ -269,7 +286,15 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            for strategy in self._strategies:
+            # If ensemble exists, run only that (it already calls sub-strategies
+            # in parallel internally). Otherwise run all strategies.
+            has_ensemble = any(s.name == "ensemble" for s in self._strategies)
+            strategies_to_run = (
+                [s for s in self._strategies if s.name == "ensemble"]
+                if has_ensemble
+                else self._strategies
+            )
+            for strategy in strategies_to_run:
                 try:
                     signals = await strategy.generate_signals(snapshot)
                     all_signals.extend(signals)
@@ -288,14 +313,10 @@ class TradingEngine:
                     confirmed_signals.append(signal)
                     continue
                 try:
-                    # Get daily features for MTF confirmation
-                    daily_df = await self._market_data.get_historical_data(
-                        signal.symbol, "60 D", "1 day"
-                    )
-                    if daily_df is not None and not daily_df.empty and len(daily_df) >= 20:
-                        from app.data.indicators import compute_features as _cf
-                        daily_features_df = _cf(daily_df)
-                        daily_feat = daily_features_df.iloc[-1].to_dict()
+                    # Use pre-computed features from snapshot (already has 1Y daily data)
+                    precomputed = snapshot.computed_features_df.get(signal.symbol)
+                    if precomputed is not None and len(precomputed) >= 20:
+                        daily_feat = precomputed.iloc[-1].to_dict()
                     else:
                         daily_feat = {}
                     hourly_feat = signal.features_snapshot or {}
@@ -311,7 +332,7 @@ class TradingEngine:
             # 7b. Compute correlation matrix for position sizing
             try:
                 correlation_matrix = await get_correlation_matrix(
-                    self._symbols, self._market_data
+                    self._symbols, self._market_data, snapshot=snapshot
                 )
             except Exception:
                 logger.debug("engine.correlation_compute_failed", exc_info=True)
@@ -373,7 +394,7 @@ class TradingEngine:
                             mins_since_close=round(mins_since, 1),
                             cooldown=settings.reentry_cooldown_minutes,
                         )
-                    continue
+                        continue
 
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
@@ -1150,6 +1171,8 @@ class TradingEngine:
             else 0.0
         )
         self._cycle_count = 0
+        self._last_close_time.clear()
+        self._last_stop_update_price.clear()
         logger.info("engine.daily_reset")
 
     def get_status(self) -> dict:

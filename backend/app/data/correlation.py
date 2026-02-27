@@ -19,11 +19,12 @@ _CACHE_TTL_SECONDS = 3600  # 1 hour
 async def get_correlation_matrix(
     symbols: list[str],
     market_data_service,
+    snapshot=None,
 ) -> dict[tuple[str, str], float]:
     """Compute pairwise Pearson correlation from daily returns.
 
-    Uses data already in the MarketDataService cache. Returns a dict mapping
-    (symbol_a, symbol_b) → correlation, where symbol_a < symbol_b alphabetically.
+    Uses pre-loaded snapshot data when available, avoiding extra API calls.
+    Returns a dict mapping (symbol_a, symbol_b) → correlation.
     """
     if len(symbols) < 2:
         return {}
@@ -36,19 +37,25 @@ async def get_correlation_matrix(
         if now - cached_at < _CACHE_TTL_SECONDS:
             return cached_matrix
 
-    # Gather close prices from historical cache
+    # Gather close prices — prefer snapshot data (already loaded) over extra API calls
     returns_by_symbol: dict[str, np.ndarray] = {}
     for symbol in symbols:
         try:
-            df = await market_data_service.get_historical_data(
-                symbol, duration="30 D", bar_size="1 day"
-            )
+            df = None
+            if snapshot and hasattr(snapshot, "ohlcv"):
+                df = snapshot.ohlcv.get(symbol)
+                # Use last 30 days from the 1Y snapshot
+                if df is not None and len(df) > 30:
+                    df = df.tail(30)
+            if df is None or df.empty:
+                df = await market_data_service.get_historical_data(
+                    symbol, duration="30 D", bar_size="1 day"
+                )
             if df is not None and len(df) >= 5:
                 closes = df["close"].values if "close" in df.columns else None
                 if closes is None and "Close" in df.columns:
                     closes = df["Close"].values
                 if closes is not None and len(closes) >= 5:
-                    # Daily returns
                     prices = closes.astype(float)
                     rets = np.diff(prices) / prices[:-1]
                     returns_by_symbol[symbol] = rets

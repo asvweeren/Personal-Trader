@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
@@ -100,6 +100,7 @@ class MarketSnapshot:
     prices: dict[str, float]
     ohlcv: dict[str, pd.DataFrame]
     features: dict[str, dict]
+    computed_features_df: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 class MarketDataService:
@@ -272,24 +273,48 @@ class MarketDataService:
     async def get_snapshot(self, symbols: list[str]) -> MarketSnapshot:
         """Get a complete market snapshot with prices and OHLCV data for all symbols."""
         prices = await self.get_current_prices(symbols)
+
+        # Fetch all symbols in parallel instead of sequentially
+        async def _fetch_one(symbol: str):
+            df = await self.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
+            df = self._drop_incomplete_daily_bar(df)
+            return symbol, df
+
+        import asyncio
+        results = await asyncio.gather(
+            *[_fetch_one(s) for s in symbols],
+            return_exceptions=True,
+        )
+
         ohlcv = {}
-        for symbol in symbols:
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("market_data.fetch_error", error=str(result))
+                continue
+            symbol, df = result
+            ohlcv[symbol] = df
+            if (not prices.get(symbol)) and not df.empty:
+                prices[symbol] = float(df["close"].iloc[-1])
+
+        # Pre-compute features once for all symbols — avoids 3-4x redundant
+        # compute_features() calls per symbol per cycle across strategies
+        computed_features_df: dict[str, pd.DataFrame] = {}
+        from app.data.indicators import compute_features
+
+        for symbol, df in ohlcv.items():
+            if df.empty or len(df) < 50:
+                continue
             try:
-                df = await self.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
-                # Drop today's incomplete bar — model needs completed daily bars
-                df = self._drop_incomplete_daily_bar(df)
-                ohlcv[symbol] = df
-                # Fill missing streaming price from last OHLCV close
-                if (not prices.get(symbol)) and not df.empty:
-                    prices[symbol] = float(df["close"].iloc[-1])
+                computed_features_df[symbol] = compute_features(df)
             except Exception:
-                logger.warning("market_data.fetch_error", symbol=symbol)
+                logger.warning("market_data.compute_features_error", symbol=symbol)
 
         return MarketSnapshot(
             timestamp=datetime.now(UTC),
             prices=prices,
             ohlcv=ohlcv,
             features={},
+            computed_features_df=computed_features_df,
         )
 
     # ── Data quality validation ─────────────────────────────────────

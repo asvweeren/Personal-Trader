@@ -29,6 +29,9 @@ class Trade(Base):
     __tablename__ = "trades"
     __table_args__ = (
         Index("ix_trade_symbol_status_created", "symbol", "status", "created_at"),
+        Index("ix_trade_created_at", "created_at"),
+        Index("ix_trade_closed_at", "closed_at"),
+        Index("ix_trade_strategy_name", "strategy_name"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

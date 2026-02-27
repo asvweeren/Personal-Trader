@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   LineChart,
   Line,
@@ -26,9 +26,13 @@ export function BacktestPanel() {
     commission_pct: 0.1,
     stop_loss_pct: 3.0,
   });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     api.getBacktests(0, 10).then((r) => setBacktests(r.backtests)).catch(() => {});
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
   const handleRun = async () => {
@@ -36,13 +40,14 @@ export function BacktestPanel() {
     setError(null);
     try {
       const result = await api.runBacktest(form);
-      // Poll for completion
+      // Poll for completion (cleanup on unmount to prevent memory leak)
       const poll = setInterval(async () => {
         try {
           const bt = await api.getBacktest(result.id);
           const m = bt.metrics as Record<string, unknown> | undefined;
           if (m && m.status !== "running") {
             clearInterval(poll);
+            pollRef.current = null;
             if (m.status === "error") {
               setError(String(m.error ?? "Backtest failed"));
             }
@@ -52,9 +57,11 @@ export function BacktestPanel() {
           }
         } catch {
           clearInterval(poll);
+          pollRef.current = null;
           setRunning(false);
         }
       }, 2000);
+      pollRef.current = poll;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start backtest");
       setRunning(false);
