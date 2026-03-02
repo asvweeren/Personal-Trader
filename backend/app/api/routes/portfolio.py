@@ -1,12 +1,14 @@
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.broker.base import BrokerAdapter
+from app.broker.base import BrokerAdapter, OrderType
 from app.config import settings
-from app.dependencies import get_broker, get_db, get_performance_tracker
+from app.dependencies import get_broker, get_db, get_performance_tracker, get_trading_engine
+from app.models.order import OrderStatus
 from app.models.portfolio_snapshot import PortfolioSnapshot
+from app.monitoring.alerts import send_alert
 from app.monitoring.performance import PerformanceTracker
 
 logger = structlog.get_logger()
@@ -109,6 +111,172 @@ async def get_performance(
     except Exception:
         logger.warning("performance.broker_unavailable_for_metrics")
     return data
+
+
+@router.post("/positions/{symbol}/close")
+async def close_position(symbol: str):
+    """Manually close an open position by placing a MARKET SELL order."""
+    try:
+        engine = get_trading_engine()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Trading engine not initialized")
+
+    open_trade = engine._open_trades.get(symbol)
+    if not open_trade:
+        raise HTTPException(status_code=404, detail=f"No open trade for {symbol}")
+
+    # Cancel any pending SELL orders (e.g. stop-loss) to avoid accidental short
+    await engine._cancel_pending_sells(symbol)
+    remaining = len(engine._order_manager._pending_by_symbol.get(symbol, set()))
+    if remaining > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not cancel {remaining} pending orders for {symbol}",
+        )
+
+    # Get current price for the sell order
+    try:
+        portfolio = await engine._broker.get_portfolio()
+        current_price = 0.0
+        for p in portfolio.positions:
+            if p.symbol == symbol:
+                current_price = p.market_price
+                break
+        if current_price <= 0:
+            current_price = open_trade.entry_price or 0.0
+    except Exception:
+        current_price = open_trade.entry_price or 0.0
+
+    # Place MARKET SELL order
+    result = await engine._order_manager.submit_order(
+        trade_id=open_trade.id,
+        symbol=symbol,
+        side="SELL",
+        quantity=open_trade.quantity,
+        order_type=OrderType.MARKET,
+        expected_price=current_price,
+    )
+
+    mapped_status = engine._order_manager._map_status(result.status)
+    if mapped_status == OrderStatus.FILLED and result.filled_price:
+        from datetime import UTC, datetime
+
+        await engine._portfolio_tracker.record_trade_close(
+            open_trade, result.filled_price
+        )
+        engine._open_trades.pop(symbol, None)
+        engine._last_close_time[symbol] = datetime.now(UTC)
+        pnl = open_trade.realized_pnl or 0.0
+        logger.info(
+            "engine.position_closed_manual",
+            symbol=symbol,
+            exit_price=result.filled_price,
+            pnl=pnl,
+        )
+        await send_alert(
+            "Position Closed (Manual)",
+            f"{symbol}: SOLD {open_trade.quantity} @ {result.filled_price:.2f}\n"
+            f"P&L: {pnl:+.2f}\nExit reason: manual close",
+        )
+        return {
+            "status": "closed",
+            "symbol": symbol,
+            "quantity": open_trade.quantity,
+            "exit_price": result.filled_price,
+            "pnl": pnl,
+        }
+
+    return {
+        "status": "submitted",
+        "symbol": symbol,
+        "order_status": result.status,
+        "message": "Sell order submitted, awaiting fill",
+    }
+
+
+@router.post("/positions/close-all")
+async def close_all_positions():
+    """Close all open positions."""
+    try:
+        engine = get_trading_engine()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Trading engine not initialized")
+
+    if not engine._open_trades:
+        return {"status": "no_positions", "closed": []}
+
+    results = []
+    symbols = list(engine._open_trades.keys())
+    for symbol in symbols:
+        try:
+            open_trade = engine._open_trades.get(symbol)
+            if not open_trade:
+                continue
+
+            await engine._cancel_pending_sells(symbol)
+            remaining = len(engine._order_manager._pending_by_symbol.get(symbol, set()))
+            if remaining > 0:
+                results.append({"symbol": symbol, "status": "error", "reason": "pending orders"})
+                continue
+
+            try:
+                portfolio = await engine._broker.get_portfolio()
+                current_price = 0.0
+                for p in portfolio.positions:
+                    if p.symbol == symbol:
+                        current_price = p.market_price
+                        break
+                if current_price <= 0:
+                    current_price = open_trade.entry_price or 0.0
+            except Exception:
+                current_price = open_trade.entry_price or 0.0
+
+            result = await engine._order_manager.submit_order(
+                trade_id=open_trade.id,
+                symbol=symbol,
+                side="SELL",
+                quantity=open_trade.quantity,
+                order_type=OrderType.MARKET,
+                expected_price=current_price,
+            )
+
+            mapped_status = engine._order_manager._map_status(result.status)
+            if mapped_status == OrderStatus.FILLED and result.filled_price:
+                from datetime import UTC, datetime
+
+                await engine._portfolio_tracker.record_trade_close(
+                    open_trade, result.filled_price
+                )
+                engine._open_trades.pop(symbol, None)
+                engine._last_close_time[symbol] = datetime.now(UTC)
+                pnl = open_trade.realized_pnl or 0.0
+                results.append({
+                    "symbol": symbol,
+                    "status": "closed",
+                    "exit_price": result.filled_price,
+                    "pnl": pnl,
+                })
+            else:
+                results.append({
+                    "symbol": symbol,
+                    "status": "submitted",
+                    "order_status": result.status,
+                })
+        except Exception as e:
+            results.append({"symbol": symbol, "status": "error", "reason": str(e)})
+
+    closed_count = sum(1 for r in results if r["status"] == "closed")
+    if closed_count > 0:
+        summary = "\n".join(
+            f"  {r['symbol']}: P&L {r.get('pnl', 0):+.2f}"
+            for r in results if r["status"] == "closed"
+        )
+        await send_alert(
+            "Positions Closed (Manual)",
+            f"Closed {closed_count}/{len(symbols)} positions:\n{summary}",
+        )
+
+    return {"status": "done", "closed": results}
 
 
 @router.get("/portfolio/snapshots")
