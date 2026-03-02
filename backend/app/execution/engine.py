@@ -91,6 +91,8 @@ class TradingEngine:
         self._last_stop_update_price: dict[str, float] = {}
         # Track trades that need stop-loss placement retry (IBKR race condition)
         self._pending_stop_retries: set[str] = set()
+        # Track per-symbol daily trade count to prevent over-trading
+        self._daily_symbol_trades: dict[str, int] = {}
 
     @property
     def state(self) -> EngineState:
@@ -396,6 +398,17 @@ class TradingEngine:
                         )
                         continue
 
+                # Per-symbol daily trade limit: prevent over-trading same symbol
+                symbol_trades_today = self._daily_symbol_trades.get(signal.symbol, 0)
+                if symbol_trades_today >= settings.max_trades_per_symbol_per_day:
+                    logger.info(
+                        "engine.signal_skipped_daily_limit",
+                        symbol=signal.symbol,
+                        trades_today=symbol_trades_today,
+                        limit=settings.max_trades_per_symbol_per_day,
+                    )
+                    continue
+
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
                     signal, portfolio, price,
@@ -574,6 +587,10 @@ class TradingEngine:
                 exit_price=result.filled_price,
                 pnl=pnl,
             )
+            # Record outcome for dynamic strategy weight adjustment
+            for strategy in self._strategies:
+                if hasattr(strategy, "record_outcome"):
+                    strategy.record_outcome(signal.symbol, open_trade.strategy_name, pnl > 0)
             await send_alert(
                 "Trade Closed",
                 f"{signal.symbol}: SOLD {open_trade.quantity} @ {result.filled_price:.2f}\n"
@@ -644,7 +661,7 @@ class TradingEngine:
         tp_est = calculate_take_profit(price, signal.symbol, atr_val)
         risk = price - stop_price_est
         reward = tp_est - price
-        if risk > 0 and (reward / risk) < 2.0:
+        if risk > 0 and (reward / risk) < 2.5:
             logger.info(
                 "engine.insufficient_rr",
                 symbol=signal.symbol,
@@ -755,6 +772,7 @@ class TradingEngine:
             trade.quantity = quantity  # Update to actual filled quantity
             trade.entry_price = result.filled_price
             self._open_trades[signal.symbol] = trade
+            self._daily_symbol_trades[signal.symbol] = self._daily_symbol_trades.get(signal.symbol, 0) + 1
             logger.info(
                 "engine.trade_opened",
                 symbol=signal.symbol,
@@ -897,6 +915,10 @@ class TradingEngine:
                 symbol=symbol,
                 exit_price=filled_price,
             )
+            # Record outcome for dynamic strategy weight adjustment
+            for strategy in self._strategies:
+                if hasattr(strategy, "record_outcome"):
+                    strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
             await send_alert(
                 "Trade Closed",
                 f"{symbol}: SOLD {trade.quantity} @ {filled_price:.2f}\n"
@@ -1089,6 +1111,10 @@ class TradingEngine:
                     self._open_trades.pop(symbol, None)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     pnl = trade.realized_pnl or 0.0
+                    # Record outcome for dynamic strategy weight adjustment
+                    for strategy in self._strategies:
+                        if hasattr(strategy, "record_outcome"):
+                            strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
                     await send_alert(
                         "EOD Close",
                         f"{symbol}: closed at {result.filled_price:.2f} "
@@ -1173,6 +1199,7 @@ class TradingEngine:
         self._cycle_count = 0
         self._last_close_time.clear()
         self._last_stop_update_price.clear()
+        self._daily_symbol_trades.clear()
         logger.info("engine.daily_reset")
 
     def get_status(self) -> dict:

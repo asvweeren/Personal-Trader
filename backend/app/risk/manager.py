@@ -187,12 +187,20 @@ class RiskManager:
                 signal.features_snapshot["ai_sizing_reasoning"] = ai_result.reasoning
                 signal.features_snapshot["ai_sizing_risk_factors"] = ai_result.risk_factors
 
+        # Extract ATR-based volatility from signal features for position sizing
+        volatility = None
+        if signal.features_snapshot and isinstance(signal.features_snapshot, dict):
+            atr = signal.features_snapshot.get("atr_14")
+            if atr and estimated_price > 0:
+                volatility = atr / estimated_price  # Normalized ATR as volatility measure
+
         # For BUY signals, run full risk checks
         quantity = calculate_position_size(
             portfolio=portfolio,
             price=estimated_price,
             max_position_pct=effective_max_position_pct,
             confidence=signal.confidence,
+            volatility=volatility,
             symbol=signal.symbol,
             correlation_matrix=correlation_matrix,
             ai_modifier=ai_modifier,

@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # Trade management
     min_hold_minutes: int = 30               # Min hold time before SELL signal can close
     reentry_cooldown_minutes: int = 120      # Min wait time before re-entering same symbol
+    max_trades_per_symbol_per_day: int = 2   # Max trades per symbol per day
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close

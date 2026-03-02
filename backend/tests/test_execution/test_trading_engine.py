@@ -186,18 +186,25 @@ async def test_cycle_buy_signal_trading_disabled():
 
 @pytest.mark.asyncio
 async def test_cycle_buy_signal_trading_enabled():
-    buy_signal = TradingSignal(
-        symbol="AAPL", action=SignalAction.BUY,
-        confidence=0.8, strategy_name="mock",
-    )
-    engine = make_engine(
-        strategies=[MockStrategy(signals=[buy_signal])],
-        trading_enabled=True,
-    )
-    await engine.start()
-    await engine.run_cycle()
-    assert len(engine._open_trades) == 1
-    assert "AAPL" in engine._open_trades
+    from app.config import settings
+    # Ensure R:R ratio passes the 2.5 minimum gate (risk=3% → need TP >= 7.5%)
+    old_tp = settings.min_take_profit_pct
+    settings.min_take_profit_pct = 8.0
+    try:
+        buy_signal = TradingSignal(
+            symbol="AAPL", action=SignalAction.BUY,
+            confidence=0.8, strategy_name="mock",
+        )
+        engine = make_engine(
+            strategies=[MockStrategy(signals=[buy_signal])],
+            trading_enabled=True,
+        )
+        await engine.start()
+        await engine.run_cycle()
+        assert len(engine._open_trades) == 1
+        assert "AAPL" in engine._open_trades
+    finally:
+        settings.min_take_profit_pct = old_tp
 
 
 @pytest.mark.asyncio

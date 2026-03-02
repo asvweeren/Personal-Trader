@@ -151,19 +151,17 @@ def calculate_kelly_fraction(
 
 
 def _confidence_to_kelly(confidence: float) -> float:
-    """Map confidence to Kelly fraction using tiered scaling.
+    """Linear scaling: threshold -> 0.10, max -> 0.50.
 
-    High-confidence trades get proportionally more capital than
-    low-confidence trades (3x ratio between tiers).
+    Conservative sizing that requires high confidence for meaningful allocation.
+    Below threshold: 0 allocation. Above: linear from 0.10 to 0.50.
     """
-    if confidence >= 0.85:
-        return 0.90
-    elif confidence >= 0.75:
-        return 0.70
-    elif confidence >= 0.65:
-        return 0.50
-    else:
-        return 0.30
+    threshold = 0.70
+    if confidence < threshold:
+        return 0.0
+    # Linear from 0.10 to 0.50 as confidence goes from threshold to 1.0
+    fraction = 0.10 + (confidence - threshold) / (1.0 - threshold) * 0.40
+    return min(0.50, fraction)
 
 
 def calculate_correlation_factor(
@@ -275,6 +273,9 @@ def calculate_position_size(
 
     # Maximum allowed allocation for this position
     max_allocation = total_value * (max_position_pct / 100)
+
+    # Never exceed total_value * max_position_pct regardless of margin/buying_power
+    available_funds = min(available_funds, max_allocation)
 
     # Subtract any pending allocation for this symbol
     if symbol:
