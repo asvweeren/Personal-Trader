@@ -113,6 +113,40 @@ async def get_performance(
     return data
 
 
+async def _flush_pending_orders(engine) -> None:
+    """Poll pending orders and process fills before taking action."""
+    if engine._order_manager.pending_count > 0:
+        fills = await engine._order_manager.poll_pending_orders()
+        for fill in fills:
+            symbol = fill["symbol"]
+            if fill["side"] == "SELL" and symbol in engine._open_trades:
+                from datetime import UTC, datetime
+
+                trade = engine._open_trades[symbol]
+                await engine._portfolio_tracker.record_trade_close(
+                    trade, fill["filled_price"]
+                )
+                engine._open_trades.pop(symbol, None)
+                engine._last_close_time[symbol] = datetime.now(UTC)
+                logger.info(
+                    "engine.position_closed_fill_processed",
+                    symbol=symbol,
+                    exit_price=fill["filled_price"],
+                )
+
+
+async def _get_broker_position_qty(engine, symbol: str) -> int:
+    """Get the actual broker position quantity for a symbol."""
+    try:
+        portfolio = await engine._broker.get_portfolio()
+        for p in portfolio.positions:
+            if p.symbol == symbol:
+                return int(p.quantity)
+    except Exception:
+        pass
+    return 0
+
+
 @router.post("/positions/{symbol}/close")
 async def close_position(symbol: str):
     """Manually close an open position by placing a MARKET SELL order."""
@@ -121,18 +155,21 @@ async def close_position(symbol: str):
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Trading engine not initialized")
 
+    # Flush any pending order fills first
+    await _flush_pending_orders(engine)
+
     open_trade = engine._open_trades.get(symbol)
     if not open_trade:
         raise HTTPException(status_code=404, detail=f"No open trade for {symbol}")
 
     # Cancel any pending SELL orders (e.g. stop-loss) to avoid accidental short
     await engine._cancel_pending_sells(symbol)
-    remaining = len(engine._order_manager._pending_by_symbol.get(symbol, set()))
-    if remaining > 0:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Could not cancel {remaining} pending orders for {symbol}",
-        )
+    # Force-clear stale pending tracking for this symbol
+    engine._order_manager._pending_by_symbol.pop(symbol, None)
+
+    # Use actual broker quantity (may differ from DB trade record)
+    broker_qty = await _get_broker_position_qty(engine, symbol)
+    sell_qty = broker_qty if broker_qty > 0 else open_trade.quantity
 
     # Get current price for the sell order
     try:
@@ -152,7 +189,7 @@ async def close_position(symbol: str):
         trade_id=open_trade.id,
         symbol=symbol,
         side="SELL",
-        quantity=open_trade.quantity,
+        quantity=sell_qty,
         order_type=OrderType.MARKET,
         expected_price=current_price,
     )
@@ -175,13 +212,13 @@ async def close_position(symbol: str):
         )
         await send_alert(
             "Position Closed (Manual)",
-            f"{symbol}: SOLD {open_trade.quantity} @ {result.filled_price:.2f}\n"
+            f"{symbol}: SOLD {sell_qty} @ {result.filled_price:.2f}\n"
             f"P&L: {pnl:+.2f}\nExit reason: manual close",
         )
         return {
             "status": "closed",
             "symbol": symbol,
-            "quantity": open_trade.quantity,
+            "quantity": sell_qty,
             "exit_price": result.filled_price,
             "pnl": pnl,
         }
@@ -202,6 +239,9 @@ async def close_all_positions():
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Trading engine not initialized")
 
+    # Flush any pending order fills first
+    await _flush_pending_orders(engine)
+
     if not engine._open_trades:
         return {"status": "no_positions", "closed": []}
 
@@ -214,10 +254,12 @@ async def close_all_positions():
                 continue
 
             await engine._cancel_pending_sells(symbol)
-            remaining = len(engine._order_manager._pending_by_symbol.get(symbol, set()))
-            if remaining > 0:
-                results.append({"symbol": symbol, "status": "error", "reason": "pending orders"})
-                continue
+            # Force-clear stale pending tracking for this symbol
+            engine._order_manager._pending_by_symbol.pop(symbol, None)
+
+            # Use actual broker quantity
+            broker_qty = await _get_broker_position_qty(engine, symbol)
+            sell_qty = broker_qty if broker_qty > 0 else open_trade.quantity
 
             try:
                 portfolio = await engine._broker.get_portfolio()
@@ -235,7 +277,7 @@ async def close_all_positions():
                 trade_id=open_trade.id,
                 symbol=symbol,
                 side="SELL",
-                quantity=open_trade.quantity,
+                quantity=sell_qty,
                 order_type=OrderType.MARKET,
                 expected_price=current_price,
             )
@@ -253,6 +295,7 @@ async def close_all_positions():
                 results.append({
                     "symbol": symbol,
                     "status": "closed",
+                    "quantity": sell_qty,
                     "exit_price": result.filled_price,
                     "pnl": pnl,
                 })
