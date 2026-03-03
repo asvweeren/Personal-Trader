@@ -357,9 +357,10 @@ def calculate_take_profit(
     """
     from app.config import settings
 
-    # ATR-based target
+    # ATR-based target (convert ratio ATR to absolute if needed)
     if atr and atr > 0:
-        atr_target = entry_price + settings.atr_take_profit_multiplier * atr
+        atr_raw = atr * entry_price if atr < 1.0 else atr
+        atr_target = entry_price + settings.atr_take_profit_multiplier * atr_raw
     else:
         atr_target = 0.0
 
