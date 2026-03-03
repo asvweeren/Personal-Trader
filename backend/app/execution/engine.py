@@ -93,6 +93,8 @@ class TradingEngine:
         self._pending_stop_retries: set[str] = set()
         # Track per-symbol daily trade count to prevent over-trading
         self._daily_symbol_trades: dict[str, int] = {}
+        # Cache snapshot features for ATR lookups in _execute_buy
+        self._snapshot_features: dict[str, dict] = {}
 
     @property
     def state(self) -> EngineState:
@@ -223,6 +225,9 @@ class TradingEngine:
 
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
+            # Cache snapshot features for ATR lookups in _execute_buy
+            if snapshot.features:
+                self._snapshot_features = snapshot.features
 
             # 2a. Staleness check: skip cycle if data is too old
             data_age = (datetime.now(UTC) - snapshot.timestamp).total_seconds()
@@ -622,12 +627,11 @@ class TradingEngine:
         return cancelled
 
     def _get_atr(self, symbol: str) -> float | None:
-        """Get ATR value for a symbol from cached market data features."""
+        """Get ATR value for a symbol from snapshot features."""
         try:
-            cache = getattr(self._market_data, "_cache", {})
-            entry = cache.get(symbol)
-            if entry and hasattr(entry, "features"):
-                atr = entry.features.get("atr_14")
+            features = self._snapshot_features.get(symbol)
+            if features:
+                atr = features.get("atr_14")
                 if atr and atr > 0:
                     return float(atr)
         except Exception:
