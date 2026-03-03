@@ -76,18 +76,18 @@ class Settings(BaseSettings):
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 5.0
     max_position_pct: float = 12.0
-    max_open_positions: int = 8
-    min_cash_reserve_pct: float = 25.0
+    max_open_positions: int = 10
+    min_cash_reserve_pct: float = 20.0
     max_sector_concentration_pct: float = 35.0
-    confidence_threshold: float = 0.75     # Min confidence for strategies to generate BUY/SELL
+    confidence_threshold: float = 0.60     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
-    atr_stop_multiplier: float = 3.0       # ATR multiplier for stop-loss distance
-    min_stop_loss_pct: float = 3.0         # Minimum stop-loss percentage as floor
+    atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
+    min_stop_loss_pct: float = 2.0         # Minimum stop-loss percentage as floor
 
     # Take-profit
-    atr_take_profit_multiplier: float = 5.0  # Take-profit at 5x ATR above entry
-    min_take_profit_pct: float = 6.0         # Minimum 6% profit target as floor
+    atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
+    min_take_profit_pct: float = 3.0         # Minimum 3% profit target as floor
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -96,8 +96,8 @@ class Settings(BaseSettings):
     consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
 
     # Trade management
-    min_hold_minutes: int = 30               # Min hold time before SELL signal can close
-    reentry_cooldown_minutes: int = 120      # Min wait time before re-entering same symbol
+    min_hold_minutes: int = 15               # Min hold time before SELL signal can close
+    reentry_cooldown_minutes: int = 60       # Min wait time before re-entering same symbol
     max_trades_per_symbol_per_day: int = 2   # Max trades per symbol per day
 
     # End-of-day close
@@ -109,8 +109,18 @@ class Settings(BaseSettings):
     twap_slices: int = 4
 
     # Progressive trailing stop tiers: "gain%:trail%,..."
-    # Only start trailing after 3% gain, with generous trail widths
-    trailing_stop_tiers: str = "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
+    # Start trailing early with tight trail widths for day trading
+    trailing_stop_tiers: str = "2.0:0.8,3.0:1.2,5.0:1.8,8.0:2.5"
+
+    # Symbol blacklist: comma-separated symbols to never trade
+    symbol_blacklist: str = "SHOP,TSLA,DDOG,LRCX,MCHP"
+
+    @property
+    def symbol_blacklist_set(self) -> set[str]:
+        """Parse symbol_blacklist string into a set."""
+        if not self.symbol_blacklist:
+            return set()
+        return {s.strip() for s in self.symbol_blacklist.split(",") if s.strip()}
 
     @property
     def trailing_stop_tiers_parsed(self) -> list[tuple[float, float]]:

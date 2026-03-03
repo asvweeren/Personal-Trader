@@ -156,7 +156,7 @@ def _confidence_to_kelly(confidence: float) -> float:
     Conservative sizing that requires high confidence for meaningful allocation.
     Below threshold: 0 allocation. Above: linear from 0.10 to 0.50.
     """
-    threshold = 0.70
+    threshold = 0.55
     if confidence < threshold:
         return 0.0
     # Linear from 0.10 to 0.50 as confidence goes from threshold to 1.0

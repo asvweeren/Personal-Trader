@@ -369,6 +369,14 @@ class TradingEngine:
                 if price <= 0:
                     continue
 
+                # Skip blacklisted symbols (except SELL to close existing positions)
+                if signal.action == SignalAction.BUY and signal.symbol in settings.symbol_blacklist_set:
+                    logger.info(
+                        "engine.signal_skipped_blacklist",
+                        symbol=signal.symbol,
+                    )
+                    continue
+
                 # Handle SELL signals via position close
                 if signal.action == SignalAction.SELL:
                     await self._handle_sell_signal(signal, price, db_signal.id)
@@ -661,7 +669,7 @@ class TradingEngine:
         tp_est = calculate_take_profit(price, signal.symbol, atr_val)
         risk = price - stop_price_est
         reward = tp_est - price
-        if risk > 0 and (reward / risk) < 2.5:
+        if risk > 0 and (reward / risk) < 1.5:
             logger.info(
                 "engine.insufficient_rr",
                 symbol=signal.symbol,
