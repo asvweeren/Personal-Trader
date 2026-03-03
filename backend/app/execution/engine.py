@@ -225,9 +225,17 @@ class TradingEngine:
 
             # 2. Get market data
             snapshot = await self._market_data.get_snapshot(self._symbols)
-            # Cache snapshot features for ATR lookups in _execute_buy
-            if snapshot.features:
-                self._snapshot_features = snapshot.features
+            # Extract latest features from computed DataFrames for ATR lookups
+            for sym, feat_df in snapshot.computed_features_df.items():
+                if feat_df is not None and not feat_df.empty:
+                    try:
+                        row = feat_df.iloc[-1]
+                        self._snapshot_features[sym] = {
+                            k: float(v) for k, v in row.items()
+                            if isinstance(v, (int, float)) and v == v  # skip NaN
+                        }
+                    except Exception:
+                        pass
 
             # 2a. Staleness check: skip cycle if data is too old
             data_age = (datetime.now(UTC) - snapshot.timestamp).total_seconds()
