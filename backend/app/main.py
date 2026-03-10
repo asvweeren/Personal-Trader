@@ -43,8 +43,17 @@ from app.core.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
-from app.dependencies import get_broker, get_data_pipeline, get_startup_symbols, init_trading_engine
+from sqlalchemy import select
+
+from app.dependencies import (
+    get_broker,
+    get_data_pipeline,
+    get_performance_tracker,
+    get_startup_symbols,
+    init_trading_engine,
+)
 from app.models.database import async_session as session_factory
+from app.models.trade import Trade, TradeStatus
 from app.monitoring.logger import setup_logging
 
 logger = structlog.get_logger()
@@ -121,6 +130,40 @@ async def lifespan(app: FastAPI):
             schedule_eod_safety_close(engine)
         except Exception as e:
             logger.warning("startup.engine_error", error=str(e))
+
+    # Step 4: Restore performance metrics from historical trades
+    try:
+        async with session_factory() as restore_db:
+            result = await restore_db.execute(
+                select(Trade).where(Trade.status == TradeStatus.CLOSED)
+            )
+            closed_trades = result.scalars().all()
+            if closed_trades:
+                tracker = get_performance_tracker()
+                trade_dicts = [
+                    {
+                        "realized_pnl": t.realized_pnl,
+                        "commission": t.commission,
+                        "strategy_name": t.strategy_name,
+                        "created_at": t.created_at,
+                        "closed_at": t.closed_at,
+                    }
+                    for t in closed_trades
+                ]
+                tracker.restore_from_trades(trade_dicts)
+
+                # Set daily_start_value to current total value (not initial_capital)
+                if broker and await broker.is_connected():
+                    try:
+                        portfolio = await broker.get_portfolio()
+                        tracker.daily_start_value = portfolio.account_summary.total_value
+                        tracker.peak_value = max(tracker.peak_value, tracker.total_value)
+                    except Exception:
+                        tracker.daily_start_value = tracker.total_value
+                else:
+                    tracker.daily_start_value = tracker.total_value
+    except Exception as e:
+        logger.warning("startup.performance_restore_error", error=str(e))
 
     yield
 

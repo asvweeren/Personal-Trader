@@ -166,6 +166,59 @@ class PerformanceTracker:
         """Return True if consecutive losses just hit the threshold (exact match to alert once)."""
         return self.consecutive_losses == threshold
 
+    def restore_from_trades(self, closed_trades: list[dict]) -> None:
+        """Restore performance metrics from historical closed trades.
+
+        Each dict should have: realized_pnl, commission, strategy_name,
+        entry_price, exit_price, created_at, closed_at.
+        """
+        for t in closed_trades:
+            pnl = t.get("realized_pnl") or 0.0
+            commission = t.get("commission") or 0.0
+            strategy = t.get("strategy_name") or "unknown"
+
+            self.trade_pnls.append(pnl)
+            self.realized_pnl += pnl
+            self.total_commission += commission
+            self.total_trades += 1
+
+            if pnl > 0:
+                self.winning_trades += 1
+            elif pnl < 0:
+                self.losing_trades += 1
+
+            # Per-strategy
+            if strategy not in self.strategy_metrics:
+                self.strategy_metrics[strategy] = StrategyMetrics()
+            sm = self.strategy_metrics[strategy]
+            sm.trades += 1
+            sm.pnl += pnl
+            sm.trade_pnls.append(pnl)
+            if pnl > 0:
+                sm.wins += 1
+            elif pnl < 0:
+                sm.losses += 1
+
+            # Hold duration
+            created = t.get("created_at")
+            closed = t.get("closed_at")
+            if created and closed:
+                try:
+                    minutes = (closed - created).total_seconds() / 60
+                    if minutes > 0:
+                        sm.hold_durations.append(minutes)
+                except Exception:
+                    pass
+
+        self._update_drawdown()
+        if closed_trades:
+            logger.info(
+                "performance.restored",
+                trades=len(closed_trades),
+                realized_pnl=round(self.realized_pnl, 2),
+                win_rate=round(self.win_rate, 2),
+            )
+
     def _update_drawdown(self) -> None:
         current = self.total_value
         if current > self.peak_value:
