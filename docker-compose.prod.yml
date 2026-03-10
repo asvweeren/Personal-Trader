@@ -87,7 +87,9 @@ services:
       ib-gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 4003 || exit 1"]
+      # Check the actual gateway port, not just the proxy — ensures
+      # autoheal restarts the proxy when gateway's network changes
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4002 && nc -z 127.0.0.1 4003 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
