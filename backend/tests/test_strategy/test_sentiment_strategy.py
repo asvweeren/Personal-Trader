@@ -102,24 +102,24 @@ def test_calibration_few_articles():
     strategy = SentimentStrategy()
     result = make_sentiment(confidence=0.8, news_count=1)
     calibrated = strategy._calibrate_confidence(result)
-    # Very few articles → volume_factor = 0.4
-    assert calibrated < 0.5
+    # Very few articles → volume_factor = 0.6
+    assert calibrated < 0.6
 
 
 def test_calibration_extreme_score():
     strategy = SentimentStrategy()
     result = make_sentiment(score=0.9, confidence=0.8, news_count=8)
     calibrated = strategy._calibrate_confidence(result)
-    # Extreme score → extremity_factor = 0.85
-    assert calibrated < 0.8
+    # No extremity penalty — extreme scores are strong conviction
+    assert calibrated == 0.8
 
 
 def test_calibration_moderate_articles():
     strategy = SentimentStrategy()
     result = make_sentiment(confidence=0.8, news_count=4)
     calibrated = strategy._calibrate_confidence(result)
-    # Moderate articles → somewhere between 0.4 and 0.8
-    assert 0.4 < calibrated < 0.8
+    # Moderate articles → volume_factor ~0.96, so near full confidence
+    assert 0.7 < calibrated <= 0.8
 
 
 # ── Stats tracking tests ─────────────────────────────────────

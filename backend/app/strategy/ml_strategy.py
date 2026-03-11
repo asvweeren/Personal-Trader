@@ -105,11 +105,22 @@ class MLStrategy(Strategy):
         days_old = (datetime.now(UTC) - trained_dt).days
         return days_old > days_threshold
 
-    def _check_feature_drift(self, latest: pd.DataFrame, symbol: str) -> None:
-        """Warn if live features deviate significantly from training distribution."""
+    def get_robustness_score(self) -> float:
+        """Get walk-forward robustness score (0=overfit, 1=robust).
+
+        Returns 0.5 (neutral) if no walk-forward validation has been run.
+        """
+        return self._model_metadata.get("walk_forward_robustness", 0.5)
+
+    def _check_feature_drift(self, latest: pd.DataFrame, symbol: str) -> bool:
+        """Check if live features deviate significantly from training distribution.
+
+        Returns True if drift is severe enough to skip this signal.
+        """
         feature_stats = self._model_metadata.get("feature_stats")
         if not feature_stats:
-            return
+            return False
+        drift_count = 0
         for col in latest.columns:
             stats = feature_stats.get(col)
             if not stats:
@@ -118,6 +129,7 @@ class MLStrategy(Strategy):
             mean = stats["mean"]
             std = stats["std"]
             if std > 0 and abs(val - mean) > 3 * std:
+                drift_count += 1
                 logger.warning(
                     "ml_strategy.feature_drift",
                     symbol=symbol,
@@ -126,6 +138,16 @@ class MLStrategy(Strategy):
                     training_mean=round(mean, 4),
                     training_std=round(std, 4),
                 )
+        # If >20% of features are drifting, signal is unreliable
+        if drift_count > 0 and drift_count / len(latest.columns) > 0.2:
+            logger.warning(
+                "ml_strategy.drift_halt",
+                symbol=symbol,
+                drifted_features=drift_count,
+                total_features=len(latest.columns),
+            )
+            return True
+        return False
 
     def _is_binary_model(self) -> bool:
         """Check if the loaded model is a binary classifier."""
@@ -145,7 +167,7 @@ class MLStrategy(Strategy):
         if total == 0:
             return 0.55
         buy_rate = class_dist.get(1, class_dist.get("1", 0)) / total
-        return max(0.55, buy_rate + 0.15)
+        return max(0.48, buy_rate + 0.05)
 
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
@@ -161,18 +183,18 @@ class MLStrategy(Strategy):
             if regime is not None:
                 if self._is_binary_model():
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                        base = 0.55
+                        base = 0.48
                     elif regime.regime == MarketRegime.RANGING:
-                        base = 0.65
+                        base = 0.52
                     elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                        base = 0.70
+                        base = 0.55
                 else:
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                        return 0.45
+                        return 0.38
                     elif regime.regime == MarketRegime.RANGING:
-                        return 0.55
+                        return 0.45
                     elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                        return 0.60
+                        return 0.50
         except Exception:
             pass
 
@@ -189,12 +211,22 @@ class MLStrategy(Strategy):
 
         confidence_threshold = self.get_regime_threshold()
 
-        # Increase threshold for stale models (add 10% penalty, don't jump to 85%)
+        # Increase threshold for stale models (add 15% penalty)
         if self.is_model_stale():
-            confidence_threshold = min(confidence_threshold + 0.10, 0.70)
+            confidence_threshold = min(confidence_threshold + 0.15, 0.70)
             logger.warning(
                 "ml_strategy.stale_model",
                 trained_at=self._model_metadata.get("trained_at"),
+                adjusted_threshold=confidence_threshold,
+            )
+
+        # Increase threshold if walk-forward shows poor robustness
+        robustness = self.get_robustness_score()
+        if robustness < 0.3:
+            confidence_threshold = min(confidence_threshold + 0.10, 0.75)
+            logger.warning(
+                "ml_strategy.low_robustness",
+                robustness=robustness,
                 adjusted_threshold=confidence_threshold,
             )
 
@@ -230,8 +262,9 @@ class MLStrategy(Strategy):
                 if latest.isnull().any(axis=1).iloc[0]:
                     continue
 
-                # Check for feature drift
-                self._check_feature_drift(latest, symbol)
+                # Check for feature drift — skip signal if too many features drifted
+                if self._check_feature_drift(latest, symbol):
+                    continue
 
                 proba = self._model.predict_proba(latest)[0]
 

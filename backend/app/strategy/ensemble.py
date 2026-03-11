@@ -29,7 +29,7 @@ class EnsembleStrategy(Strategy):
         self,
         strategies: list[Strategy],
         weights: dict[str, float] | None = None,
-        agreement_threshold: float = 0.5,
+        agreement_threshold: float = 0.25,
         min_strategies: int = 1,
     ):
         self._strategies = strategies

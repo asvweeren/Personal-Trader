@@ -468,7 +468,7 @@ def test_backtest_config_defaults():
         start_date="2025-01-01",
         end_date="2025-06-01",
     )
-    assert config.take_profit_pct == 6.0
+    assert config.take_profit_pct == 3.0
     assert config.max_position_pct == 30.0
     assert config.trailing_stop_tiers == "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
 

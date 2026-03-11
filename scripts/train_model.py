@@ -29,6 +29,8 @@ DEFAULT_SYMBOLS = [
     "SPY", "QQQ", "IWM", "EFA", "VGK",
     # EU blue chips
     "ASML", "SAP", "SIE.DE", "MC.PA", "AZN.L",
+    # Inverse/bear ETFs — train on downtrend data for regime robustness
+    "SH", "PSQ", "RWM",
 ]
 
 

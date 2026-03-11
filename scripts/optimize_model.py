@@ -329,8 +329,8 @@ def save_model(result: dict, model_dir: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Optimize XGBoost trading model")
-    parser.add_argument("--forward-periods", type=int, default=10,
-                        help="Forward look-ahead periods for target (default: 10)")
+    parser.add_argument("--forward-periods", type=int, default=5,
+                        help="Forward look-ahead periods for target (default: 5)")
     parser.add_argument("--buy-threshold", type=float, default=0.015,
                         help="Buy target threshold (default: 0.015 = 1.5%%)")
     parser.add_argument("--sell-threshold", type=float, default=-0.015,

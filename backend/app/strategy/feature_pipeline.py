@@ -34,7 +34,7 @@ class DataSplit:
 class FeaturePipelineConfig:
     """Configuration for the feature pipeline."""
     # Target labeling
-    forward_periods: int = 10  # Look ahead N bars for return
+    forward_periods: int = 5  # Look ahead N bars for return (aligned with train_model.py)
     buy_threshold: float = 0.008  # +0.8% = BUY (class 2)
     sell_threshold: float = -0.008  # -0.8% = SELL (class 0)
     # Binary mode: BUY vs NOT_BUY (ignores sell_threshold)

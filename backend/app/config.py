@@ -79,15 +79,15 @@ class Settings(BaseSettings):
     max_open_positions: int = 10
     min_cash_reserve_pct: float = 20.0
     max_sector_concentration_pct: float = 35.0
-    confidence_threshold: float = 0.60     # Min confidence for strategies to generate BUY/SELL
+    confidence_threshold: float = 0.40     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
     atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
-    min_stop_loss_pct: float = 2.0         # Minimum stop-loss percentage as floor
+    min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
 
     # Take-profit
     atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
-    min_take_profit_pct: float = 3.0         # Minimum 3% profit target as floor
+    min_take_profit_pct: float = 1.5         # Minimum 1.5% profit target (realistic for day trading)
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -96,9 +96,9 @@ class Settings(BaseSettings):
     consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
 
     # Trade management
-    min_hold_minutes: int = 15               # Min hold time before SELL signal can close
-    reentry_cooldown_minutes: int = 60       # Min wait time before re-entering same symbol
-    max_trades_per_symbol_per_day: int = 2   # Max trades per symbol per day
+    min_hold_minutes: int = 5                # Min hold time before SELL signal can close
+    reentry_cooldown_minutes: int = 10       # Min wait time before re-entering same symbol
+    max_trades_per_symbol_per_day: int = 5   # Max trades per symbol per day
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     trailing_stop_tiers: str = "2.0:0.8,3.0:1.2,5.0:1.8,8.0:2.5"
 
     # Symbol blacklist: comma-separated symbols to never trade
-    symbol_blacklist: str = "SHOP,TSLA,DDOG,LRCX,MCHP"
+    symbol_blacklist: str = ""
 
     @property
     def symbol_blacklist_set(self) -> set[str]:

@@ -63,10 +63,12 @@ def calculate_metrics(
     # Trade duration stats (if bars_held info is available, caller handles that)
     avg_trade_pnl = float(np.mean(trade_pnls)) if trade_pnls else 0
 
-    # Recovery factor: net profit / max drawdown
+    # Recovery factor: net profit / max drawdown (in dollars)
     net_profit = float(equity[-1] - initial_capital)
-    if max_dd > 0 and initial_capital > 0:
-        recovery_factor = net_profit / (max_dd * initial_capital)
+    peak_equity = float(np.max(equity))
+    max_dd_dollars = max_dd * peak_equity  # Convert percentage to dollar amount
+    if max_dd_dollars > 0:
+        recovery_factor = net_profit / max_dd_dollars
     else:
         recovery_factor = 0.0
 

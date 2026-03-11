@@ -110,6 +110,7 @@ class PortfolioTracker:
                 commission,
                 strategy_name=trade.strategy_name,
                 hold_duration_minutes=hold_duration_minutes,
+                symbol=trade.symbol,
             )
             if self._performance.should_alert_consecutive_losses(
                 settings.consecutive_loss_alert_threshold

@@ -128,16 +128,10 @@ def load_strategies() -> list[Strategy]:
             from app.strategy.ensemble import EnsembleStrategy
             # Initial weights based on model characteristics:
             # XGBoost (~80% acc) > Sentiment (LLM) > LSTM (new, needs proving)
+            # Start with equal weights — let update_weights_from_history() adapt
             initial_weights = {}
             for s in strategies:
-                if s.name == "ml_xgboost":
-                    initial_weights[s.name] = 1.5
-                elif s.name == "sentiment":
-                    initial_weights[s.name] = 1.0
-                elif s.name == "nn_lstm":
-                    initial_weights[s.name] = 0.7
-                else:
-                    initial_weights[s.name] = 1.0
+                initial_weights[s.name] = 1.0
             ensemble = EnsembleStrategy(
                 strategies=list(strategies),
                 weights=initial_weights,

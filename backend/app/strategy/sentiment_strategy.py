@@ -39,7 +39,7 @@ class SentimentStrategy(Strategy):
         self,
         buy_threshold: float = 0.3,
         sell_threshold: float = -0.3,
-        min_confidence: float = 0.5,
+        min_confidence: float = 0.35,
         min_news_count: int = 2,
     ):
         self._news_fetcher = NewsFetcher()
@@ -114,20 +114,16 @@ class SentimentStrategy(Strategy):
         """
         base = sentiment.confidence
 
-        # Volume boost: more news = more reliable
-        if sentiment.news_count >= 8:
+        # Volume boost: more news = more reliable (gentler curve)
+        if sentiment.news_count >= 5:
             volume_factor = 1.0
         elif sentiment.news_count >= self._min_news_count:
-            volume_factor = 0.7 + (sentiment.news_count / 8) * 0.3
+            volume_factor = 0.8 + (sentiment.news_count / 5) * 0.2
         else:
-            volume_factor = 0.4  # Very few articles, low reliability
+            volume_factor = 0.6  # Few articles, moderate reliability
 
-        # Extreme score penalty: very extreme scores might be noise
-        score_abs = abs(sentiment.score)
-        if score_abs > 0.8:
-            extremity_factor = 0.85
-        else:
-            extremity_factor = 1.0
+        # Extreme scores are strong conviction, not noise — no penalty
+        extremity_factor = 1.0
 
         calibrated = base * volume_factor * extremity_factor
         return max(0.0, min(1.0, calibrated))

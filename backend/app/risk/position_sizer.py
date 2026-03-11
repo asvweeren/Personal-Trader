@@ -153,10 +153,9 @@ def calculate_kelly_fraction(
 def _confidence_to_kelly(confidence: float) -> float:
     """Linear scaling: threshold -> 0.10, max -> 0.50.
 
-    Conservative sizing that requires high confidence for meaningful allocation.
     Below threshold: 0 allocation. Above: linear from 0.10 to 0.50.
     """
-    threshold = 0.55
+    threshold = 0.40
     if confidence < threshold:
         return 0.0
     # Linear from 0.10 to 0.50 as confidence goes from threshold to 1.0
@@ -297,11 +296,11 @@ def calculate_position_size(
         # Tiered Kelly: high-confidence trades get proportionally more capital
         kelly_fraction = _confidence_to_kelly(confidence)
 
-    # Volatility adjustment: reduce size for high-volatility assets
-    if volatility and volatility > 0:
-        vol_factor = max(0.5, 1.0 - volatility * 0.5)
+    # Volatility adjustment: mild reduction for extreme volatility only
+    if volatility and volatility > 0.05:
+        vol_factor = max(0.7, 1.0 - (volatility - 0.05) * 0.3)
     else:
-        vol_factor = 0.8  # Default moderate
+        vol_factor = 1.0  # No penalty for normal volatility
 
     # Correlation adjustment
     existing_symbols = [p.symbol for p in portfolio.positions]
@@ -385,7 +384,7 @@ def check_risk_reward_ratio(
     entry_price: float,
     stop_price: float,
     take_profit: float,
-    min_ratio: float = 2.0,
+    min_ratio: float = 1.5,
 ) -> tuple[bool, float]:
     """Check if a trade meets the minimum risk:reward ratio.
 

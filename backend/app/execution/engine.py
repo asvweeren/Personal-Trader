@@ -321,12 +321,36 @@ class TradingEngine:
                 self._last_cycle_at = datetime.now(UTC)
                 return
 
-            # 6b. Multi-timeframe confirmation
+            # 6b. Time-of-day confidence adjustment
+            # Market open (first 30 min) and close (last 30 min) are noisier
+            now_utc = datetime.now(UTC)
+            hour_utc = now_utc.hour
+            # US market: 14:30-21:00 UTC, EU: 08:00-16:30 UTC
+            # Penalize first/last 30 min of US session (14:30-15:00, 20:30-21:00)
+            tod_factor = 1.0
+            if (hour_utc == 14 and now_utc.minute < 60) or (hour_utc == 20 and now_utc.minute >= 30):
+                tod_factor = 0.85  # 15% penalty during volatile open/close
+            elif hour_utc in (15, 16, 17, 18, 19):
+                tod_factor = 1.0  # Core hours — full confidence
+
+            # 6c. Multi-timeframe confirmation
             confirmed_signals: list[TradingSignal] = []
             for signal in all_signals:
                 if signal.action == SignalAction.HOLD:
                     confirmed_signals.append(signal)
                     continue
+
+                # Apply time-of-day adjustment
+                if tod_factor < 1.0:
+                    signal = TradingSignal(
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        confidence=signal.confidence * tod_factor,
+                        strategy_name=signal.strategy_name,
+                        features_snapshot=signal.features_snapshot,
+                        metadata=signal.metadata,
+                    )
+
                 try:
                     # Use pre-computed features from snapshot (already has 1Y daily data)
                     precomputed = snapshot.computed_features_df.get(signal.symbol)
@@ -383,7 +407,10 @@ class TradingEngine:
                     continue
 
                 # Skip blacklisted symbols (except SELL to close existing positions)
-                if signal.action == SignalAction.BUY and signal.symbol in settings.symbol_blacklist_set:
+                if signal.action == SignalAction.BUY and (
+                    signal.symbol in settings.symbol_blacklist_set
+                    or signal.symbol in self._performance.get_underperforming_symbols()
+                ):
                     logger.info(
                         "engine.signal_skipped_blacklist",
                         symbol=signal.symbol,
@@ -482,6 +509,15 @@ class TradingEngine:
             # 9. Take portfolio snapshot
             await self._portfolio_tracker.take_snapshot()
             await self._db.commit()
+
+            # 10. Update ensemble weights every 50 cycles (~4 hours)
+            if self._cycle_count > 0 and self._cycle_count % 50 == 0:
+                for strategy in self._strategies:
+                    if hasattr(strategy, "update_weights_from_history"):
+                        try:
+                            strategy.update_weights_from_history(self._performance)
+                        except Exception:
+                            logger.debug("engine.ensemble_weight_update_failed", exc_info=True)
 
             self._cycle_count += 1
             self._last_cycle_at = datetime.now(UTC)
@@ -807,8 +843,8 @@ class TradingEngine:
                 # Slippage correction: tighten stop if we got a worse entry
                 slippage = result.filled_price - price if price > 0 else 0
                 if slippage > 0:
-                    # Bought higher than expected — tighten stop proportionally
-                    stop_price = round(stop_price + slippage * 0.5, 2)
+                    # Bought higher than expected — full adjustment to maintain original risk
+                    stop_price = round(stop_price + slippage, 2)
 
                 trade.stop_loss = stop_price
                 try:

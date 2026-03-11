@@ -25,12 +25,12 @@ class BacktestConfig:
     start_date: str
     end_date: str
     initial_capital: float = 5000.0
-    commission_pct: float = 0.1
-    slippage_pct: float = 0.05
-    spread_pct: float = 0.02
+    commission_pct: float = 0.02   # IBKR tiered: ~2 bps for active traders
+    slippage_pct: float = 0.10     # Realistic: 10 bps (was 5, too optimistic)
+    spread_pct: float = 0.05       # Realistic: 5 bps (was 2, too tight)
     max_position_pct: float = 30.0
-    stop_loss_pct: float = 3.0
-    take_profit_pct: float = 6.0
+    stop_loss_pct: float = 1.5     # Aligned with live config
+    take_profit_pct: float = 3.0   # Aligned with live config (was 6%, unrealistic)
     enable_eod_close: bool = True
     trailing_stop_tiers: str = "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
     min_bars: int = 100

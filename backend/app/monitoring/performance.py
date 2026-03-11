@@ -34,6 +34,10 @@ class StrategyMetrics:
     def avg_hold_time(self) -> float:
         return sum(self.hold_durations) / len(self.hold_durations) if self.hold_durations else 0.0
 
+    @property
+    def avg_pnl(self) -> float:
+        return self.pnl / self.trades if self.trades > 0 else 0.0
+
     def to_dict(self) -> dict:
         pf = self.profit_factor
         return {
@@ -67,6 +71,7 @@ class PerformanceTracker:
     daily_start_value: float = 0.0
     last_reset: datetime = field(default_factory=lambda: datetime.now(UTC))
     strategy_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
+    symbol_metrics: dict[str, StrategyMetrics] = field(default_factory=dict)
     api_calls_today: int = 0
     api_cost_today_usd: float = 0.0
 
@@ -113,6 +118,7 @@ class PerformanceTracker:
         strategy_name: str | None = None,
         confidence: float = 0.0,
         hold_duration_minutes: float = 0.0,
+        symbol: str | None = None,
     ) -> None:
         self.trade_pnls.append(pnl)
         self.realized_pnl += pnl
@@ -142,6 +148,19 @@ class PerformanceTracker:
                 sm.wins += 1
             elif pnl < 0:
                 sm.losses += 1
+
+        # Per-symbol attribution
+        if symbol:
+            if symbol not in self.symbol_metrics:
+                self.symbol_metrics[symbol] = StrategyMetrics()
+            sym = self.symbol_metrics[symbol]
+            sym.trades += 1
+            sym.pnl += pnl
+            sym.trade_pnls.append(pnl)
+            if pnl > 0:
+                sym.wins += 1
+            elif pnl < 0:
+                sym.losses += 1
 
         self._update_drawdown()
 
@@ -233,6 +252,32 @@ class PerformanceTracker:
             name: metrics.to_dict()
             for name, metrics in self.strategy_metrics.items()
         }
+
+    def get_symbol_breakdown(self) -> dict[str, dict]:
+        """Return per-symbol performance breakdown."""
+        return {
+            name: metrics.to_dict()
+            for name, metrics in self.symbol_metrics.items()
+        }
+
+    def get_underperforming_symbols(self, min_trades: int = 5, max_loss: float = -500.0) -> set[str]:
+        """Return symbols that are consistently losing money.
+
+        A symbol is flagged if it has >= min_trades and total P&L < max_loss.
+        Used for dynamic blacklisting without data snooping.
+        """
+        bad_symbols = set()
+        for symbol, metrics in self.symbol_metrics.items():
+            if metrics.trades >= min_trades and metrics.pnl < max_loss:
+                bad_symbols.add(symbol)
+                logger.info(
+                    "performance.underperforming_symbol",
+                    symbol=symbol,
+                    trades=metrics.trades,
+                    pnl=round(metrics.pnl, 2),
+                    win_rate=round(metrics.win_rate, 2),
+                )
+        return bad_symbols
 
     def to_dict(self) -> dict:
         return {

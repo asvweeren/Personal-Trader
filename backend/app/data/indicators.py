@@ -134,20 +134,25 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     features["bb_lower"] = (close - bb["lower"]) / close
     features["bb_width"] = (bb["upper"] - bb["lower"]) / bb["middle"]
 
-    # ATR — normalized by price
+    # ATR — always stored as ratio (ATR / close) for scale independence
     atr_raw = atr(high, low, close, 14)
-    features["atr_14"] = atr_raw / close
+    features["atr_14"] = atr_raw / close  # Always a ratio, typically 0.01-0.05
 
     # ADX (already 0-100 percentage)
     features["adx_14"] = adx(high, low, close, 14)
 
-    # Volume — normalized
+    # Volume — normalized with proper scaling
     obv_raw = obv(close, vol)
     vwap_raw = vwap(high, low, close, vol)
     vol_sma_20 = sma(vol, 20)
-    features["obv"] = obv_raw / (close * vol_sma_20 + 1e-10)
-    features["vwap"] = (close - vwap_raw) / (vwap_raw + 1e-10)
+    # OBV: z-score relative to rolling mean, clipped for stability
+    obv_mean = obv_raw.rolling(50).mean()
+    obv_std = obv_raw.rolling(50).std()
+    features["obv"] = ((obv_raw - obv_mean) / (obv_std + 1e-10)).clip(-5, 5)
+    features["vwap"] = (close - vwap_raw) / (close + 1e-10)  # Normalize by close, not vwap
     features["volume_sma_20"] = vol / (vol_sma_20 + 1e-10)
+    # Absolute volume level (log-scaled) for liquidity context
+    features["volume_log"] = np.log1p(vol_sma_20)
 
     # Price features (already percentage-based)
     features["return_1d"] = close.pct_change(1)
@@ -172,8 +177,8 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     vol_10 = close.pct_change().rolling(10).std()
     features["vol_ratio_10_20"] = vol_10 / features["volatility_20d"]
 
-    # RSI momentum
-    features["rsi_change_5d"] = features["rsi_14"] - features["rsi_14"].shift(5)
+    # RSI momentum (normalized to similar scale as other features)
+    features["rsi_change_5d"] = (features["rsi_14"] - features["rsi_14"].shift(5)) / 100
 
     # MACD divergence (already normalized since macd features are /close)
     features["macd_divergence"] = features["macd"] - features["macd_signal"]
@@ -226,14 +231,17 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     bb_range = bb["upper"] - bb["lower"]
     features["bb_position"] = np.where(bb_range > 0, (close - bb["lower"]) / bb_range, 0.5)
 
-    # Trend strength: ADX × sign(sma_50)
-    features["trend_strength"] = features["adx_14"] * np.sign(features["sma_50"])
+    # Trend strength: ADX × sign(sma_50), normalized to 0-1 range
+    features["trend_strength"] = (features["adx_14"] * np.sign(features["sma_50"])) / 100
 
     # --- Regime Features ---
 
     features["regime_trending"] = (features["adx_14"] > 25.0).astype(float)
     features["regime_breadth_proxy"] = (features["sma_50"] > 0).astype(float)
     features["regime_mean_reversion"] = (features["rsi_14"] - 50).abs() / 50
+    # Bear/bull regime: SMA50 vs SMA200 (golden/death cross)
+    sma_200_raw = sma(close, 200)
+    features["regime_bull_bear"] = np.where(sma_50_raw > sma_200_raw, 1.0, -1.0)
 
     # --- Additional Quantitative Features ---
 
