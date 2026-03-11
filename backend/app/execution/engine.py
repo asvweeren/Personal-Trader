@@ -873,6 +873,8 @@ class TradingEngine:
             )
 
             # Place stop-loss (ATR-based with min floor, adjusted for slippage)
+            # Brief pause to let IBKR register the filled position before placing stop
+            await asyncio.sleep(2)
             if result.filled_price:
                 stop_price = self._calculate_atr_stop(result.filled_price, signal.symbol)
 
