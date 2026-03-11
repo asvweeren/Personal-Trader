@@ -154,20 +154,15 @@ class MLStrategy(Strategy):
         return self._model_metadata.get("model_type") == "binary"
 
     def _get_probability_gate(self) -> float:
-        """Get minimum probability gate based on training class distribution.
+        """Get minimum probability gate for binary models.
 
-        For binary models, random chance is ~base_rate for BUY class.
-        Gate must exceed base_rate + margin to ensure the model adds value.
+        For a binary classifier, random chance is 50%. The gate should be
+        a small margin above that to ensure the model adds value.
+        Note: class distribution in training data reflects oversampling and
+        should NOT be used as the gate — it leads to thresholds > 0.60
+        when the majority class is BUY, effectively blocking all trades.
         """
-        class_dist = self._model_metadata.get("class_distribution", {})
-        if not class_dist:
-            return 0.55
-        # class_dist keys may be strings (from JSON) or ints
-        total = sum(class_dist.values())
-        if total == 0:
-            return 0.55
-        buy_rate = class_dist.get(1, class_dist.get("1", 0)) / total
-        return max(0.48, buy_rate + 0.05)
+        return 0.52
 
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
