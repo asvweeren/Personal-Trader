@@ -197,6 +197,16 @@ async def get_regime():
         return {"regime": "unknown", "message": "Engine not initialized"}
 
 
+@router.get("/system/adaptive")
+async def get_adaptive_stats():
+    """Get adaptive learning system state and per-symbol/regime profiles."""
+    try:
+        engine = get_trading_engine()
+        return engine._adaptive.get_summary()
+    except RuntimeError:
+        return {"total_outcomes": 0, "message": "Engine not initialized"}
+
+
 @router.get("/system/calendar")
 async def get_calendar():
     """Get upcoming economic events."""

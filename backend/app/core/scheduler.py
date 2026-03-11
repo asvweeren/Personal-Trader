@@ -773,3 +773,120 @@ def schedule_weekly_model_retrain() -> None:
         trigger="cron(sun 02:00)",
         misfire_grace_time=7200,
     )
+
+    # ── Monthly hyperparameter optimization (1st of month, 03:00 UTC) ──
+    async def monthly_hyperopt():
+        """Run extended hyperparameter search with broader param ranges."""
+        import pandas as pd
+
+        from app.monitoring.alerts import send_alert
+        from app.strategy.ml_strategy import MLStrategy
+
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.error("scheduler.hyperopt_yfinance_missing")
+            return
+
+        from app.config import settings
+        from app.data.indicators import compute_features
+        from app.strategy.feature_pipeline import create_binary_target
+
+        logger.info("scheduler.hyperopt_started")
+
+        try:
+            symbols = settings.symbols_list
+            feature_dfs = []
+            for sym in symbols:
+                try:
+                    df = yf.download(sym, period="2y", interval="1d", progress=False)
+                    if df.empty:
+                        continue
+                    df = df.copy()
+                    df = df.rename(columns={
+                        "Open": "open", "High": "high", "Low": "low",
+                        "Close": "close", "Volume": "volume",
+                    })
+                    keep = ["open", "high", "low", "close", "volume"]
+                    df = df[[c for c in keep if c in df.columns]]
+                    df.index.name = "timestamp"
+                    df = df.reset_index()
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                    feat_df = compute_features(df)
+                    feat_df["target"] = create_binary_target(
+                        feat_df, forward_periods=5, buy_threshold=0.015,
+                    )
+                    feat_df = feat_df.dropna()
+                    if len(feat_df) >= 60:
+                        feature_dfs.append(feat_df)
+                except Exception:
+                    continue
+
+            if not feature_dfs:
+                logger.error("scheduler.hyperopt_no_data")
+                return
+
+            historical_data = pd.concat(feature_dfs, ignore_index=True)
+            historical_data = historical_data.sort_values("timestamp").reset_index(drop=True)
+
+            # Train with extended data (2y instead of 1y)
+            strategy = MLStrategy()
+            result = await strategy.train_candidate(historical_data, features_precomputed=True)
+
+            if result.success:
+                candidate_score = result.metrics.get(
+                    "test_profit_score", result.metrics.get("test_accuracy", 0.0),
+                )
+                msg = (
+                    f"Monthly hyperopt complete.\n"
+                    f"Score: {candidate_score:.4f}\n"
+                    f"Params: {result.metrics.get('best_params', {})}"
+                )
+                logger.info("scheduler.hyperopt_done", score=candidate_score)
+
+                # Auto-swap if better than current
+                import json
+                from app.strategy.ml_strategy import MODEL_DIR
+                meta_path = MODEL_DIR / "xgboost_model.json"
+                current_score = 0.0
+                if meta_path.exists():
+                    try:
+                        with open(meta_path) as f:
+                            current_meta = json.load(f)
+                        current_score = current_meta.get(
+                            "test_profit_score",
+                            current_meta.get("test_accuracy", 0.0),
+                        )
+                    except Exception:
+                        pass
+
+                if candidate_score > current_score:
+                    swapped = strategy.hot_swap_model()
+                    if swapped:
+                        msg += f"\nSwapped! (was {current_score:.4f})"
+                    else:
+                        msg += "\nSwap failed, rollback applied."
+                else:
+                    msg += f"\nKept current ({current_score:.4f})"
+
+                await send_alert("Monthly Hyperopt", msg)
+            else:
+                logger.warning("scheduler.hyperopt_failed", message=result.message)
+
+        except Exception:
+            logger.exception("scheduler.hyperopt_error")
+
+    scheduler.add_job(
+        monthly_hyperopt,
+        CronTrigger(day=1, hour=3, minute=0),
+        id="monthly_hyperopt",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=7200,
+    )
+    logger.info(
+        "scheduler.job_added",
+        job="monthly_hyperopt",
+        trigger="cron(1st 03:00)",
+        misfire_grace_time=7200,
+    )

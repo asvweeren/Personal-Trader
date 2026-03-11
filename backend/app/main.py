@@ -40,6 +40,7 @@ from app.core.scheduler import (
     schedule_heartbeat,
     schedule_snapshot_cleanup,
     schedule_trading_engine,
+    schedule_weekly_model_retrain,
     start_scheduler,
     stop_scheduler,
 )
@@ -87,6 +88,7 @@ async def lifespan(app: FastAPI):
     schedule_heartbeat()
     schedule_snapshot_cleanup()
     schedule_economic_calendar()
+    schedule_weekly_model_retrain()
 
     # Try to start broker, pipeline and trading engine (each step non-fatal)
     pipeline = None

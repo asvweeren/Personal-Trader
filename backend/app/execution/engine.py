@@ -34,6 +34,7 @@ from app.risk.reconciliation import (
     reconcile,
     set_last_result,
 )
+from app.strategy.adaptive import AdaptiveManager
 from app.strategy.base import SignalAction, Strategy, TradingSignal
 from app.strategy.multi_timeframe import MultiTimeframeFilter
 from app.strategy.regime import RegimeDetector
@@ -78,6 +79,7 @@ class TradingEngine:
         self._smart_executor = SmartExecutor(broker, self._order_manager)
         self._regime_detector = RegimeDetector()
         self._mtf_filter = MultiTimeframeFilter()
+        self._adaptive = AdaptiveManager()
         self._state = EngineState.STOPPED
         self._cycle_count = 0
         self._last_cycle_at: datetime | None = None
@@ -333,12 +335,27 @@ class TradingEngine:
             elif hour_utc in (15, 16, 17, 18, 19):
                 tod_factor = 1.0  # Core hours — full confidence
 
-            # 6c. Multi-timeframe confirmation
+            # 6c. Adaptive threshold + multi-timeframe confirmation
+            regime_name = getattr(getattr(regime_state, "regime", None), "value", "unknown")
             confirmed_signals: list[TradingSignal] = []
             for signal in all_signals:
                 if signal.action == SignalAction.HOLD:
                     confirmed_signals.append(signal)
                     continue
+
+                # Apply adaptive per-symbol + per-regime threshold adjustment
+                if signal.action == SignalAction.BUY:
+                    adaptive_threshold = self._adaptive.get_adjusted_threshold(
+                        settings.confidence_threshold, signal.symbol, regime_name,
+                    )
+                    if signal.confidence < adaptive_threshold:
+                        logger.debug(
+                            "engine.adaptive_threshold_skip",
+                            symbol=signal.symbol,
+                            confidence=round(signal.confidence, 3),
+                            adaptive_threshold=round(adaptive_threshold, 3),
+                        )
+                        continue
 
                 # Apply time-of-day adjustment
                 if tod_factor < 1.0:
@@ -410,6 +427,7 @@ class TradingEngine:
                 if signal.action == SignalAction.BUY and (
                     signal.symbol in settings.symbol_blacklist_set
                     or signal.symbol in self._performance.get_underperforming_symbols()
+                    or self._adaptive.should_skip_symbol(signal.symbol)
                 ):
                     logger.info(
                         "engine.signal_skipped_blacklist",
@@ -510,7 +528,7 @@ class TradingEngine:
             await self._portfolio_tracker.take_snapshot()
             await self._db.commit()
 
-            # 10. Update ensemble weights every 50 cycles (~4 hours)
+            # 10. Update ensemble weights and save adaptive state every 50 cycles (~4 hours)
             if self._cycle_count > 0 and self._cycle_count % 50 == 0:
                 for strategy in self._strategies:
                     if hasattr(strategy, "update_weights_from_history"):
@@ -518,6 +536,10 @@ class TradingEngine:
                             strategy.update_weights_from_history(self._performance)
                         except Exception:
                             logger.debug("engine.ensemble_weight_update_failed", exc_info=True)
+                try:
+                    self._adaptive.save_state()
+                except Exception:
+                    logger.debug("engine.adaptive_save_failed", exc_info=True)
 
             self._cycle_count += 1
             self._last_cycle_at = datetime.now(UTC)
@@ -648,6 +670,7 @@ class TradingEngine:
             for strategy in self._strategies:
                 if hasattr(strategy, "record_outcome"):
                     strategy.record_outcome(signal.symbol, open_trade.strategy_name, pnl > 0)
+            self._record_adaptive_outcome(open_trade)
             await send_alert(
                 "Trade Closed",
                 f"{signal.symbol}: SOLD {open_trade.quantity} @ {result.filled_price:.2f}\n"
@@ -975,6 +998,7 @@ class TradingEngine:
             for strategy in self._strategies:
                 if hasattr(strategy, "record_outcome"):
                     strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+            self._record_adaptive_outcome(trade)
             await send_alert(
                 "Trade Closed",
                 f"{symbol}: SOLD {trade.quantity} @ {filled_price:.2f}\n"
@@ -1115,6 +1139,7 @@ class TradingEngine:
                     )
                     self._open_trades.pop(symbol, None)
                     self._last_close_time[symbol] = datetime.now(UTC)
+                    self._record_adaptive_outcome(trade)
                     await send_alert(
                         "Take-Profit Hit",
                         f"{symbol}: sold at {result.filled_price:.2f} "
@@ -1171,6 +1196,7 @@ class TradingEngine:
                     for strategy in self._strategies:
                         if hasattr(strategy, "record_outcome"):
                             strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+                    self._record_adaptive_outcome(trade)
                     await send_alert(
                         "EOD Close",
                         f"{symbol}: closed at {result.filled_price:.2f} "
@@ -1245,6 +1271,37 @@ class TradingEngine:
         except Exception:
             logger.exception("engine.load_trades_error")
 
+    def _record_adaptive_outcome(self, trade: Trade) -> None:
+        """Record trade outcome to the adaptive learning system."""
+        pnl = trade.realized_pnl or 0.0
+        regime = getattr(getattr(self._regime_detector, "current_regime", None), "regime", None)
+        regime_name = regime.value if regime else "unknown"
+        hold_minutes = 0.0
+        if trade.created_at:
+            hold_minutes = (datetime.now(UTC) - trade.created_at).total_seconds() / 60
+        # Get top features from the model for feature effectiveness tracking
+        top_features = []
+        for s in self._strategies:
+            if hasattr(s, "_model_metadata"):
+                importance = s._model_metadata.get("feature_importance", {})
+                top_features = list(importance.keys())[:10]
+                break
+            if hasattr(s, "_strategies"):
+                for sub in s._strategies:
+                    if hasattr(sub, "_model_metadata"):
+                        importance = sub._model_metadata.get("feature_importance", {})
+                        top_features = list(importance.keys())[:10]
+                        break
+        self._adaptive.record_trade_outcome(
+            symbol=trade.symbol,
+            pnl=pnl,
+            confidence=0.0,  # Not stored on trade, use 0
+            strategy_name=trade.strategy_name or "unknown",
+            regime=regime_name,
+            hold_minutes=hold_minutes,
+            top_features=top_features,
+        )
+
     def reset_daily(self) -> None:
         """Reset daily counters. Called at start of each trading day."""
         self._risk_manager.set_daily_start_value(
@@ -1283,4 +1340,10 @@ class TradingEngine:
             "reconnect_attempts": self._reconnect_attempts,
             "market_regime": regime.to_dict() if regime else None,
             "api_costs": api_costs,
+            "adaptive_learning": {
+                "total_outcomes": len(self._adaptive._outcomes),
+                "symbols_tracked": len(self._adaptive._symbol_profiles),
+                "regimes_tracked": len(self._adaptive._regime_profiles),
+                "declining_features": self._adaptive.get_declining_features(),
+            },
         }
