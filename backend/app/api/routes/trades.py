@@ -61,6 +61,8 @@ async def get_trades(
                 "quantity": t.quantity,
                 "entry_price": t.entry_price,
                 "exit_price": t.exit_price,
+                "stop_loss": t.stop_loss,
+                "take_profit": t.take_profit,
                 "status": t.status.value,
                 "strategy_name": t.strategy_name,
                 "realized_pnl": t.realized_pnl,
