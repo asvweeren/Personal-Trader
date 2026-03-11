@@ -225,8 +225,21 @@ class TradingEngine:
             for fill in filled_orders:
                 await self._handle_order_fill(fill)
 
-            # 2. Get market data
-            snapshot = await self._market_data.get_snapshot(self._symbols)
+            # 2. Get market data (only for symbols whose markets are open)
+            from app.risk.market_hours import get_exchange_for_symbol, is_market_open
+            open_symbols = [
+                s for s in self._symbols
+                if is_market_open(get_exchange_for_symbol(s))
+            ]
+            # Always include symbols with open trades so we can manage stops/exits
+            for sym in list(self._open_trades.keys()):
+                if sym not in open_symbols:
+                    open_symbols.append(sym)
+            if not open_symbols:
+                self._cycle_count += 1
+                self._last_cycle_at = datetime.now(UTC)
+                return
+            snapshot = await self._market_data.get_snapshot(open_symbols)
             # Extract latest features from computed DataFrames for ATR lookups
             for sym, feat_df in snapshot.computed_features_df.items():
                 if feat_df is not None and not feat_df.empty:
