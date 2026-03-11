@@ -1233,9 +1233,35 @@ class TradingEngine:
             trades = result.scalars().all()
             loaded = 0
             cancelled = 0
+            ghost_closed = 0
             stops_placed = 0
+
+            # Get actual broker positions to detect ghost trades
+            broker_positions = {}
+            try:
+                portfolio = await self._broker.get_portfolio()
+                for pos in portfolio.positions:
+                    broker_positions[pos.symbol] = pos.quantity
+            except Exception:
+                logger.warning("engine.load_trades_no_portfolio")
+
             for trade in trades:
                 if trade.status == TradeStatus.OPEN and trade.entry_price is not None:
+                    # Verify broker actually has a position for this trade
+                    broker_qty = broker_positions.get(trade.symbol, 0)
+                    if broker_positions and broker_qty == 0:
+                        # Ghost trade: DB says open but broker has no position
+                        trade.status = TradeStatus.CLOSED
+                        trade.realized_pnl = trade.realized_pnl or 0.0
+                        ghost_closed += 1
+                        logger.warning(
+                            "engine.ghost_trade_closed",
+                            symbol=trade.symbol,
+                            quantity=trade.quantity,
+                            entry_price=trade.entry_price,
+                        )
+                        continue
+
                     self._open_trades[trade.symbol] = trade
                     loaded += 1
 
@@ -1268,17 +1294,23 @@ class TradingEngine:
                     # Stale pending — never filled, cancel it
                     trade.status = TradeStatus.CANCELLED
                     cancelled += 1
-            if loaded or cancelled:
+            if loaded or cancelled or ghost_closed:
                 logger.info(
                     "engine.loaded_open_trades",
                     count=loaded,
                     stale_cancelled=cancelled,
+                    ghost_closed=ghost_closed,
                     stops_restored=stops_placed,
                 )
-                if cancelled:
+                if cancelled or ghost_closed:
+                    parts = []
+                    if cancelled:
+                        parts.append(f"{cancelled} stale PENDING")
+                    if ghost_closed:
+                        parts.append(f"{ghost_closed} ghost (no broker position)")
                     await send_alert(
-                        "Stale Orders Cleaned",
-                        f"Cancelled {cancelled} stale PENDING trade(s) on startup.",
+                        "Stale Trades Cleaned",
+                        f"Cleaned up on startup: {', '.join(parts)}",
                     )
             await self._db.flush()
         except Exception:
