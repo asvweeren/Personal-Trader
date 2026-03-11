@@ -145,33 +145,56 @@ def load_strategies() -> list[Strategy]:
     return strategies
 
 
+def _has_eu_suffix(symbol: str) -> bool:
+    """Check if a symbol has a European exchange suffix."""
+    return any(symbol.upper().endswith(s) for s in (".AS", ".PA", ".BR", ".L", ".DE"))
+
+
 async def get_startup_symbols() -> list[str]:
-    """Load symbols from the latest screener result (max 3 days old), fallback to config."""
+    """Load symbols from the latest screener result (max 3 days old), fallback to config.
+
+    EU-suffixed symbols are excluded because the IBKR paper account does not have
+    European market data subscriptions, causing 30s timeouts per symbol.
+    """
     if not settings.screener_enabled:
-        return settings.symbols_list
-    try:
-        from app.models.screening_result import ScreeningResult
-        cutoff = date.today() - timedelta(days=3)
-        async with _session_factory() as session:
-            result = await session.execute(
-                select(ScreeningResult)
-                .where(ScreeningResult.screening_date >= cutoff)
-                .order_by(ScreeningResult.created_at.desc())
-                .limit(1)
-            )
-            row = result.scalar_one_or_none()
-            if row and row.candidates:
-                symbols = [c["symbol"] for c in row.candidates if "symbol" in c]
-                if symbols:
-                    logger.info(
-                        "startup.symbols_from_screener",
-                        count=len(symbols),
-                        date=str(row.screening_date),
-                    )
-                    return symbols
-    except Exception:
-        logger.warning("startup.screener_symbols_failed")
-    return settings.symbols_list
+        symbols = settings.symbols_list
+    else:
+        symbols = None
+        try:
+            from app.models.screening_result import ScreeningResult
+            cutoff = date.today() - timedelta(days=3)
+            async with _session_factory() as session:
+                result = await session.execute(
+                    select(ScreeningResult)
+                    .where(ScreeningResult.screening_date >= cutoff)
+                    .order_by(ScreeningResult.created_at.desc())
+                    .limit(1)
+                )
+                row = result.scalar_one_or_none()
+                if row and row.candidates:
+                    symbols = [c["symbol"] for c in row.candidates if "symbol" in c]
+        except Exception:
+            logger.warning("startup.screener_symbols_failed")
+
+        if not symbols:
+            symbols = settings.symbols_list
+
+    # Filter out EU symbols — IBKR paper account lacks EU data subscriptions
+    eu_removed = [s for s in symbols if _has_eu_suffix(s)]
+    symbols = [s for s in symbols if not _has_eu_suffix(s)]
+    if eu_removed:
+        logger.info(
+            "startup.eu_symbols_filtered",
+            removed=eu_removed,
+            remaining=len(symbols),
+        )
+
+    if symbols:
+        logger.info(
+            "startup.symbols_from_screener",
+            count=len(symbols),
+        )
+    return symbols
 
 
 async def init_trading_engine(db: AsyncSession) -> TradingEngine:

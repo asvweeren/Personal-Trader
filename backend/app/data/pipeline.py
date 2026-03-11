@@ -91,11 +91,17 @@ class DataPipeline:
     async def refresh_features(self) -> dict[str, dict]:
         """Compute technical indicators for all symbols and cache them.
         Intended to be called periodically (e.g., every 5 minutes).
+        Skips symbols whose exchange is currently closed.
         """
-        logger.info("pipeline.refresh_features", symbols=len(self._symbols))
+        from app.risk.market_hours import get_exchange_for_symbol, is_market_open
+        open_symbols = [
+            s for s in self._symbols
+            if is_market_open(get_exchange_for_symbol(s))
+        ]
+        logger.info("pipeline.refresh_features", symbols=len(self._symbols), open=len(open_symbols))
         features = {}
 
-        for symbol in self._symbols:
+        for symbol in open_symbols:
             try:
                 df = await self._market_data.get_historical_data(
                     symbol, duration="1 Y", bar_size="1 day",
