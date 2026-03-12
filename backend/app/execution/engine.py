@@ -113,6 +113,21 @@ class TradingEngine:
         self._trading_enabled = value
         logger.info("engine.trading_toggled", enabled=value)
 
+    async def _await_market_fill(self, result: "OrderResult") -> "OrderResult":
+        """Poll briefly for a MARKET order fill (IBKR returns PendingSubmit initially)."""
+        mapped = self._order_manager._map_status(result.status)
+        if mapped == OrderStatus.FILLED or not result.order_id:
+            return result
+        for _ in range(6):  # Up to 3 seconds
+            await asyncio.sleep(0.5)
+            try:
+                poll = await self._broker.get_order_status(result.order_id)
+                if self._order_manager._map_status(poll.status) == OrderStatus.FILLED:
+                    return poll
+            except Exception:
+                break
+        return result
+
     def update_symbols(self, symbols: list[str]) -> None:
         old = self._symbols
         self._symbols = symbols
@@ -665,6 +680,7 @@ class TradingEngine:
             order_type=OrderType.MARKET,
             expected_price=price,
         )
+        result = await self._await_market_fill(result)
 
         mapped_status = self._order_manager._map_status(result.status)
         if mapped_status == OrderStatus.FILLED and result.filled_price:
@@ -1154,6 +1170,7 @@ class TradingEngine:
                     order_type=OrderType.MARKET,
                     expected_price=current_price,
                 )
+                result = await self._await_market_fill(result)
                 mapped_status = self._order_manager._map_status(result.status)
                 if mapped_status == OrderStatus.FILLED and result.filled_price:
                     await self._portfolio_tracker.record_trade_close(
@@ -1212,6 +1229,7 @@ class TradingEngine:
                     order_type=OrderType.MARKET,
                     expected_price=current_price,
                 )
+                result = await self._await_market_fill(result)
                 mapped_status = self._order_manager._map_status(result.status)
                 if mapped_status == OrderStatus.FILLED and result.filled_price:
                     await self._portfolio_tracker.record_trade_close(
