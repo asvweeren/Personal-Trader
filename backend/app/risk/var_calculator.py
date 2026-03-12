@@ -62,11 +62,11 @@ class VaRCalculator:
         portfolio_returns = []
         position_weights: dict[str, float] = {}
 
-        from app.dependencies import _has_eu_suffix
+        from app.dependencies import should_skip_eu
 
         for pos in portfolio.positions:
-            # Skip EU symbols — IBKR paper account lacks EU data subscriptions
-            if _has_eu_suffix(pos.symbol):
+            # Skip EU symbols when EU trading is disabled (no IBKR data subscription)
+            if should_skip_eu(pos.symbol):
                 continue
 
             weight = pos.market_value / total_value if total_value > 0 else 0.0

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     screener_eu_max_candidates: int = 15
     screener_eu_min_avg_volume: int = 100_000
 
+    # EU Trading (requires IBKR EU market data subscriptions)
+    enable_eu_trading: bool = False
+
     # Trading Configuration
     trading_symbols: str = (
         "SPY,QQQ,AAPL,MSFT,GOOGL,NVDA,AMZN,META,"

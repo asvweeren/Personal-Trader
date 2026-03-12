@@ -150,6 +150,11 @@ def _has_eu_suffix(symbol: str) -> bool:
     return any(symbol.upper().endswith(s) for s in (".AS", ".PA", ".BR", ".L", ".DE"))
 
 
+def should_skip_eu(symbol: str) -> bool:
+    """Return True if this EU symbol should be skipped (EU trading disabled)."""
+    return not settings.enable_eu_trading and _has_eu_suffix(symbol)
+
+
 async def get_startup_symbols() -> list[str]:
     """Load symbols from the latest screener result (max 3 days old), fallback to config.
 
@@ -179,9 +184,9 @@ async def get_startup_symbols() -> list[str]:
         if not symbols:
             symbols = settings.symbols_list
 
-    # Filter out EU symbols — IBKR paper account lacks EU data subscriptions
-    eu_removed = [s for s in symbols if _has_eu_suffix(s)]
-    symbols = [s for s in symbols if not _has_eu_suffix(s)]
+    # Filter out EU symbols when EU trading is disabled (no IBKR data subscription)
+    eu_removed = [s for s in symbols if should_skip_eu(s)]
+    symbols = [s for s in symbols if not should_skip_eu(s)]
     if eu_removed:
         logger.info(
             "startup.eu_symbols_filtered",
