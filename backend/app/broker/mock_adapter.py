@@ -107,6 +107,15 @@ class MockBrokerAdapter(BrokerAdapter):
             return True
         return False
 
+    async def cancel_open_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders for a symbol in the mock broker."""
+        cancelled = 0
+        for order_id, result in list(self._orders.items()):
+            if result.status not in ("FILLED", "CANCELLED") and getattr(result, "symbol", None) == symbol:
+                result.status = "CANCELLED"
+                cancelled += 1
+        return cancelled
+
     async def get_order_status(self, order_id: str) -> OrderResult:
         return self._orders.get(
             order_id, OrderResult(order_id=order_id, status="UNKNOWN")

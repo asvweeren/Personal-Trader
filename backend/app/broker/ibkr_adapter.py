@@ -370,6 +370,34 @@ class IBKRAdapter(BrokerAdapter):
         except Exception as e:
             raise BrokerOrderError(f"Failed to cancel order: {e}") from e
 
+    async def cancel_open_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders at IBKR for a given symbol."""
+        try:
+            async def _do_cancel_all():
+                cancelled = 0
+                for trade in self._ib.openTrades():
+                    trade_symbol = self._reverse_map_symbol(trade.contract)
+                    if trade_symbol == symbol:
+                        self._ib.cancelOrder(trade.order)
+                        cancelled += 1
+                return cancelled
+
+            result = await self._run(_do_cancel_all())
+            if result:
+                logger.info(
+                    "ibkr.cancelled_open_orders_for_symbol",
+                    symbol=symbol,
+                    count=result,
+                )
+            return result
+        except Exception as e:
+            logger.warning(
+                "ibkr.cancel_open_orders_for_symbol_error",
+                symbol=symbol,
+                error=str(e),
+            )
+            return 0
+
     async def get_order_status(self, order_id: str) -> OrderResult:
         async def _do_get():
             for trade in self._ib.trades():

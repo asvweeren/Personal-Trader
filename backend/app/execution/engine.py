@@ -1299,6 +1299,22 @@ class TradingEngine:
                     self._open_trades[trade.symbol] = trade
                     loaded += 1
 
+                    # Cancel any stale broker-side orders for this symbol
+                    # to prevent duplicate stop-losses accumulating across restarts.
+                    try:
+                        stale = await self._broker.cancel_open_orders_for_symbol(trade.symbol)
+                        if stale:
+                            logger.info(
+                                "engine.cancelled_stale_orders_on_load",
+                                symbol=trade.symbol,
+                                count=stale,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "engine.cancel_stale_orders_failed",
+                            symbol=trade.symbol,
+                        )
+
                     # Re-place stop-loss at broker (may have been lost on restart)
                     if trade.stop_loss and trade.stop_loss > 0:
                         try:

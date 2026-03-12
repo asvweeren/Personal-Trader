@@ -103,6 +103,14 @@ class BrokerAdapter(ABC):
     async def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order."""
 
+    async def cancel_open_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders at the broker for a given symbol.
+
+        Returns the number of orders cancelled. Default implementation
+        returns 0 (no-op) for adapters that don't support it.
+        """
+        return 0
+
     @abstractmethod
     async def get_order_status(self, order_id: str) -> OrderResult:
         """Get the status of an order."""
