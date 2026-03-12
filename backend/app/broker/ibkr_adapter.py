@@ -371,15 +371,36 @@ class IBKRAdapter(BrokerAdapter):
             raise BrokerOrderError(f"Failed to cancel order: {e}") from e
 
     async def cancel_open_orders_for_symbol(self, symbol: str) -> int:
-        """Cancel all open orders at IBKR for a given symbol."""
+        """Cancel all open orders at IBKR for a given symbol.
+
+        Uses both openTrades() (current session) and openOrders() to catch
+        orders that may persist across gateway restarts.
+        """
         try:
             async def _do_cancel_all():
                 cancelled = 0
+                seen_order_ids = set()
+                # Check openTrades first (current session)
                 for trade in self._ib.openTrades():
                     trade_symbol = self._reverse_map_symbol(trade.contract)
                     if trade_symbol == symbol:
-                        self._ib.cancelOrder(trade.order)
-                        cancelled += 1
+                        oid = trade.order.orderId
+                        if oid not in seen_order_ids:
+                            self._ib.cancelOrder(trade.order)
+                            seen_order_ids.add(oid)
+                            cancelled += 1
+                # Also check all trades (includes previous sessions)
+                for trade in self._ib.trades():
+                    if trade.orderStatus.status in (
+                        "Submitted", "PreSubmitted", "PendingSubmit"
+                    ):
+                        trade_symbol = self._reverse_map_symbol(trade.contract)
+                        if trade_symbol == symbol:
+                            oid = trade.order.orderId
+                            if oid not in seen_order_ids:
+                                self._ib.cancelOrder(trade.order)
+                                seen_order_ids.add(oid)
+                                cancelled += 1
                 return cancelled
 
             result = await self._run(_do_cancel_all())

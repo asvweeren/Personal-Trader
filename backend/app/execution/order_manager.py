@@ -21,8 +21,10 @@ _ACTIVE_STATUSES = {OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED}
 class OrderManager:
     """Manages the lifecycle of orders from creation to fill/cancel."""
 
-    # Auto-cancel orders pending longer than this
+    # Auto-cancel MARKET/LIMIT orders pending longer than this
     ORDER_TIMEOUT = timedelta(minutes=10)
+    # Stop orders are passive and may legitimately wait hours — don't auto-cancel
+    STOP_ORDER_TIMEOUT = timedelta(hours=8)
 
     def __init__(self, broker: BrokerAdapter, db: AsyncSession):
         self._broker = broker
@@ -153,12 +155,20 @@ class OrderManager:
         if not self._pending_orders:
             return []
 
-        # Auto-cancel timed-out orders
+        # Auto-cancel timed-out orders (use longer timeout for stop orders)
         now = datetime.now(UTC)
-        timed_out = [
-            bid for bid, sub_at in self._submitted_at.items()
-            if now - sub_at > self.ORDER_TIMEOUT and bid in self._pending_orders
-        ]
+        timed_out = []
+        for bid, sub_at in self._submitted_at.items():
+            if bid not in self._pending_orders:
+                continue
+            db_order = self._pending_orders[bid]
+            timeout = (
+                self.STOP_ORDER_TIMEOUT
+                if db_order.order_type == DBOrderType.STOP
+                else self.ORDER_TIMEOUT
+            )
+            if now - sub_at > timeout:
+                timed_out.append(bid)
         for broker_id in timed_out:
             logger.warning(
                 "order.timeout_cancel",

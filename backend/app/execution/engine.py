@@ -718,8 +718,22 @@ class TradingEngine:
 
         This prevents the old stop-loss from triggering after a position is
         already closed, which would create an unintended short position.
+        Cancels both in-memory tracked orders AND broker-side orders as safety net.
         """
         cancelled = await self._order_manager.cancel_orders_for_symbol(symbol, side="SELL")
+        # Safety net: also cancel directly at broker in case orders aren't tracked in memory
+        # (e.g. after restart, or orders that were tracked but already removed from pending)
+        try:
+            broker_cancelled = await self._broker.cancel_open_orders_for_symbol(symbol)
+            if broker_cancelled:
+                logger.info(
+                    "engine.broker_cancel_safety_net",
+                    symbol=symbol,
+                    broker_cancelled=broker_cancelled,
+                )
+                cancelled += broker_cancelled
+        except Exception:
+            logger.debug("engine.broker_cancel_safety_net_failed", symbol=symbol)
         if cancelled:
             logger.info(
                 "engine.cancelled_pending_sells",
@@ -739,6 +753,55 @@ class TradingEngine:
         except Exception:
             pass
         return None
+
+    async def _place_stop_verified(
+        self, trade_id: int, symbol: str, quantity: int, stop_price: float
+    ) -> bool:
+        """Place a stop-loss order and verify IBKR accepted it.
+
+        Returns True if the stop was placed and confirmed, False otherwise.
+        On failure, adds symbol to retry queue.
+        """
+        try:
+            result = await self._order_manager.submit_order(
+                trade_id=trade_id,
+                symbol=symbol,
+                side="SELL",
+                quantity=quantity,
+                order_type=OrderType.STOP,
+                stop_price=stop_price,
+            )
+            # Poll once after brief delay to verify broker accepted the stop
+            if result.order_id:
+                await asyncio.sleep(1)
+                try:
+                    status = await self._broker.get_order_status(result.order_id)
+                    mapped = self._order_manager._map_status(status.status)
+                    if mapped in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                        logger.error(
+                            "engine.stop_rejected_by_broker",
+                            symbol=symbol,
+                            stop_price=stop_price,
+                            broker_status=status.status,
+                        )
+                        self._pending_stop_retries.add(symbol)
+                        return False
+                except Exception:
+                    pass  # Verification failed, but order may still be active
+            logger.info(
+                "engine.stop_placed",
+                symbol=symbol,
+                stop_price=stop_price,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "engine.stop_placement_failed",
+                symbol=symbol,
+                stop_price=stop_price,
+            )
+            self._pending_stop_retries.add(symbol)
+            return False
 
     def _calculate_atr_stop(self, filled_price: float, symbol: str) -> float:
         """Calculate stop price using ATR if available, else fallback to 3%."""
@@ -907,22 +970,9 @@ class TradingEngine:
                     stop_price = round(stop_price + slippage, 2)
 
                 trade.stop_loss = stop_price
-                try:
-                    await self._order_manager.submit_order(
-                        trade_id=trade.id,
-                        symbol=signal.symbol,
-                        side="SELL",
-                        quantity=quantity,
-                        order_type=OrderType.STOP,
-                        stop_price=stop_price,
-                    )
-                except Exception:
-                    logger.exception(
-                        "engine.stop_loss_placement_failed",
-                        symbol=signal.symbol,
-                        stop_price=stop_price,
-                    )
-                    self._pending_stop_retries.add(signal.symbol)
+                await self._place_stop_verified(
+                    trade.id, signal.symbol, quantity, stop_price
+                )
 
                 # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
@@ -992,22 +1042,9 @@ class TradingEngine:
                 if filled_price:
                     stop_price = self._calculate_atr_stop(filled_price, symbol)
                     trade.stop_loss = stop_price
-                    try:
-                        await self._order_manager.submit_order(
-                            trade_id=trade.id,
-                            symbol=symbol,
-                            side="SELL",
-                            quantity=trade.quantity,
-                            order_type=OrderType.STOP,
-                            stop_price=stop_price,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "engine.stop_loss_on_fill_failed",
-                            symbol=symbol,
-                            stop_price=stop_price,
-                        )
-                        self._pending_stop_retries.add(symbol)
+                    await self._place_stop_verified(
+                        trade.id, symbol, trade.quantity, stop_price
+                    )
 
                     # Set take-profit target
                     atr_val = self._get_atr(symbol)
@@ -1061,27 +1098,18 @@ class TradingEngine:
                 self._pending_stop_retries.discard(symbol)
                 continue
 
+            # Cancel any stale stop orders before retrying
             try:
-                await self._order_manager.submit_order(
-                    trade_id=trade.id,
-                    symbol=symbol,
-                    side="SELL",
-                    quantity=trade.quantity,
-                    order_type=OrderType.STOP,
-                    stop_price=trade.stop_loss,
-                )
-                self._pending_stop_retries.discard(symbol)
-                logger.info(
-                    "engine.stop_loss_retry_success",
-                    symbol=symbol,
-                    stop_price=trade.stop_loss,
-                )
+                await self._broker.cancel_open_orders_for_symbol(symbol)
+                await asyncio.sleep(0.5)
             except Exception:
-                logger.warning(
-                    "engine.stop_loss_retry_failed",
-                    symbol=symbol,
-                    stop_price=trade.stop_loss,
-                )
+                pass
+
+            success = await self._place_stop_verified(
+                trade.id, symbol, trade.quantity, trade.stop_loss
+            )
+            if success:
+                self._pending_stop_retries.discard(symbol)
 
     async def _check_trailing_stops(self, prices: dict[str, float]) -> None:
         """Update trailing stops for open positions using progressive tiers."""
@@ -1123,14 +1151,35 @@ class TradingEngine:
                     if price_change_pct < 1.0:
                         continue
 
+                old_stop = trade.stop_loss
                 trade.stop_loss = new_stop
                 self._last_stop_update_price[symbol] = current_price
-                logger.debug(
-                    "engine.trailing_stop_updated",
-                    symbol=symbol,
-                    new_stop=new_stop,
-                    current_price=current_price,
-                )
+
+                # CRITICAL: Replace the stop order at IBKR, not just in DB
+                try:
+                    # Cancel old stop at both OrderManager and broker level
+                    await self._cancel_pending_sells(symbol)
+                    await asyncio.sleep(0.5)  # Let IBKR process cancellation
+
+                    # Place new stop at updated price
+                    success = await self._place_stop_verified(
+                        trade.id, symbol, trade.quantity, new_stop
+                    )
+                    if success:
+                        logger.info(
+                            "engine.trailing_stop_replaced",
+                            symbol=symbol,
+                            old_stop=old_stop,
+                            new_stop=new_stop,
+                            current_price=current_price,
+                        )
+                except Exception:
+                    logger.exception(
+                        "engine.trailing_stop_replace_failed",
+                        symbol=symbol,
+                        new_stop=new_stop,
+                    )
+                    self._pending_stop_retries.add(symbol)
 
     async def _check_take_profits(self, prices: dict[str, float]) -> None:
         """Close positions that have reached their take-profit target."""
@@ -1317,22 +1366,11 @@ class TradingEngine:
 
                     # Re-place stop-loss at broker (may have been lost on restart)
                     if trade.stop_loss and trade.stop_loss > 0:
-                        try:
-                            await self._order_manager.submit_order(
-                                trade_id=trade.id,
-                                symbol=trade.symbol,
-                                side="SELL",
-                                quantity=trade.quantity,
-                                order_type=OrderType.STOP,
-                                stop_price=trade.stop_loss,
-                            )
+                        success = await self._place_stop_verified(
+                            trade.id, trade.symbol, trade.quantity, trade.stop_loss
+                        )
+                        if success:
                             stops_placed += 1
-                        except Exception:
-                            logger.exception(
-                                "engine.stop_loss_restore_failed",
-                                symbol=trade.symbol,
-                                stop_price=trade.stop_loss,
-                            )
 
                     # Set take-profit if missing
                     if not trade.take_profit and trade.entry_price:
