@@ -16,7 +16,7 @@ from app.data.market_data import MarketDataService
 from app.execution.order_manager import OrderManager
 from app.execution.portfolio_tracker import PortfolioTracker
 from app.execution.smart_execution import SmartExecutor
-from app.models.order import OrderStatus
+from app.models.order import Order as DBOrder, OrderStatus
 from app.models.signal import Signal as DBSignal
 from app.models.signal import SignalAction as DBSignalAction
 from app.models.trade import Trade, TradeSide, TradeStatus
@@ -132,6 +132,9 @@ class TradingEngine:
 
             # Load open trades from DB
             await self._load_open_trades()
+
+            # Reconcile stale SUBMITTED orders from before restart
+            await self._reconcile_stale_orders()
 
             self._state = EngineState.RUNNING
             self._reconnect_attempts = 0
@@ -1328,6 +1331,86 @@ class TradingEngine:
             await self._db.flush()
         except Exception:
             logger.exception("engine.load_trades_error")
+
+    async def _reconcile_stale_orders(self) -> None:
+        """Reconcile SUBMITTED orders from before restart by checking IBKR status.
+
+        After a restart, _pending_orders is empty so SUBMITTED orders in the DB
+        would never be polled again.  This queries IBKR for the actual status of
+        each stale order and updates the DB (recording fills or cancellations).
+        """
+        try:
+            result = await self._db.execute(
+                select(DBOrder).where(
+                    DBOrder.status.in_([OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED])
+                )
+            )
+            stale_orders = result.scalars().all()
+            if not stale_orders:
+                return
+
+            updated = 0
+            filled = 0
+            for order in stale_orders:
+                if not order.broker_order_id:
+                    continue
+                try:
+                    broker_result = await self._broker.get_order_status(order.broker_order_id)
+                    new_status = self._order_manager._map_status(broker_result.status)
+
+                    if new_status == order.status:
+                        continue
+
+                    order.status = new_status
+                    updated += 1
+
+                    if new_status == OrderStatus.FILLED:
+                        order.filled_price = broker_result.filled_price
+                        order.filled_quantity = broker_result.filled_quantity
+                        order.filled_at = datetime.now(UTC)
+                        if order.expected_price and broker_result.filled_price:
+                            order.slippage = broker_result.filled_price - order.expected_price
+                        filled += 1
+
+                        # Update trade exit price/P&L if this was a SELL fill
+                        if order.side == "SELL" and broker_result.filled_price:
+                            trade_result = await self._db.execute(
+                                select(Trade).where(Trade.id == order.trade_id)
+                            )
+                            trade = trade_result.scalar_one_or_none()
+                            if trade and not trade.exit_price:
+                                trade.exit_price = broker_result.filled_price
+                                if trade.entry_price:
+                                    trade.realized_pnl = (
+                                        (broker_result.filled_price - trade.entry_price)
+                                        * order.quantity
+                                    )
+                                trade.closed_at = trade.closed_at or datetime.now(UTC)
+                                logger.info(
+                                    "engine.stale_sell_reconciled",
+                                    symbol=order.symbol,
+                                    exit_price=broker_result.filled_price,
+                                    pnl=trade.realized_pnl,
+                                )
+
+                except Exception:
+                    logger.debug(
+                        "engine.stale_order_check_failed",
+                        order_id=order.broker_order_id,
+                        symbol=order.symbol,
+                        exc_info=True,
+                    )
+
+            if updated:
+                await self._db.flush()
+                logger.info(
+                    "engine.stale_orders_reconciled",
+                    total=len(stale_orders),
+                    updated=updated,
+                    filled=filled,
+                )
+        except Exception:
+            logger.exception("engine.stale_order_reconcile_error")
 
     def _record_adaptive_outcome(self, trade: Trade) -> None:
         """Record trade outcome to the adaptive learning system."""
