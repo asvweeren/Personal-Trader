@@ -126,12 +126,15 @@ def load_strategies() -> list[Strategy]:
     if len(strategies) >= 2:
         try:
             from app.strategy.ensemble import EnsembleStrategy
-            # Initial weights based on model characteristics:
-            # XGBoost (~80% acc) > Sentiment (LLM) > LSTM (new, needs proving)
-            # Start with equal weights — let update_weights_from_history() adapt
+            # Initial weights: sentiment leads (proven better live P&L),
+            # ML reduced until retrained on live data distribution.
+            # update_weights_from_history() will auto-adjust from here.
             initial_weights = {}
             for s in strategies:
-                initial_weights[s.name] = 1.0
+                if s.name == "ml_xgboost":
+                    initial_weights[s.name] = 0.5
+                else:
+                    initial_weights[s.name] = 1.0
             ensemble = EnsembleStrategy(
                 strategies=list(strategies),
                 weights=initial_weights,

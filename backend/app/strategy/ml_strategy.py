@@ -50,7 +50,7 @@ class MLStrategy(Strategy):
 
     def __init__(
         self,
-        confidence_threshold: float = 0.50,
+        confidence_threshold: float = 0.60,
         model_path: str | None = None,
     ):
         self._model = None
@@ -162,7 +162,7 @@ class MLStrategy(Strategy):
         should NOT be used as the gate — it leads to thresholds > 0.60
         when the majority class is BUY, effectively blocking all trades.
         """
-        return 0.52
+        return 0.58
 
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
@@ -178,11 +178,11 @@ class MLStrategy(Strategy):
             if regime is not None:
                 if self._is_binary_model():
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                        base = 0.48
-                    elif regime.regime == MarketRegime.RANGING:
-                        base = 0.52
-                    elif regime.regime == MarketRegime.HIGH_VOLATILITY:
                         base = 0.55
+                    elif regime.regime == MarketRegime.RANGING:
+                        base = 0.60
+                    elif regime.regime == MarketRegime.HIGH_VOLATILITY:
+                        base = 0.65
                 else:
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
                         return 0.38
@@ -206,9 +206,9 @@ class MLStrategy(Strategy):
 
         confidence_threshold = self.get_regime_threshold()
 
-        # Increase threshold for stale models (add 15% penalty)
+        # Increase threshold for stale models (add 25% penalty)
         if self.is_model_stale():
-            confidence_threshold = min(confidence_threshold + 0.15, 0.70)
+            confidence_threshold = min(confidence_threshold + 0.25, 0.80)
             logger.warning(
                 "ml_strategy.stale_model",
                 trained_at=self._model_metadata.get("trained_at"),
@@ -218,7 +218,7 @@ class MLStrategy(Strategy):
         # Increase threshold if walk-forward shows poor robustness
         robustness = self.get_robustness_score()
         if robustness < 0.3:
-            confidence_threshold = min(confidence_threshold + 0.10, 0.75)
+            confidence_threshold = min(confidence_threshold + 0.15, 0.85)
             logger.warning(
                 "ml_strategy.low_robustness",
                 robustness=robustness,
