@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
 
+    # Smart entry/exit filters
+    opening_range_minutes: int = 15          # No new BUY signals during first N min after open
+    breakeven_stop_trigger_pct: float = 1.5  # Move stop to entry when position up this %
+    stale_position_hours: float = 2.0        # Close position if held > N hours with <0.3% P&L
+    stale_position_min_pnl_pct: float = 0.3  # Min abs P&L % to keep a stale position
+    partial_profit_enabled: bool = True       # Close 50% at first take-profit target
+    min_relative_volume: float = 0.5         # Skip BUY if today's volume < 50% of 20-day avg
+
     # Smart execution
     smart_execution_enabled: bool = True
     vwap_duration_minutes: int = 15

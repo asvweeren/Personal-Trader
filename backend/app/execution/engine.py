@@ -314,6 +314,9 @@ class TradingEngine:
             # 3. EOD close — force-sell positions near market close (day trading)
             await self._check_eod_close(snapshot.prices)
 
+            # 3b. Stale position exit — close positions held too long with minimal P&L
+            await self._check_stale_positions(snapshot.prices)
+
             # 4. Take-profit check — sell positions that hit their target
             await self._check_take_profits(snapshot.prices)
 
@@ -467,6 +470,47 @@ class TradingEngine:
                         symbol=signal.symbol,
                     )
                     continue
+
+                # Gate 1: SPY/QQQ momentum — don't BUY if broad market is below SMA50
+                if signal.action == SignalAction.BUY and signal.symbol not in ("SPY", "QQQ", "IWM", "DIA"):
+                    market_bearish = False
+                    for index_sym in ("SPY", "QQQ"):
+                        idx_features = self._snapshot_features.get(index_sym, {})
+                        idx_price = snapshot.prices.get(index_sym, 0)
+                        idx_sma50 = idx_features.get("sma_50", 0)
+                        idx_sma20 = idx_features.get("sma_20", 0)
+                        if idx_price > 0 and idx_sma50 > 0 and idx_price < idx_sma50:
+                            market_bearish = True
+                        if idx_price > 0 and idx_sma20 > 0 and idx_price < idx_sma20:
+                            market_bearish = True
+                    if market_bearish:
+                        logger.info(
+                            "engine.signal_skipped_market_bearish",
+                            symbol=signal.symbol,
+                        )
+                        continue
+
+                # Gate 2: Opening range — no BUY in first N minutes after market open
+                if signal.action == SignalAction.BUY and settings.opening_range_minutes > 0:
+                    mins_since_open = self._minutes_since_market_open(signal.symbol)
+                    if mins_since_open is not None and mins_since_open < settings.opening_range_minutes:
+                        logger.info(
+                            "engine.signal_skipped_opening_range",
+                            symbol=signal.symbol,
+                            mins_since_open=round(mins_since_open, 1),
+                        )
+                        continue
+
+                # Gate 3: Volume filter — skip if today's volume too low
+                if signal.action == SignalAction.BUY and settings.min_relative_volume > 0:
+                    rel_vol = self._get_relative_volume(signal.symbol, snapshot)
+                    if rel_vol is not None and rel_vol < settings.min_relative_volume:
+                        logger.info(
+                            "engine.signal_skipped_low_volume",
+                            symbol=signal.symbol,
+                            relative_volume=round(rel_vol, 2),
+                        )
+                        continue
 
                 # Handle SELL signals via position close
                 if signal.action == SignalAction.SELL:
@@ -828,6 +872,48 @@ class TradingEngine:
             pass
         return 0.0
 
+    def _minutes_since_market_open(self, symbol: str) -> float | None:
+        """Return minutes since market open for this symbol's exchange."""
+        try:
+            from app.risk.market_hours import (
+                EXCHANGE_SESSIONS,
+                get_exchange_for_symbol,
+            )
+            from zoneinfo import ZoneInfo
+
+            exchange = get_exchange_for_symbol(symbol)
+            session = EXCHANGE_SESSIONS.get(exchange)
+            if not session:
+                return None
+            tz = ZoneInfo(session.timezone)
+            now_local = datetime.now(UTC).astimezone(tz)
+            market_open = datetime.combine(now_local.date(), session.open_time, tzinfo=tz)
+            delta = (now_local - market_open).total_seconds() / 60
+            return delta if delta >= 0 else None
+        except Exception:
+            return None
+
+    def _get_relative_volume(self, symbol: str, snapshot) -> float | None:
+        """Get today's volume relative to 20-day average (1.0 = normal)."""
+        try:
+            features = self._snapshot_features.get(symbol, {})
+            # Check if we have volume data from computed features
+            today_vol = features.get("volume", 0)
+            avg_vol = features.get("volume_sma_20", 0)
+            if avg_vol and avg_vol > 0 and today_vol > 0:
+                return today_vol / avg_vol
+            # Fallback: check OHLCV data directly
+            df = snapshot.ohlcv.get(symbol)
+            if df is not None and not df.empty and "volume" in df.columns:
+                today_vol = float(df["volume"].iloc[-1])
+                if len(df) >= 20:
+                    avg_vol = float(df["volume"].tail(20).mean())
+                    if avg_vol > 0:
+                        return today_vol / avg_vol
+        except Exception:
+            pass
+        return None
+
     async def _execute_buy(
         self, signal: TradingSignal, quantity: int, price: float, signal_id: int
     ) -> None:
@@ -1124,6 +1210,37 @@ class TradingEngine:
 
             atr_val = self._get_atr(trade.symbol)
 
+            # Breakeven stop: move stop to entry once position is up enough
+            gain_pct = (current_price - trade.entry_price) / trade.entry_price * 100
+            if (
+                settings.breakeven_stop_trigger_pct > 0
+                and gain_pct >= settings.breakeven_stop_trigger_pct
+                and trade.stop_loss < trade.entry_price
+            ):
+                # Move stop to entry + small buffer (0.1%) to cover commissions
+                breakeven_price = round(trade.entry_price * 1.001, 2)
+                if breakeven_price > trade.stop_loss:
+                    old_stop = trade.stop_loss
+                    trade.stop_loss = breakeven_price
+                    self._last_stop_update_price[symbol] = current_price
+                    try:
+                        await self._cancel_pending_sells(symbol)
+                        await asyncio.sleep(0.5)
+                        await self._place_stop_verified(
+                            trade.id, symbol, trade.quantity, breakeven_price
+                        )
+                        logger.info(
+                            "engine.breakeven_stop_set",
+                            symbol=symbol,
+                            old_stop=old_stop,
+                            breakeven=breakeven_price,
+                            gain_pct=round(gain_pct, 2),
+                        )
+                    except Exception:
+                        logger.exception("engine.breakeven_stop_failed", symbol=symbol)
+                        self._pending_stop_retries.add(symbol)
+                    continue  # Don't also run progressive trailing this cycle
+
             # Progressive trailing: tighter stops as profit grows
             new_stop = calculate_progressive_trailing_stop(
                 entry_price=trade.entry_price,
@@ -1182,7 +1299,11 @@ class TradingEngine:
                     self._pending_stop_retries.add(symbol)
 
     async def _check_take_profits(self, prices: dict[str, float]) -> None:
-        """Close positions that have reached their take-profit target."""
+        """Close positions that have reached their take-profit target.
+
+        If partial_profit_enabled: sell 50% at first target, move stop to
+        breakeven on the rest, and set a new higher target for the remainder.
+        """
         if not self._trading_enabled:
             return
 
@@ -1197,6 +1318,69 @@ class TradingEngine:
                 continue
 
             if current_price >= trade.take_profit:
+                # Partial profit-taking: sell half, trail the rest
+                partial_qty = trade.quantity // 2
+                already_partial = getattr(trade, "_partial_taken", False)
+
+                if (
+                    settings.partial_profit_enabled
+                    and partial_qty >= 1
+                    and trade.quantity >= 2
+                    and not already_partial
+                ):
+                    logger.info(
+                        "engine.partial_take_profit",
+                        symbol=symbol,
+                        sell_qty=partial_qty,
+                        keep_qty=trade.quantity - partial_qty,
+                        current_price=current_price,
+                        take_profit=trade.take_profit,
+                    )
+                    # Cancel existing stop before partial sell
+                    await self._cancel_pending_sells(symbol)
+                    remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
+                    if remaining > 0:
+                        logger.warning("engine.tp_cancel_incomplete", symbol=symbol)
+                        continue
+
+                    result = await self._order_manager.submit_order(
+                        trade_id=trade.id,
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=partial_qty,
+                        order_type=OrderType.MARKET,
+                        expected_price=current_price,
+                    )
+                    result = await self._await_market_fill(result)
+                    mapped_status = self._order_manager._map_status(result.status)
+                    if mapped_status == OrderStatus.FILLED and result.filled_price:
+                        # Update trade: reduce quantity, keep position open
+                        trade.quantity -= partial_qty
+                        trade._partial_taken = True
+                        # Move stop to breakeven + buffer on remaining shares
+                        breakeven = round(trade.entry_price * 1.001, 2)
+                        trade.stop_loss = breakeven
+                        # Set new take-profit 50% higher than original distance
+                        original_distance = trade.take_profit - trade.entry_price
+                        trade.take_profit = round(
+                            trade.entry_price + original_distance * 1.5, 2
+                        )
+                        # Place new stop for reduced quantity
+                        await asyncio.sleep(0.5)
+                        await self._place_stop_verified(
+                            trade.id, symbol, trade.quantity, breakeven
+                        )
+                        partial_pnl = (result.filled_price - trade.entry_price) * partial_qty
+                        await send_alert(
+                            "Partial Profit Taken",
+                            f"{symbol}: sold {partial_qty} @ {result.filled_price:.2f} "
+                            f"(+{partial_pnl:+.2f})\n"
+                            f"Keeping {trade.quantity} shares, stop→breakeven, "
+                            f"new target: {trade.take_profit:.2f}",
+                        )
+                    continue
+
+                # Full take-profit (1 share positions, or second target hit)
                 logger.info(
                     "engine.take_profit_triggered",
                     symbol=symbol,
@@ -1204,7 +1388,6 @@ class TradingEngine:
                     take_profit=trade.take_profit,
                     entry_price=trade.entry_price,
                 )
-                # Cancel pending SELL orders (stop-loss) before closing
                 await self._cancel_pending_sells(symbol)
                 remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
                 if remaining > 0:
@@ -1229,10 +1412,11 @@ class TradingEngine:
                     self._eod_sell_pending.discard(symbol)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     self._record_adaptive_outcome(trade)
+                    partial_note = " (2nd target)" if getattr(trade, "_partial_taken", False) else ""
                     await send_alert(
                         "Take-Profit Hit",
-                        f"{symbol}: sold at {result.filled_price:.2f} "
-                        f"(target {trade.take_profit:.2f}, entry {trade.entry_price:.2f})",
+                        f"{symbol}: sold {trade.quantity} @ {result.filled_price:.2f} "
+                        f"(target {trade.take_profit:.2f}, entry {trade.entry_price:.2f}){partial_note}",
                     )
 
     async def _check_eod_close(self, prices: dict[str, float]) -> None:
@@ -1298,6 +1482,79 @@ class TradingEngine:
                         f"{symbol}: closed at {result.filled_price:.2f} "
                         f"({mins_left:.0f} min before close, P&L: {pnl:+.2f})",
                     )
+
+    async def _check_stale_positions(self, prices: dict[str, float]) -> None:
+        """Close positions held too long with negligible P&L.
+
+        Day trading positions that sit flat for hours tie up capital and
+        often end up losing when volatility picks up. Better to cut them
+        and redeploy capital.
+        """
+        if not self._trading_enabled or settings.stale_position_hours <= 0:
+            return
+
+        now = datetime.now(UTC)
+        max_hold_seconds = settings.stale_position_hours * 3600
+
+        for symbol, trade in list(self._open_trades.items()):
+            if trade.status != TradeStatus.OPEN or trade.entry_price is None:
+                continue
+            if not trade.created_at:
+                continue
+            # Skip if pending EOD sell
+            if symbol in self._eod_sell_pending:
+                continue
+
+            held_seconds = (now - trade.created_at).total_seconds()
+            if held_seconds < max_hold_seconds:
+                continue
+
+            current_price = prices.get(symbol)
+            if current_price is None or current_price <= 0:
+                continue
+
+            pnl_pct = abs(current_price - trade.entry_price) / trade.entry_price * 100
+            if pnl_pct >= settings.stale_position_min_pnl_pct:
+                continue  # Position has meaningful movement, keep it
+
+            held_hours = held_seconds / 3600
+            logger.info(
+                "engine.stale_position_close",
+                symbol=symbol,
+                held_hours=round(held_hours, 1),
+                pnl_pct=round(pnl_pct, 2),
+            )
+
+            await self._cancel_pending_sells(symbol)
+            await asyncio.sleep(0.5)
+
+            result = await self._order_manager.submit_order(
+                trade_id=trade.id,
+                symbol=symbol,
+                side="SELL",
+                quantity=trade.quantity,
+                order_type=OrderType.MARKET,
+                expected_price=current_price,
+            )
+            result = await self._await_market_fill(result)
+            mapped_status = self._order_manager._map_status(result.status)
+            if mapped_status == OrderStatus.FILLED and result.filled_price:
+                await self._portfolio_tracker.record_trade_close(
+                    trade, result.filled_price
+                )
+                self._open_trades.pop(symbol, None)
+                self._eod_sell_pending.discard(symbol)
+                self._last_close_time[symbol] = datetime.now(UTC)
+                pnl = trade.realized_pnl or 0.0
+                for strategy in self._strategies:
+                    if hasattr(strategy, "record_outcome"):
+                        strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+                self._record_adaptive_outcome(trade)
+                await send_alert(
+                    "Stale Position Closed",
+                    f"{symbol}: closed at {result.filled_price:.2f} after "
+                    f"{held_hours:.1f}h with {pnl_pct:.2f}% P&L ({pnl:+.2f})",
+                )
 
     async def _load_open_trades(self) -> None:
         """Load open trades from database on startup for recovery.
