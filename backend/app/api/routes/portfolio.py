@@ -159,17 +159,20 @@ async def close_position(symbol: str):
     await _flush_pending_orders(engine)
 
     open_trade = engine._open_trades.get(symbol)
-    if not open_trade:
-        raise HTTPException(status_code=404, detail=f"No open trade for {symbol}")
 
-    # Cancel any pending SELL orders (e.g. stop-loss) to avoid accidental short
-    await engine._cancel_pending_sells(symbol)
-    # Force-clear stale pending tracking for this symbol
-    engine._order_manager._pending_by_symbol.pop(symbol, None)
-
-    # Use actual broker quantity (may differ from DB trade record)
+    # Check broker for orphaned position (not tracked by engine)
     broker_qty = await _get_broker_position_qty(engine, symbol)
-    sell_qty = broker_qty if broker_qty > 0 else open_trade.quantity
+
+    if not open_trade and broker_qty <= 0:
+        raise HTTPException(status_code=404, detail=f"No open trade or broker position for {symbol}")
+
+    if open_trade:
+        # Cancel any pending SELL orders (e.g. stop-loss) to avoid accidental short
+        await engine._cancel_pending_sells(symbol)
+        # Force-clear stale pending tracking for this symbol
+        engine._order_manager._pending_by_symbol.pop(symbol, None)
+
+    sell_qty = broker_qty if broker_qty > 0 else (open_trade.quantity if open_trade else 0)
 
     # Get current price for the sell order
     try:
@@ -180,9 +183,24 @@ async def close_position(symbol: str):
                 current_price = p.market_price
                 break
         if current_price <= 0:
-            current_price = open_trade.entry_price or 0.0
+            current_price = (open_trade.entry_price if open_trade else 0.0) or 0.0
     except Exception:
-        current_price = open_trade.entry_price or 0.0
+        current_price = (open_trade.entry_price if open_trade else 0.0) or 0.0
+
+    # For orphaned positions (no engine trade), sell directly via broker
+    if not open_trade:
+        from app.broker.base import OrderRequest, OrderSide
+        order_req = OrderRequest(
+            symbol=symbol, side=OrderSide.SELL, quantity=sell_qty, order_type=OrderType.MARKET,
+        )
+        result = await engine._broker.place_order(order_req)
+        return {
+            "status": "submitted",
+            "symbol": symbol,
+            "quantity": sell_qty,
+            "order_id": result.order_id,
+            "message": f"Orphaned position: SELL {sell_qty} {symbol} submitted",
+        }
 
     # Place MARKET SELL order
     result = await engine._order_manager.submit_order(
