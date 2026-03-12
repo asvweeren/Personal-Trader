@@ -78,19 +78,20 @@ class Settings(BaseSettings):
     )
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 5.0
-    max_position_pct: float = 12.0
+    max_position_pct: float = 5.0
     max_open_positions: int = 10
     min_cash_reserve_pct: float = 20.0
     max_sector_concentration_pct: float = 35.0
+    max_total_exposure_pct: float = 100.0  # Max total open notional as % of portfolio value
     confidence_threshold: float = 0.40     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
-    atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance
-    min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
+    atr_stop_multiplier: float = 1.5       # ATR multiplier for stop-loss distance
+    min_stop_loss_pct: float = 1.0         # Minimum stop-loss percentage as floor
 
     # Take-profit
-    atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry
-    min_take_profit_pct: float = 1.5         # Minimum 1.5% profit target (realistic for day trading)
+    atr_take_profit_multiplier: float = 2.0  # Take-profit at 2x ATR above entry
+    min_take_profit_pct: float = 1.0         # Minimum 1.0% profit target (day trading)
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -101,7 +102,7 @@ class Settings(BaseSettings):
     # Trade management
     min_hold_minutes: int = 5                # Min hold time before SELL signal can close
     reentry_cooldown_minutes: int = 10       # Min wait time before re-entering same symbol
-    max_trades_per_symbol_per_day: int = 5   # Max trades per symbol per day
+    max_trades_per_symbol_per_day: int = 2   # Max trades per symbol per day
 
     # End-of-day close
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close

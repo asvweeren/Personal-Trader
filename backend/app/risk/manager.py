@@ -207,6 +207,23 @@ class RiskManager:
         )
         order_value = quantity * estimated_price
 
+        # Aggregate exposure check: total open notional + new order must not exceed limit
+        total_value = portfolio.account_summary.total_value
+        if total_value > 0:
+            current_exposure = sum(
+                abs(p.market_value) for p in portfolio.positions
+            )
+            new_exposure = current_exposure + order_value
+            max_exposure = total_value * (settings.max_total_exposure_pct / 100.0)
+            if new_exposure > max_exposure:
+                return RiskDecision(
+                    approved=False,
+                    signal=signal,
+                    reason=f"Total exposure {new_exposure:.0f} would exceed "
+                           f"{settings.max_total_exposure_pct}% limit ({max_exposure:.0f})",
+                    quantity=0,
+                )
+
         if quantity <= 0:
             await self._log_risk_event(
                 RiskEventType.SIGNAL_REJECTED,
