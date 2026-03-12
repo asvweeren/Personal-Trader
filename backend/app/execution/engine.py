@@ -97,6 +97,8 @@ class TradingEngine:
         self._daily_symbol_trades: dict[str, int] = {}
         # Cache snapshot features for ATR lookups in _execute_buy
         self._snapshot_features: dict[str, dict] = {}
+        # Track symbols with pending EOD sell to prevent duplicate sells → short positions
+        self._eod_sell_pending: set[str] = set()
 
     @property
     def state(self) -> EngineState:
@@ -667,6 +669,7 @@ class TradingEngine:
                 open_trade, result.filled_price
             )
             self._open_trades.pop(signal.symbol, None)
+            self._eod_sell_pending.discard(signal.symbol)
             self._last_close_time[signal.symbol] = datetime.now(UTC)
             pnl = open_trade.realized_pnl or 0.0
             hold_mins = ""
@@ -998,6 +1001,7 @@ class TradingEngine:
             if filled_price:
                 await self._portfolio_tracker.record_trade_close(trade, filled_price)
             self._open_trades.pop(symbol, None)
+            self._eod_sell_pending.discard(symbol)
             self._last_close_time[symbol] = datetime.now(UTC)
             pnl = trade.realized_pnl or 0.0
             hold_mins = ""
@@ -1153,6 +1157,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
+                    self._eod_sell_pending.discard(symbol)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     self._record_adaptive_outcome(trade)
                     await send_alert(
@@ -1172,6 +1177,10 @@ class TradingEngine:
             if trade.status != TradeStatus.OPEN:
                 continue
 
+            # Skip if we already submitted an EOD sell for this symbol
+            if symbol in self._eod_sell_pending:
+                continue
+
             mins_left = minutes_until_close_for_symbol(symbol, now)
             if mins_left is None:
                 continue  # Market not open / already closed
@@ -1186,10 +1195,11 @@ class TradingEngine:
                 )
                 # Cancel pending SELL orders (stop-loss) before EOD close
                 await self._cancel_pending_sells(symbol)
-                remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
-                if remaining > 0:
-                    logger.warning("engine.eod_cancel_incomplete", symbol=symbol)
-                    continue
+                # Wait briefly for IBKR to process the cancel
+                await asyncio.sleep(1)
+
+                # Mark as pending to prevent duplicate sells
+                self._eod_sell_pending.add(symbol)
 
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
@@ -1205,6 +1215,7 @@ class TradingEngine:
                         trade, result.filled_price
                     )
                     self._open_trades.pop(symbol, None)
+                    self._eod_sell_pending.discard(symbol)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     pnl = trade.realized_pnl or 0.0
                     # Record outcome for dynamic strategy weight adjustment
@@ -1360,6 +1371,7 @@ class TradingEngine:
         self._last_close_time.clear()
         self._last_stop_update_price.clear()
         self._daily_symbol_trades.clear()
+        self._eod_sell_pending.clear()
         logger.info("engine.daily_reset")
 
     def get_status(self) -> dict:

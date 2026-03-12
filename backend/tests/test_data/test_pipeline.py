@@ -1,5 +1,5 @@
 from datetime import UTC
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pandas as pd
@@ -54,7 +54,8 @@ async def test_refresh_features_skips_insufficient_data(pipeline):
 
 
 @pytest.mark.asyncio
-async def test_refresh_features_computes_for_valid_data(pipeline):
+@patch("app.risk.market_hours.is_market_open", return_value=True)
+async def test_refresh_features_computes_for_valid_data(_mock_open, pipeline):
     """Should compute features for symbols with enough data."""
     df = make_ohlcv(200)
     pipeline._market_data.get_historical_data = AsyncMock(return_value=df)
@@ -68,7 +69,8 @@ async def test_refresh_features_computes_for_valid_data(pipeline):
 
 
 @pytest.mark.asyncio
-async def test_refresh_features_handles_errors(pipeline):
+@patch("app.risk.market_hours.is_market_open", return_value=True)
+async def test_refresh_features_handles_errors(_mock_open, pipeline):
     """Should continue processing other symbols when one fails."""
     call_count = 0
 

@@ -234,9 +234,13 @@ def schedule_daily_screener() -> None:
         except Exception:
             logger.exception("screener.db_save_failed")
 
-        # Update engine + pipeline with new symbols
+        # Update engine + pipeline with new symbols (filter EU — no IBKR data subscription)
         if data["candidates"]:
-            symbols = [c["symbol"] for c in data["candidates"]]
+            from app.dependencies import _has_eu_suffix
+            symbols = [c["symbol"] for c in data["candidates"] if not _has_eu_suffix(c["symbol"])]
+            eu_filtered = len(data["candidates"]) - len(symbols)
+            if eu_filtered:
+                logger.info("screener.eu_symbols_filtered", removed=eu_filtered, remaining=len(symbols))
             try:
                 from app.dependencies import get_trading_engine
                 engine = get_trading_engine()

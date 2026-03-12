@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -185,7 +185,8 @@ async def test_cycle_buy_signal_trading_disabled():
 
 
 @pytest.mark.asyncio
-async def test_cycle_buy_signal_trading_enabled():
+@patch("app.risk.market_hours.is_market_open", return_value=True)
+async def test_cycle_buy_signal_trading_enabled(_mock_open):
     from app.config import settings
     # Ensure R:R ratio passes the 2.5 minimum gate (risk=3% → need TP >= 7.5%)
     old_tp = settings.min_take_profit_pct
