@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     min_cash_reserve_pct: float = 20.0
     max_sector_concentration_pct: float = 35.0
     max_total_exposure_pct: float = 100.0  # Max total open notional as % of portfolio value
-    confidence_threshold: float = 0.40     # Min confidence for strategies to generate BUY/SELL
+    confidence_threshold: float = 0.55     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
     atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance (wider for swing)

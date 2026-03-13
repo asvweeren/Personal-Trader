@@ -76,12 +76,14 @@ def create_binary_target(
 ) -> pd.Series:
     """Create a binary target: 1=BUY (profitable entry), 0=NOT_BUY.
 
-    Uses max forward return (highest point in window), not close-to-close,
-    to capture the best exit moment within the lookahead window.
+    Uses close-to-close forward return to match live trading reality.
+    Previous version used max forward high which created look-ahead bias —
+    the model learned to buy when intraday spikes occurred, but live trading
+    can't exit at the exact high.
     """
-    future_highs = df["high"].shift(-1).rolling(forward_periods).max()
-    max_forward_return = future_highs / df["close"] - 1
-    target = (max_forward_return > buy_threshold).astype(int)
+    future_close = df["close"].shift(-forward_periods)
+    forward_return = future_close / df["close"] - 1
+    target = (forward_return > buy_threshold).astype(int)
     target.name = "target"
     return target
 

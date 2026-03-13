@@ -365,7 +365,10 @@ class MLStrategy(Strategy):
                 # Binary: scale_pos_weight handles class imbalance
                 n_negative = int((data.y_train == 0).sum())
                 n_positive = int((data.y_train == 1).sum())
-                scale_pos_weight = n_negative / max(n_positive, 1)
+                # Penalize false BUYs harder than missed BUYs: a false BUY loses
+                # money, a missed BUY only misses opportunity. Weight > 1.0 means
+                # the model is punished more for predicting BUY when it shouldn't.
+                scale_pos_weight = max(1.5, n_positive / max(n_negative, 1))
                 logger.info(
                     "ml_strategy.binary_class_balance",
                     n_positive=n_positive,

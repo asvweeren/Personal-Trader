@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Float, Index, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.database import Base
@@ -56,5 +56,6 @@ class Trade(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    partial_taken: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     orders: Mapped[list[Order]] = relationship(back_populates="trade")

@@ -618,9 +618,15 @@ class TradingEngine:
                     )
                     continue
 
-                await self._execute_buy(
-                    signal, decision.adjusted_quantity or 1, price, db_signal.id
-                )
+                qty = decision.adjusted_quantity or 0
+                if qty <= 0:
+                    logger.info(
+                        "engine.signal_skipped_zero_quantity",
+                        symbol=signal.symbol,
+                        reason="Position sizer returned 0 shares",
+                    )
+                    continue
+                await self._execute_buy(signal, qty, price, db_signal.id)
 
             await self._db.commit()
 
@@ -1431,7 +1437,7 @@ class TradingEngine:
             if current_price >= trade.take_profit:
                 # Partial profit-taking: sell half, trail the rest
                 partial_qty = trade.quantity // 2
-                already_partial = getattr(trade, "_partial_taken", False)
+                already_partial = trade.partial_taken
 
                 if (
                     settings.partial_profit_enabled
@@ -1467,7 +1473,7 @@ class TradingEngine:
                     if mapped_status == OrderStatus.FILLED and result.filled_price:
                         # Update trade: reduce quantity, keep position open
                         trade.quantity -= partial_qty
-                        trade._partial_taken = True
+                        trade.partial_taken = True
                         # Move stop to breakeven + buffer on remaining shares
                         breakeven = round(trade.entry_price * 1.001, 2)
                         trade.stop_loss = breakeven
@@ -1523,7 +1529,7 @@ class TradingEngine:
                     self._eod_sell_pending.discard(symbol)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     self._record_adaptive_outcome(trade)
-                    partial_note = " (2nd target)" if getattr(trade, "_partial_taken", False) else ""
+                    partial_note = " (2nd target)" if trade.partial_taken else ""
                     await send_alert(
                         "Take-Profit Hit",
                         f"{symbol}: sold {trade.quantity} @ {result.filled_price:.2f} "
