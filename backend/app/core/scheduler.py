@@ -546,9 +546,14 @@ def schedule_eod_safety_close(engine) -> None:
     """
 
     async def eod_safety_check():
+        from app.config import settings as cfg
         from app.risk.market_hours import is_any_market_open
 
         try:
+            # Skip if EOD close is disabled (swing trading mode)
+            if not cfg.eod_close_enabled:
+                return
+
             if engine.state.value != "RUNNING" or not engine.trading_enabled:
                 return
             if not engine._open_trades:
@@ -644,7 +649,7 @@ def schedule_weekly_model_retrain() -> None:
                 feat_df = compute_features(frame)
                 feat_df["target"] = create_binary_target(
                     feat_df, forward_periods=5,
-                    buy_threshold=0.015,
+                    buy_threshold=0.01,
                 )
                 feat_df = feat_df.dropna()
                 if len(feat_df) >= 60:
@@ -818,7 +823,7 @@ def schedule_weekly_model_retrain() -> None:
                     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
                     feat_df = compute_features(df)
                     feat_df["target"] = create_binary_target(
-                        feat_df, forward_periods=5, buy_threshold=0.015,
+                        feat_df, forward_periods=5, buy_threshold=0.01,
                     )
                     feat_df = feat_df.dropna()
                     if len(feat_df) >= 60:

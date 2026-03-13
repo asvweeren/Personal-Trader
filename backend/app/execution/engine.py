@@ -311,8 +311,13 @@ class TradingEngine:
                 logger.debug("regime.detection_error", exc_info=True)
                 regime_state = None
 
-            # 3. EOD close — force-sell positions near market close (day trading)
-            await self._check_eod_close(snapshot.prices)
+            # 3. EOD close — force-sell positions near market close (only if enabled)
+            if settings.eod_close_enabled:
+                await self._check_eod_close(snapshot.prices)
+
+            # 3a. Max hold days — force-close positions held too many trading days
+            if settings.max_hold_days > 0:
+                await self._check_max_hold_days(snapshot.prices)
 
             # 3b. Stale position exit — close positions held too long with minimal P&L
             await self._check_stale_positions(snapshot.prices)
@@ -339,14 +344,11 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            # If ensemble exists, run only that (it already calls sub-strategies
-            # in parallel internally). Otherwise run all strategies.
-            has_ensemble = any(s.name == "ensemble" for s in self._strategies)
-            strategies_to_run = (
-                [s for s in self._strategies if s.name == "ensemble"]
-                if has_ensemble
-                else self._strategies
-            )
+            # Skip ensemble (11% win rate) — run individual strategies directly.
+            # Each strategy generates its own signals; best signal per symbol wins.
+            strategies_to_run = [
+                s for s in self._strategies if s.name != "ensemble"
+            ]
             for strategy in strategies_to_run:
                 try:
                     signals = await strategy.generate_signals(snapshot)
@@ -358,6 +360,15 @@ class TradingEngine:
                 self._cycle_count += 1
                 self._last_cycle_at = datetime.now(UTC)
                 return
+
+            # 6a. Deduplicate: keep highest-confidence signal per symbol per action
+            best_signals: dict[tuple[str, str], TradingSignal] = {}
+            for sig in all_signals:
+                key = (sig.symbol, sig.action.value)
+                existing = best_signals.get(key)
+                if existing is None or sig.confidence > existing.confidence:
+                    best_signals[key] = sig
+            all_signals = list(best_signals.values())
 
             # 6b. Time-of-day confidence adjustment
             # Market open (first 30 min) and close (last 30 min) are noisier
@@ -551,6 +562,18 @@ class TradingEngine:
                         limit=settings.max_trades_per_symbol_per_day,
                     )
                     continue
+
+                # Gate 4: Max new positions per day (swing trading capital management)
+                if settings.max_new_positions_per_day > 0:
+                    total_new_today = sum(self._daily_symbol_trades.values())
+                    if total_new_today >= settings.max_new_positions_per_day:
+                        logger.info(
+                            "engine.signal_skipped_daily_position_limit",
+                            symbol=signal.symbol,
+                            new_today=total_new_today,
+                            limit=settings.max_new_positions_per_day,
+                        )
+                        continue
 
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
@@ -924,7 +947,7 @@ class TradingEngine:
         tp_est = calculate_take_profit(price, signal.symbol, atr_val)
         risk = price - stop_price_est
         reward = tp_est - price
-        if risk > 0 and (reward / risk) < 1.5:
+        if risk > 0 and (reward / risk) < 2.0:
             logger.info(
                 "engine.insufficient_rr",
                 symbol=signal.symbol,
@@ -1554,6 +1577,75 @@ class TradingEngine:
                     "Stale Position Closed",
                     f"{symbol}: closed at {result.filled_price:.2f} after "
                     f"{held_hours:.1f}h with {pnl_pct:.2f}% P&L ({pnl:+.2f})",
+                )
+
+    async def _check_max_hold_days(self, prices: dict[str, float]) -> None:
+        """Force-close positions held longer than max_hold_days trading days.
+
+        For swing trading, we want to exit positions that haven't hit take-profit
+        or stop-loss within the expected holding window (matches ML model's
+        forward_periods training target).
+        """
+        if not self._trading_enabled or settings.max_hold_days <= 0:
+            return
+
+        now = datetime.now(UTC)
+        max_hold_seconds = settings.max_hold_days * 24 * 3600  # Calendar days as proxy
+
+        for symbol, trade in list(self._open_trades.items()):
+            if trade.status != TradeStatus.OPEN or trade.entry_price is None:
+                continue
+            if not trade.created_at:
+                continue
+            if symbol in self._eod_sell_pending:
+                continue
+
+            held_seconds = (now - trade.created_at).total_seconds()
+            if held_seconds < max_hold_seconds:
+                continue
+
+            current_price = prices.get(symbol)
+            if current_price is None or current_price <= 0:
+                continue
+
+            held_days = held_seconds / 86400
+            pnl_pct = (current_price - trade.entry_price) / trade.entry_price * 100
+            logger.info(
+                "engine.max_hold_close",
+                symbol=symbol,
+                held_days=round(held_days, 1),
+                pnl_pct=round(pnl_pct, 2),
+            )
+
+            await self._cancel_pending_sells(symbol)
+            await asyncio.sleep(0.5)
+
+            result = await self._order_manager.submit_order(
+                trade_id=trade.id,
+                symbol=symbol,
+                side="SELL",
+                quantity=trade.quantity,
+                order_type=OrderType.MARKET,
+                expected_price=current_price,
+            )
+            result = await self._await_market_fill(result)
+            mapped_status = self._order_manager._map_status(result.status)
+            if mapped_status == OrderStatus.FILLED and result.filled_price:
+                await self._portfolio_tracker.record_trade_close(
+                    trade, result.filled_price
+                )
+                self._open_trades.pop(symbol, None)
+                self._eod_sell_pending.discard(symbol)
+                self._last_close_time[symbol] = datetime.now(UTC)
+                pnl = trade.realized_pnl or 0.0
+                for strategy in self._strategies:
+                    if hasattr(strategy, "record_outcome"):
+                        strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+                self._record_adaptive_outcome(trade)
+                await send_alert(
+                    "Max Hold Close",
+                    f"{symbol}: closed at {result.filled_price:.2f} after "
+                    f"{held_days:.1f} days (P&L: {pnl_pct:+.1f}%, ${pnl:+.2f})",
                 )
 
     async def _load_open_trades(self) -> None:

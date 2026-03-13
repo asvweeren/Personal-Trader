@@ -86,12 +86,12 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.40     # Min confidence for strategies to generate BUY/SELL
 
     # ATR-based stop-loss
-    atr_stop_multiplier: float = 1.5       # ATR multiplier for stop-loss distance
-    min_stop_loss_pct: float = 1.0         # Minimum stop-loss percentage as floor
+    atr_stop_multiplier: float = 2.0       # ATR multiplier for stop-loss distance (wider for swing)
+    min_stop_loss_pct: float = 1.5         # Minimum stop-loss percentage as floor
 
     # Take-profit
-    atr_take_profit_multiplier: float = 2.0  # Take-profit at 2x ATR above entry
-    min_take_profit_pct: float = 1.0         # Minimum 1.0% profit target (day trading)
+    atr_take_profit_multiplier: float = 3.0  # Take-profit at 3x ATR above entry (swing target)
+    min_take_profit_pct: float = 2.0         # Minimum 2.0% profit target (swing trading)
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -100,17 +100,22 @@ class Settings(BaseSettings):
     consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
 
     # Trade management
-    min_hold_minutes: int = 5                # Min hold time before SELL signal can close
-    reentry_cooldown_minutes: int = 10       # Min wait time before re-entering same symbol
-    max_trades_per_symbol_per_day: int = 2   # Max trades per symbol per day
+    min_hold_minutes: int = 30               # Min hold time before SELL signal can close (swing)
+    reentry_cooldown_minutes: int = 1440     # 24h cooldown before re-entering same symbol
+    max_trades_per_symbol_per_day: int = 1   # Max 1 trade per symbol per day (swing)
 
     # End-of-day close
+    eod_close_enabled: bool = False          # Disabled for swing trading (hold overnight)
     eod_close_minutes_before: int = 10       # Close all positions 10 min before market close
+
+    # Swing trading
+    max_hold_days: int = 5                   # Force close after N trading days (0=unlimited)
+    max_new_positions_per_day: int = 3       # Max new BUY entries per day
 
     # Smart entry/exit filters
     opening_range_minutes: int = 15          # No new BUY signals during first N min after open
     breakeven_stop_trigger_pct: float = 1.5  # Move stop to entry when position up this %
-    stale_position_hours: float = 2.0        # Close position if held > N hours with <0.3% P&L
+    stale_position_hours: float = 0          # 0=disabled for swing trading (was 2.0 for day trading)
     stale_position_min_pnl_pct: float = 0.3  # Min abs P&L % to keep a stale position
     partial_profit_enabled: bool = True       # Close 50% at first take-profit target
     min_relative_volume: float = 0.5         # Skip BUY if today's volume < 50% of 20-day avg
@@ -121,8 +126,8 @@ class Settings(BaseSettings):
     twap_slices: int = 4
 
     # Progressive trailing stop tiers: "gain%:trail%,..."
-    # Start trailing early with tight trail widths for day trading
-    trailing_stop_tiers: str = "2.0:0.8,3.0:1.2,5.0:1.8,8.0:2.5"
+    # Wider trails for swing trading to avoid getting shaken out by daily noise
+    trailing_stop_tiers: str = "3.0:1.5,5.0:2.0,8.0:2.5,12.0:3.5"
 
     # Symbol blacklist: comma-separated symbols to never trade
     symbol_blacklist: str = ""
