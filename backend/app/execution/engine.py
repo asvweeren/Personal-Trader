@@ -809,6 +809,86 @@ class TradingEngine:
             )
         return cancelled
 
+    async def _verify_position_or_record_close(
+        self, symbol: str, trade: "Trade"
+    ) -> bool:
+        """Check if a position still exists at IBKR before replacing its stop.
+
+        If the broker position is gone (qty=0), the stop-loss was filled at IBKR
+        but the engine missed the fill event (race condition during cancel/replace).
+        In that case, record the trade closure using the last known market price.
+
+        Returns True if the position still exists, False if it was closed.
+        """
+        try:
+            portfolio = await self._broker.get_portfolio()
+            for p in portfolio.positions:
+                if p.symbol == symbol and int(p.quantity) > 0:
+                    return True  # Position still exists, safe to replace stop
+
+            # Position is GONE at IBKR — the stop was filled but we missed it
+            logger.warning(
+                "engine.stop_fill_detected_via_position_check",
+                symbol=symbol,
+                trade_id=trade.id,
+                entry_price=trade.entry_price,
+                stop_loss=trade.stop_loss,
+            )
+
+            # Use last market price from portfolio, or the stop-loss price as fill estimate
+            fill_price = trade.stop_loss or trade.entry_price or 0.0
+            for p in portfolio.positions:
+                if p.symbol == symbol:
+                    fill_price = p.market_price or fill_price
+                    break
+
+            # Clean up any stale pending orders for this symbol
+            self._order_manager._pending_by_symbol.pop(symbol, None)
+            # Remove stale entries from _pending_orders
+            stale_ids = [
+                bid for bid, o in self._order_manager._pending_orders.items()
+                if o.symbol == symbol
+            ]
+            for bid in stale_ids:
+                self._order_manager._pending_orders.pop(bid, None)
+                self._order_manager._submitted_at.pop(bid, None)
+
+            # Record trade closure
+            await self._portfolio_tracker.record_trade_close(trade, fill_price)
+            self._open_trades.pop(symbol, None)
+            self._eod_sell_pending.discard(symbol)
+            self._last_close_time[symbol] = datetime.now(UTC)
+            self._pending_stop_retries.discard(symbol)
+            self._last_stop_update_price.pop(symbol, None)
+
+            pnl = trade.realized_pnl or 0.0
+            hold_mins = ""
+            if trade.created_at:
+                delta = datetime.now(UTC) - trade.created_at
+                hold_mins = f" | Hold: {delta.total_seconds() / 60:.0f}min"
+
+            # Record outcome for adaptive strategy weights
+            for strategy in self._strategies:
+                if hasattr(strategy, "record_outcome"):
+                    strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+            self._record_adaptive_outcome(trade)
+
+            await self._db.flush()
+            await send_alert(
+                "Stop-Loss Filled (detected)",
+                f"{symbol}: Stop filled @ ~{fill_price:.2f}\n"
+                f"P&L: {pnl:+.2f}{hold_mins}\n"
+                f"Note: fill detected via position check",
+            )
+            return False  # Position was closed
+
+        except Exception:
+            logger.exception(
+                "engine.position_verify_error",
+                symbol=symbol,
+            )
+            return True  # Assume position still exists on error (safer)
+
     def _get_atr(self, symbol: str) -> float | None:
         """Get ATR value for a symbol from snapshot features."""
         try:
@@ -1243,6 +1323,10 @@ class TradingEngine:
                 # Move stop to entry + small buffer (0.1%) to cover commissions
                 breakeven_price = round(trade.entry_price * 1.001, 2)
                 if breakeven_price > trade.stop_loss:
+                    # CRITICAL: Verify position still exists before replacing stop
+                    if not await self._verify_position_or_record_close(symbol, trade):
+                        continue  # Position was closed by stop fill — skip
+
                     old_stop = trade.stop_loss
                     trade.stop_loss = breakeven_price
                     self._last_stop_update_price[symbol] = current_price
@@ -1290,6 +1374,10 @@ class TradingEngine:
                     price_change_pct = price_move / last_update_price * 100
                     if price_change_pct < 1.0:
                         continue
+
+                # CRITICAL: Verify position still exists before replacing stop
+                if not await self._verify_position_or_record_close(symbol, trade):
+                    continue  # Position was closed by stop fill — skip
 
                 old_stop = trade.stop_loss
                 trade.stop_loss = new_stop
