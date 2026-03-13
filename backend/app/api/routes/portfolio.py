@@ -85,9 +85,8 @@ async def get_performance(
         data["unrealized_pnl"] = round(
             portfolio.account_summary.unrealized_pnl, 2
         )
-        data["realized_pnl"] = round(
-            portfolio.account_summary.realized_pnl, 2
-        )
+        # Keep lifetime realized_pnl from tracker (IBKR resets daily)
+        # data["realized_pnl"] stays from tracker.to_dict()
         if initial > 0:
             data["total_return_pct"] = round(
                 (actual_value - initial) / initial * 100, 2

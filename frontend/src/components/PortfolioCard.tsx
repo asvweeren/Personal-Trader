@@ -3,7 +3,7 @@ import type { Portfolio, Performance } from "../types";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
-  currency: "EUR",
+  currency: "USD",
   minimumFractionDigits: 2,
 });
 
@@ -119,12 +119,12 @@ export function PortfolioCard({ portfolio, performance }: Props) {
           <div>
             <div className="text-xs text-gray-500">
               Gerealiseerd
-              <Tooltip text="Winst of verlies van posities die al gesloten zijn. Dit is definitief." />
+              <Tooltip text="Totale winst of verlies van alle gesloten trades sinds de start." />
             </div>
             <div
-              className={`text-sm font-medium ${portfolio.realized_pnl >= 0 ? "text-green-400" : "text-red-400"}`}
+              className={`text-sm font-medium ${(performance?.realized_pnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}
             >
-              {formatCurrency(portfolio.realized_pnl)}
+              {formatCurrency(performance?.realized_pnl ?? 0)}
             </div>
           </div>
         </div>
