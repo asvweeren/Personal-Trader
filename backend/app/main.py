@@ -96,11 +96,14 @@ async def lifespan(app: FastAPI):
     db = None
     broker = None
 
-    # Step 1: Connect broker
+    # Step 1: Connect broker (with timeout so app starts even if IBKR is down)
     try:
         broker = get_broker()
-        await broker.connect()
+        await asyncio.wait_for(broker.connect(), timeout=90)
         logger.info("broker.connected")
+    except asyncio.TimeoutError:
+        logger.warning("startup.broker_timeout", hint="IBKR connect timed out after 90s")
+        broker = get_broker()  # keep broker object for watchdog reconnect
     except Exception as e:
         logger.warning("startup.broker_unavailable", error=str(e))
         logger.info("app.running_without_broker", hint="Configure IBKR credentials and restart")
@@ -114,10 +117,10 @@ async def lifespan(app: FastAPI):
         try:
             symbols = await get_startup_symbols()
             pipeline = get_data_pipeline()
-            await pipeline.start(symbols)
+            await asyncio.wait_for(pipeline.start(symbols), timeout=60)
             logger.info("pipeline.started", symbols=len(symbols))
             schedule_data_pipeline(pipeline)
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning("startup.pipeline_error", error=str(e))
 
     # Step 3: Start trading engine (requires broker)
@@ -125,12 +128,12 @@ async def lifespan(app: FastAPI):
         try:
             db = session_factory()
             engine = await init_trading_engine(db)
-            await engine.start()
+            await asyncio.wait_for(engine.start(), timeout=60)
             logger.info("engine.started")
             schedule_trading_engine(engine)
             schedule_daily_reset(engine)
             schedule_eod_safety_close(engine)
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning("startup.engine_error", error=str(e))
 
     # Step 4: Restore performance metrics from historical trades
