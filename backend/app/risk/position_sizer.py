@@ -151,16 +151,18 @@ def calculate_kelly_fraction(
 
 
 def _confidence_to_kelly(confidence: float) -> float:
-    """Linear scaling: threshold -> 0.10, max -> 0.50.
+    """Linear scaling: threshold -> 0.30, max -> 0.70.
 
-    Below threshold: 0 allocation. Above: linear from 0.10 to 0.50.
+    Below threshold: 0 allocation. Above: linear from 0.30 to 0.70.
+    Uses the configured confidence_threshold so the floor is consistent.
     """
-    threshold = 0.40
+    from app.config import settings
+    threshold = settings.confidence_threshold
     if confidence < threshold:
         return 0.0
-    # Linear from 0.10 to 0.50 as confidence goes from threshold to 1.0
-    fraction = 0.10 + (confidence - threshold) / (1.0 - threshold) * 0.40
-    return min(0.50, fraction)
+    # Linear from 0.30 to 0.70 as confidence goes from threshold to 1.0
+    fraction = 0.30 + (confidence - threshold) / (1.0 - threshold) * 0.40
+    return min(0.70, fraction)
 
 
 def calculate_correlation_factor(
