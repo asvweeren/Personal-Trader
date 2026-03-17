@@ -30,3 +30,9 @@ def setup_logging(debug: bool = False) -> None:
         stream=sys.stdout,
         level=log_level,
     )
+
+    # Limit ib_insync loggers to WARNING to prevent recursion errors.
+    # ib_insync's error handler tries to log via stdlib logging, which
+    # can trigger infinite recursion when structlog is also active.
+    for ib_logger_name in ("ib_insync", "ib_insync.client", "ib_insync.wrapper"):
+        logging.getLogger(ib_logger_name).setLevel(logging.WARNING)

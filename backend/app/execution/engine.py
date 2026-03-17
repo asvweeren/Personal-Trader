@@ -141,8 +141,12 @@ class TradingEngine:
             if not await self._broker.is_connected():
                 await self._broker.connect()
 
-            # Initialize daily tracking
-            start_value = await self._portfolio_tracker.initialize_daily()
+            # Initialize daily tracking (fallback to config capital if broker errors)
+            try:
+                start_value = await self._portfolio_tracker.initialize_daily()
+            except Exception as e:
+                logger.warning("engine.daily_init_fallback", error=str(e)[:200])
+                start_value = settings.initial_capital
             self._risk_manager.set_daily_start_value(start_value)
 
             # Load open trades from DB
