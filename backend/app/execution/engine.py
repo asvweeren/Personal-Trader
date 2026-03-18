@@ -8,7 +8,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.broker.base import BrokerAdapter, OrderType
+from app.broker.base import BrokerAdapter, OrderType, Portfolio
 from app.config import settings
 from app.core.event_bus import RECONCILIATION_UPDATE, RISK_DAILY_STOP, SIGNAL_GENERATED, SYSTEM_ERROR, event_bus
 from app.data.correlation import get_correlation_matrix
@@ -307,6 +307,13 @@ class TradingEngine:
                         logger.info("reconciliation.ok", matches=len(recon_result.matches))
                 except Exception:
                     logger.debug("reconciliation.error", exc_info=True)
+
+                # Also close DB trades that are OPEN but have no broker position
+                # (handles duplicates and trades orphaned across restarts)
+                try:
+                    await self._close_orphaned_db_trades(portfolio_for_recon)
+                except Exception:
+                    logger.debug("reconciliation.db_cleanup_error", exc_info=True)
 
             # 2c. Detect market regime
             try:
@@ -898,6 +905,54 @@ class TradingEngine:
                 symbol=symbol,
             )
             return True  # Assume position still exists on error (safer)
+
+    async def _close_orphaned_db_trades(self, portfolio: Portfolio) -> None:
+        """Close DB trades marked OPEN that have no corresponding broker position.
+
+        This catches trades orphaned by:
+        - Duplicate trades for the same symbol (dict key overwrites in _open_trades)
+        - Stop-loss fills during engine downtime
+        - Trades that fell out of _open_trades after restart
+        """
+        from sqlalchemy import select
+
+        broker_symbols = {p.symbol for p in portfolio.positions if p.quantity > 0}
+
+        result = await self._db.execute(
+            select(Trade).where(Trade.status == TradeStatus.OPEN)
+        )
+        db_open_trades = result.scalars().all()
+
+        closed_count = 0
+        for trade in db_open_trades:
+            if trade.symbol not in broker_symbols:
+                trade.status = TradeStatus.CLOSED
+                trade.exit_price = trade.stop_loss or trade.entry_price
+                trade.realized_pnl = (
+                    (trade.exit_price - trade.entry_price) * trade.quantity
+                    if trade.exit_price and trade.entry_price
+                    else 0.0
+                )
+                trade.closed_at = datetime.now(UTC)
+                # Also remove from in-memory tracking if present
+                if self._open_trades.get(trade.symbol) and self._open_trades[trade.symbol].id == trade.id:
+                    self._open_trades.pop(trade.symbol, None)
+                closed_count += 1
+                logger.warning(
+                    "reconciliation.db_orphan_closed",
+                    trade_id=trade.id,
+                    symbol=trade.symbol,
+                    entry_price=trade.entry_price,
+                    est_exit=trade.exit_price,
+                    est_pnl=trade.realized_pnl,
+                )
+
+        if closed_count:
+            await self._db.flush()
+            await send_alert(
+                "Orphaned Trades Cleaned",
+                f"Closed {closed_count} DB trades with no broker position",
+            )
 
     def _get_atr(self, symbol: str) -> float | None:
         """Get ATR value for a symbol from snapshot features."""
