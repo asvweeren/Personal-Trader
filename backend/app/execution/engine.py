@@ -493,7 +493,7 @@ class TradingEngine:
                     )
                     continue
 
-                # Gate 1: SPY/QQQ momentum — don't BUY if broad market is below SMA50
+                # Gate 1: SPY/QQQ momentum — don't BUY if broad market is weak
                 if signal.action == SignalAction.BUY and signal.symbol not in ("SPY", "QQQ", "IWM", "DIA"):
                     market_bearish = False
                     for index_sym in ("SPY", "QQQ"):
@@ -504,6 +504,14 @@ class TradingEngine:
                         if idx_price > 0 and idx_sma50 > 0 and idx_price < idx_sma50:
                             market_bearish = True
                         if idx_price > 0 and idx_sma20 > 0 and idx_price < idx_sma20:
+                            market_bearish = True
+                        # Gate 1b: Skip if SPY/QQQ intraday return < -1% (crash protection)
+                        idx_momentum = idx_features.get("momentum_1d", 0)
+                        if idx_momentum < -0.01:
+                            market_bearish = True
+                        # Gate 1c: Skip if ATR/price ratio > 3% (high volatility day)
+                        idx_atr = idx_features.get("atr_14", 0)
+                        if idx_price > 0 and idx_atr > 0 and (idx_atr / idx_price) > 0.03:
                             market_bearish = True
                     if market_bearish:
                         logger.info(

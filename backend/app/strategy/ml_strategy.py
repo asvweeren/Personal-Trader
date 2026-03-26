@@ -157,12 +157,11 @@ class MLStrategy(Strategy):
         """Get minimum probability gate for binary models.
 
         For a binary classifier, random chance is 50%. The gate should be
-        a small margin above that to ensure the model adds value.
-        Note: class distribution in training data reflects oversampling and
-        should NOT be used as the gate — it leads to thresholds > 0.60
-        when the majority class is BUY, effectively blocking all trades.
+        well above that to ensure only high-conviction signals pass.
+        Raised from 0.58 to 0.68 after analysis showed 37.7% BUY precision
+        was generating too many false positives.
         """
-        return 0.58
+        return 0.68
 
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
@@ -178,11 +177,11 @@ class MLStrategy(Strategy):
             if regime is not None:
                 if self._is_binary_model():
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
-                        base = 0.55
+                        base = 0.65  # Was 0.55 — still require decent conviction in trends
                     elif regime.regime == MarketRegime.RANGING:
-                        base = 0.60
+                        base = 0.72  # Was 0.60 — ranging markets need higher bar
                     elif regime.regime == MarketRegime.HIGH_VOLATILITY:
-                        base = 0.65
+                        base = 0.78  # Was 0.65 — very selective in volatile markets
                 else:
                     if regime.regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN):
                         return 0.38

@@ -1,6 +1,7 @@
 """Risk management engine combining hard limits with AI-driven decisions."""
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +65,9 @@ class RiskManager:
         self._db = db
         self.daily_start_value: float = 0.0
         self.daily_loss_triggered: bool = False
+        # Hourly loss tracking — pause trading if losses accelerate
+        self._hourly_loss_paused_until: datetime | None = None
+        self._hourly_snapshots: list[tuple[datetime, float]] = []  # (time, value)
         # Drawdown tracking
         self._peak_value: float = 0.0
         self._max_drawdown_pct: float = 0.0
@@ -113,6 +117,40 @@ class RiskManager:
                 approved=False, signal=signal,
                 reason="Daily loss limit triggered - trading halted",
             )
+
+        # Hourly loss circuit breaker — pause new BUY if losses are accelerating
+        if signal.action == SignalAction.BUY:
+            now = datetime.now(UTC)
+            if self._hourly_loss_paused_until and now < self._hourly_loss_paused_until:
+                return RiskDecision(
+                    approved=False, signal=signal,
+                    reason=f"Hourly loss limit hit - paused until {self._hourly_loss_paused_until.strftime('%H:%M')} UTC",
+                )
+            current_value = portfolio.account_summary.total_value
+            self._hourly_snapshots.append((now, current_value))
+            # Prune snapshots older than 1 hour
+            cutoff = now.timestamp() - 3600
+            self._hourly_snapshots = [
+                (t, v) for t, v in self._hourly_snapshots
+                if t.timestamp() > cutoff
+            ]
+            if len(self._hourly_snapshots) >= 2:
+                hour_ago_value = self._hourly_snapshots[0][1]
+                if hour_ago_value > 0:
+                    hourly_loss_pct = ((hour_ago_value - current_value) / hour_ago_value) * 100
+                    if hourly_loss_pct > settings.max_hourly_loss_pct:
+                        from datetime import timedelta
+                        self._hourly_loss_paused_until = now + timedelta(hours=1)
+                        logger.warning(
+                            "risk.hourly_loss_pause",
+                            hourly_loss_pct=round(hourly_loss_pct, 2),
+                            limit=settings.max_hourly_loss_pct,
+                            paused_until=self._hourly_loss_paused_until.isoformat(),
+                        )
+                        return RiskDecision(
+                            approved=False, signal=signal,
+                            reason=f"Hourly loss {hourly_loss_pct:.1f}% exceeds {settings.max_hourly_loss_pct}% - paused 1h",
+                        )
 
         if signal.action == SignalAction.HOLD:
             return RiskDecision(approved=False, signal=signal, reason="HOLD signal, no action")
