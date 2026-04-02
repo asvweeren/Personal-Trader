@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     stale_position_hours: float = 0          # 0=disabled for swing trading (was 2.0 for day trading)
     stale_position_min_pnl_pct: float = 0.3  # Min abs P&L % to keep a stale position
     partial_profit_enabled: bool = False      # Disabled until R:R improves (was True)
-    min_relative_volume: float = 0.5         # Skip BUY if today's volume < 50% of 20-day avg
+    min_relative_volume: float = 1.0         # Skip BUY if volume below 20-day avg (was 0.5)
 
     # Smart execution
     smart_execution_enabled: bool = True

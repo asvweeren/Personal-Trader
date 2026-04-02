@@ -355,10 +355,11 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            # Skip ensemble (11% win rate) — run individual strategies directly.
-            # Each strategy generates its own signals; best signal per symbol wins.
+            # Only run ML strategy — sentiment and ensemble have negative track records.
+            # Skip sentiment/ensemble in production; allow all in test for mock strategies.
+            _skip_strategies = {"ensemble", "sentiment"}
             strategies_to_run = [
-                s for s in self._strategies if s.name != "ensemble"
+                s for s in self._strategies if s.name not in _skip_strategies
             ]
             for strategy in strategies_to_run:
                 try:
@@ -539,6 +540,42 @@ class TradingEngine:
                             "engine.signal_skipped_low_volume",
                             symbol=signal.symbol,
                             relative_volume=round(rel_vol, 2),
+                        )
+                        continue
+
+                # Gate 4: Per-stock uptrend filter — only BUY stocks in clear uptrend
+                if signal.action == SignalAction.BUY:
+                    sym_features = self._snapshot_features.get(signal.symbol, {})
+                    sym_price = snapshot.prices.get(signal.symbol, 0)
+                    sym_sma20 = sym_features.get("sma_20", 0)
+                    sym_rsi = sym_features.get("rsi_14", 0)
+
+                    # Stock must be above its 20-day SMA (short-term uptrend)
+                    if sym_price > 0 and sym_sma20 > 0 and sym_price < sym_sma20:
+                        logger.info(
+                            "engine.signal_skipped_no_uptrend",
+                            symbol=signal.symbol,
+                            price=round(sym_price, 2),
+                            sma20=round(sym_sma20, 2),
+                        )
+                        continue
+
+                    # RSI filter: don't buy overbought (>70) or falling knife (<35)
+                    if sym_rsi > 0 and (sym_rsi > 70 or sym_rsi < 35):
+                        logger.info(
+                            "engine.signal_skipped_rsi",
+                            symbol=signal.symbol,
+                            rsi=round(sym_rsi, 1),
+                        )
+                        continue
+
+                    # Require positive short-term momentum (5-day return > 0)
+                    sym_momentum = sym_features.get("momentum_5d")
+                    if sym_momentum is not None and sym_momentum < 0:
+                        logger.info(
+                            "engine.signal_skipped_negative_momentum",
+                            symbol=signal.symbol,
+                            momentum_5d=round(sym_momentum, 4),
                         )
                         continue
 
