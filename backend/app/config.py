@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     max_hold_days: int = 0                   # Disabled — EOD close handles it
     max_new_positions_per_day: int = 6       # More trades allowed for day trading
 
+    # Extended hours trading (pre-market 4:00 AM + after-hours to 8:00 PM ET)
+    extended_hours_enabled: bool = True      # Trade pre-market and after-hours
+
     # Smart entry/exit filters
     opening_range_minutes: int = 30          # Wait 30 min after open for range to establish
     breakeven_stop_trigger_pct: float = 0.8  # Move stop to breakeven quickly at +0.8%

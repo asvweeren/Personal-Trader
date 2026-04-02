@@ -253,7 +253,10 @@ class TradingEngine:
             from app.risk.market_hours import get_exchange_for_symbol, is_market_open
             open_symbols = [
                 s for s in self._symbols
-                if is_market_open(get_exchange_for_symbol(s))
+                if is_market_open(
+                    get_exchange_for_symbol(s),
+                    include_extended=settings.extended_hours_enabled,
+                )
             ]
             # Always include symbols with open trades so we can manage stops/exits
             for sym in list(self._open_trades.keys()):
@@ -1651,7 +1654,9 @@ class TradingEngine:
             if symbol in self._eod_sell_pending:
                 continue
 
-            mins_left = minutes_until_close_for_symbol(symbol, now)
+            mins_left = minutes_until_close_for_symbol(
+                symbol, now, include_extended=settings.extended_hours_enabled,
+            )
             if mins_left is None:
                 continue  # Market not open / already closed
 

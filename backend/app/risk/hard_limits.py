@@ -166,8 +166,9 @@ def check_sector_concentration(
 
 def check_market_hours(symbol: str, now: datetime | None = None) -> None:
     """Check if the relevant market is open for this symbol. Raises if closed."""
+    from app.config import settings
     exchange = get_exchange_for_symbol(symbol)
-    if not is_market_open(exchange, now):
+    if not is_market_open(exchange, now, include_extended=settings.extended_hours_enabled):
         raise MarketClosedError(
             f"Market {exchange.value} is closed for {symbol}"
         )

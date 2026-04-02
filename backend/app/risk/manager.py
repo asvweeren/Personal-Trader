@@ -388,7 +388,7 @@ class RiskManager:
         market_open = False
         if symbols:
             exchanges = {get_exchange_for_symbol(s) for s in symbols}
-            market_open = any(is_market_open(ex) for ex in exchanges)
+            market_open = any(is_market_open(ex, include_extended=settings.extended_hours_enabled) for ex in exchanges)
 
         # Warnings
         warnings = []

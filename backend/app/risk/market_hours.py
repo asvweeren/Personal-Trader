@@ -103,6 +103,7 @@ def is_market_open(
     exchange: Exchange,
     now: datetime | None = None,
     buffer_minutes: int = 5,
+    include_extended: bool = False,
 ) -> bool:
     """Check if the market is currently open for trading.
 
@@ -110,6 +111,8 @@ def is_market_open(
         exchange: Which exchange to check.
         now: Current time (defaults to UTC now).
         buffer_minutes: Buffer before close to stop trading (avoid MOC issues).
+        include_extended: If True, include pre-market and after-hours sessions
+                          for exchanges that support them (NYSE/NASDAQ).
     """
     session = EXCHANGE_SESSIONS[exchange]
     tz = ZoneInfo(session.timezone)
@@ -128,14 +131,23 @@ def is_market_open(
     if local_now.date() in holidays:
         return False
 
-    # Check trading hours (with buffer before close)
     local_time = local_now.time()
+
+    # Extended hours: use pre-market open → post-market close
+    if include_extended and session.pre_market_open and session.post_market_close:
+        effective_open = session.pre_market_open
+        effective_close = session.post_market_close
+    else:
+        effective_open = session.open_time
+        effective_close = session.close_time
+
+    # Apply buffer before close
     close_with_buffer = datetime.combine(
-        local_now.date(), session.close_time
+        local_now.date(), effective_close
     ) - timedelta(minutes=buffer_minutes)
     close_buffer_time = close_with_buffer.time()
 
-    return session.open_time <= local_time < close_buffer_time
+    return effective_open <= local_time < close_buffer_time
 
 
 def get_exchange_for_symbol(symbol: str) -> Exchange:
@@ -198,6 +210,7 @@ def parse_symbol_for_ibkr(symbol: str) -> tuple[str, str, str | None]:
 def minutes_until_close(
     exchange: Exchange,
     now: datetime | None = None,
+    include_extended: bool = False,
 ) -> float | None:
     """Return minutes until the exchange closes, or None if market is not open today."""
     session = EXCHANGE_SESSIONS[exchange]
@@ -215,9 +228,15 @@ def minutes_until_close(
     if local_now.date() in holidays:
         return None
 
+    # Use extended close time if enabled and available
+    if include_extended and session.post_market_close:
+        effective_close = session.post_market_close
+    else:
+        effective_close = session.close_time
+
     close_dt = local_now.replace(
-        hour=session.close_time.hour,
-        minute=session.close_time.minute,
+        hour=effective_close.hour,
+        minute=effective_close.minute,
         second=0,
         microsecond=0,
     )
@@ -231,19 +250,21 @@ def minutes_until_close(
 def minutes_until_close_for_symbol(
     symbol: str,
     now: datetime | None = None,
+    include_extended: bool = False,
 ) -> float | None:
     """Return minutes until the relevant exchange closes for a symbol."""
     exchange = get_exchange_for_symbol(symbol)
-    return minutes_until_close(exchange, now)
+    return minutes_until_close(exchange, now, include_extended=include_extended)
 
 
 def is_any_market_open(
     symbols: list[str],
     now: datetime | None = None,
+    include_extended: bool = False,
 ) -> bool:
     """Check if any relevant market is open for the given symbols."""
     exchanges = {get_exchange_for_symbol(s) for s in symbols}
-    return any(is_market_open(ex, now) for ex in exchanges)
+    return any(is_market_open(ex, now, include_extended=include_extended) for ex in exchanges)
 
 
 def next_market_open(exchange: Exchange, now: datetime | None = None) -> datetime:
