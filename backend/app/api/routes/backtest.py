@@ -11,6 +11,7 @@ from app.dependencies import get_broker, get_db
 from app.models.database import async_session as session_factory
 from app.models.backtest_result import BacktestResult
 from app.strategy.ml_strategy import MLStrategy
+from app.strategy.momentum_strategy import MomentumStrategy
 from app.strategy.sentiment_strategy import SentimentStrategy
 
 logger = structlog.get_logger()
@@ -19,6 +20,9 @@ router = APIRouter()
 
 # Map of available strategies for backtesting
 _STRATEGY_REGISTRY = {
+    "momentum": lambda params: MomentumStrategy(
+        confidence_threshold=params.get("confidence_threshold", 0.6),
+    ),
     "ml_xgboost": lambda params: MLStrategy(
         model_path=params.get("model_path", ""),
         confidence_threshold=params.get("confidence_threshold", 0.6),

@@ -89,7 +89,16 @@ def load_strategies() -> list[Strategy]:
     """Load and initialize all available trading strategies."""
     strategies: list[Strategy] = []
 
-    # 1. ML Strategy (XGBoost)
+    # 1. Momentum Strategy (primary for day trading)
+    try:
+        from app.strategy.momentum_strategy import MomentumStrategy
+        momentum = MomentumStrategy(confidence_threshold=settings.confidence_threshold)
+        strategies.append(momentum)
+        logger.info("strategies.loaded", name="momentum")
+    except Exception:
+        logger.exception("strategies.load_error", name="momentum")
+
+    # 2. ML Strategy (XGBoost) - secondary confirmation
     try:
         from app.strategy.ml_strategy import MLStrategy
         ml = MLStrategy()
@@ -98,7 +107,7 @@ def load_strategies() -> list[Strategy]:
     except Exception:
         logger.exception("strategies.load_error", name="ml_xgboost")
 
-    # 2. Sentiment Strategy (Claude LLM) - requires Anthropic API key
+    # 3. Sentiment Strategy (Claude LLM) - disabled for day trading (too slow)
     if settings.anthropic_api_key:
         try:
             from app.strategy.sentiment_strategy import SentimentStrategy

@@ -355,9 +355,9 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            # Only run ML strategy — sentiment and ensemble have negative track records.
-            # Skip sentiment/ensemble in production; allow all in test for mock strategies.
-            _skip_strategies = {"ensemble", "sentiment"}
+            # Day trading mode: momentum (primary) + ML (confirmation).
+            # Skip sentiment (too slow for intraday) and ensemble.
+            _skip_strategies = {"ensemble", "sentiment", "nn_lstm"}
             strategies_to_run = [
                 s for s in self._strategies if s.name not in _skip_strategies
             ]
@@ -543,39 +543,35 @@ class TradingEngine:
                         )
                         continue
 
-                # Gate 4: Per-stock uptrend filter — only BUY stocks in clear uptrend
+                # Gate 4: Intraday trend filter — stock must show short-term strength
                 if signal.action == SignalAction.BUY:
                     sym_features = self._snapshot_features.get(signal.symbol, {})
                     sym_price = snapshot.prices.get(signal.symbol, 0)
-                    sym_sma20 = sym_features.get("sma_20", 0)
+                    sym_ema10 = sym_features.get("ema_10", 0)
                     sym_rsi = sym_features.get("rsi_14", 0)
+                    sym_vwap = sym_features.get("vwap", 0)
 
-                    # Stock must be above its 20-day SMA (short-term uptrend)
-                    if sym_price > 0 and sym_sma20 > 0 and sym_price < sym_sma20:
+                    # Stock must be above VWAP or EMA10 (intraday buying pressure)
+                    # Only apply if features are available (skip in test/mock mode)
+                    above_vwap = sym_vwap > 0 and sym_price > sym_vwap
+                    above_ema = sym_ema10 > 0 and sym_price > sym_ema10
+                    has_features = sym_vwap > 0 or sym_ema10 > 0
+                    if has_features and sym_price > 0 and not above_vwap and not above_ema:
                         logger.info(
-                            "engine.signal_skipped_no_uptrend",
+                            "engine.signal_skipped_no_intraday_strength",
                             symbol=signal.symbol,
                             price=round(sym_price, 2),
-                            sma20=round(sym_sma20, 2),
+                            vwap=round(sym_vwap, 2) if sym_vwap else 0,
+                            ema10=round(sym_ema10, 2) if sym_ema10 else 0,
                         )
                         continue
 
-                    # RSI filter: don't buy overbought (>70) or falling knife (<35)
-                    if sym_rsi > 0 and (sym_rsi > 70 or sym_rsi < 35):
+                    # RSI filter: don't buy overbought (>75) or in freefall (<30)
+                    if sym_rsi > 0 and (sym_rsi > 75 or sym_rsi < 30):
                         logger.info(
                             "engine.signal_skipped_rsi",
                             symbol=signal.symbol,
                             rsi=round(sym_rsi, 1),
-                        )
-                        continue
-
-                    # Require positive short-term momentum (5-day return > 0)
-                    sym_momentum = sym_features.get("momentum_5d")
-                    if sym_momentum is not None and sym_momentum < 0:
-                        logger.info(
-                            "engine.signal_skipped_negative_momentum",
-                            symbol=signal.symbol,
-                            momentum_5d=round(sym_momentum, 4),
                         )
                         continue
 
