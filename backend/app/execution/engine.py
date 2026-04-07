@@ -457,6 +457,9 @@ class TradingEngine:
                 correlation_matrix = None
 
             # 8. Evaluate each signal through risk management
+            #    Limit BUY executions per cycle to prevent timeout (each BUY takes ~30s)
+            buys_this_cycle = 0
+            max_buys_per_cycle = 2  # Max 2 BUY orders per 5-min cycle
             for signal in all_signals:
                 if signal.action == SignalAction.HOLD:
                     continue
@@ -681,7 +684,17 @@ class TradingEngine:
                         reason="Position sizer returned 0 shares",
                     )
                     continue
+
+                # Limit BUY executions per cycle to prevent 240s timeout
+                if buys_this_cycle >= max_buys_per_cycle:
+                    logger.info(
+                        "engine.signal_skipped_cycle_limit",
+                        symbol=signal.symbol,
+                        buys_this_cycle=buys_this_cycle,
+                    )
+                    continue
                 await self._execute_buy(signal, qty, price, db_signal.id)
+                buys_this_cycle += 1
 
             await self._db.commit()
 

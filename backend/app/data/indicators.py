@@ -98,10 +98,17 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     so the model works across stocks at any price level (USD, GBp, EUR).
     """
     features = df.copy()
-    close = df["close"]
-    high = df["high"]
-    low = df["low"]
-    vol = df["volume"]
+
+    # Flatten MultiIndex columns from yfinance (e.g. ('Close','AAPL') → 'close')
+    if isinstance(features.columns, pd.MultiIndex):
+        features.columns = [str(c[0]).lower() if isinstance(c, tuple) else str(c).lower() for c in features.columns]
+    # Normalize column names to lowercase
+    features.columns = [str(c).lower() for c in features.columns]
+
+    close = features["close"]
+    high = features["high"]
+    low = features["low"]
+    vol = features["volume"]
 
     # Moving averages — normalized as price distance ratios
     sma_10_raw = sma(close, 10)
