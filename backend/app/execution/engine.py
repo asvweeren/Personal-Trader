@@ -633,6 +633,15 @@ class TradingEngine:
                         )
                         continue
 
+                # Gate: Only execute BUY orders during regular session hours
+                # Pre-market/after-hours orders don't fill on IBKR paper
+                if not is_market_open(get_exchange_for_symbol(signal.symbol)):
+                    logger.info(
+                        "engine.signal_skipped_outside_regular_hours",
+                        symbol=signal.symbol,
+                    )
+                    continue
+
                 # For BUY signals, run risk evaluation
                 decision = await self._risk_manager.evaluate_signal(
                     signal, portfolio, price,
@@ -1667,8 +1676,10 @@ class TradingEngine:
             if symbol in self._eod_sell_pending:
                 continue
 
+            # Use regular session close for EOD (paper account can't fill after-hours)
             mins_left = minutes_until_close_for_symbol(
-                symbol, now, include_extended=settings.extended_hours_enabled,
+                symbol, now,
+                include_extended=not settings.eod_use_regular_close,
             )
             if mins_left is None:
                 continue  # Market not open / already closed

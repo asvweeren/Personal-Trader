@@ -105,12 +105,13 @@ class Settings(BaseSettings):
     reentry_cooldown_minutes: int = 30       # 30 min cooldown (can retrade same day)
     max_trades_per_symbol_per_day: int = 2   # Can trade same symbol twice per day
 
-    # End-of-day close — ALWAYS close before market close
+    # End-of-day close — close during regular hours (not after-hours, paper can't fill)
     eod_close_enabled: bool = True           # Never hold overnight
-    eod_close_minutes_before: int = 15       # Close 15 min before close
+    eod_close_minutes_before: int = 15       # Close 15 min before regular close
+    eod_use_regular_close: bool = True       # Use regular session close (16:00 ET) not extended
 
-    # Day trading
-    max_hold_days: int = 0                   # Disabled — EOD close handles it
+    # Day trading — force close any position older than 1 day as safety net
+    max_hold_days: int = 1                   # Force close after 1 day (safety net for EOD failures)
     max_new_positions_per_day: int = 6       # More trades allowed for day trading
 
     # Extended hours trading (pre-market 4:00 AM + after-hours to 8:00 PM ET)
