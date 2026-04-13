@@ -190,7 +190,9 @@ async def test_cycle_buy_signal_trading_enabled(_mock_open):
     from app.config import settings
     # Ensure R:R ratio passes the 2.5 minimum gate (risk=3% → need TP >= 7.5%)
     old_tp = settings.min_take_profit_pct
+    old_opening = settings.opening_range_minutes
     settings.min_take_profit_pct = 8.0
+    settings.opening_range_minutes = 0  # Disable opening range gate for test
     try:
         buy_signal = TradingSignal(
             symbol="AAPL", action=SignalAction.BUY,
@@ -206,6 +208,7 @@ async def test_cycle_buy_signal_trading_enabled(_mock_open):
         assert "AAPL" in engine._open_trades
     finally:
         settings.min_take_profit_pct = old_tp
+        settings.opening_range_minutes = old_opening
 
 
 @pytest.mark.asyncio

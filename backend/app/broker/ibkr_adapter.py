@@ -462,7 +462,11 @@ class IBKRAdapter(BrokerAdapter):
         return Portfolio(account_summary=summary, positions=positions)
 
     async def get_account_summary(self) -> AccountSummary:
-        account_values = await self._sync(self._ib.accountSummary)
+        # Use accountValues() instead of accountSummary() to avoid
+        # Error 322 "Maximum number of account summary requests exceeded".
+        # accountValues() reads from the always-active reqAccountUpdates
+        # subscription and doesn't create additional TWS subscriptions.
+        account_values = await self._sync(self._ib.accountValues)
 
         values = {}
         for av in account_values:
