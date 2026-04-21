@@ -83,12 +83,20 @@ def test_adaptive_manager_clamped():
 def test_adaptive_skip_symbol():
     """Should skip symbols with very poor performance."""
     mgr = AdaptiveManager()
-    # Not enough trades → don't skip
-    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=5, wins=1, losses=4, total_pnl=-200)
+    # Few trades with okay win rate → don't skip
+    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=2, wins=1, losses=1, total_pnl=-50)
     assert not mgr.should_skip_symbol("TSLA")
 
-    # 15 trades, <25% win rate → skip
-    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=15, wins=3, losses=12, total_pnl=-800)
+    # 5 trades, <25% win rate → skip
+    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=5, wins=1, losses=4, total_pnl=-200)
+    assert mgr.should_skip_symbol("TSLA")
+
+    # 3 trades with big loss → skip
+    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=3, wins=0, losses=3, total_pnl=-600)
+    assert mgr.should_skip_symbol("TSLA")
+
+    # 3 consecutive losses → skip
+    mgr._symbol_profiles["TSLA"] = SymbolProfile(trades=4, wins=2, losses=2, total_pnl=50, consecutive_losses=3)
     assert mgr.should_skip_symbol("TSLA")
 
 

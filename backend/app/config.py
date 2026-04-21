@@ -90,8 +90,8 @@ class Settings(BaseSettings):
     atr_stop_multiplier: float = 2.0        # 2x ATR stop for intraday
     min_stop_loss_pct: float = 1.5          # 1.5% minimum stop distance
 
-    # Take-profit — realistic intraday targets
-    atr_take_profit_multiplier: float = 1.5  # 1.5x ATR target (achievable intraday)
+    # Take-profit — 3x ATR gives 1.5 R:R with 2x ATR stop
+    atr_take_profit_multiplier: float = 3.0  # 3x ATR target (1.5 R:R vs 2x ATR stop)
     min_take_profit_pct: float = 2.0         # 2% minimum target
 
     # Order execution
@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     extended_hours_enabled: bool = True      # Trade pre-market and after-hours
 
     # Smart entry/exit filters
-    opening_range_minutes: int = 15          # Wait 15 min after open to catch early momentum
+    opening_range_minutes: int = 30          # Wait 30 min — data shows 9AM open trades lose 89%
     breakeven_stop_trigger_pct: float = 1.5  # Move stop to breakeven at +1.5% (let winners develop)
     stale_position_hours: float = 3.0        # Close stale positions after 3 hours
     stale_position_min_pnl_pct: float = 0.2  # Close if < 0.2% P&L after 3h

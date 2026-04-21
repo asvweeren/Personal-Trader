@@ -58,31 +58,61 @@ class MomentumStrategy(Strategy):
                 if price <= 0:
                     continue
 
-                # Extract indicators
-                rsi = float(latest.get("rsi_14", 50))
-                macd_hist = float(latest.get("macd_histogram", 0))
-                macd_hist_prev = float(prev.get("macd_histogram", 0))
-                vwap = float(latest.get("vwap", 0))
-                ema10 = float(latest.get("ema_10", 0))
+                # Prefer intraday 5-min bar features when available;
+                # fall back to daily-bar features seamlessly.
+                intraday = market_data.intraday_features.get(symbol, {})
+                has_intraday = bool(intraday)
+
+                # Extract indicators — intraday overrides daily where available
+                rsi = float(intraday.get("rsi_14", latest.get("rsi_14", 50)))
+                macd_hist = float(intraday.get("macd_histogram", latest.get("macd_histogram", 0)))
+                if has_intraday and "macd_histogram_prev" in intraday:
+                    macd_hist_prev = float(intraday["macd_histogram_prev"])
+                else:
+                    macd_hist_prev = float(prev.get("macd_histogram", 0))
+                # For VWAP: intraday gives normalized distance; daily also normalized
+                vwap = float(intraday.get("vwap", latest.get("vwap", 0)))
+                # For price-vs-VWAP comparison, use raw VWAP price when available
+                vwap_price = float(intraday.get("vwap_price", 0)) if has_intraday else 0
+                ema10 = float(intraday.get("ema_10", latest.get("ema_10", 0)))
+                ema10_price = float(intraday.get("ema_10_price", 0)) if has_intraday else 0
                 sma_20 = float(latest.get("sma_20", 0))
-                adx = float(latest.get("adx_14", 0))
+                adx = float(intraday.get("adx_14", latest.get("adx_14", 0)))
                 bb_width = float(latest.get("bb_width", 0))
-                vol_ratio = float(latest.get("vol_ratio_10_20", 1.0))
-                momentum_1d = float(latest.get("return_1d", 0))
+                vol_ratio = float(intraday.get("volume_ratio", latest.get("vol_ratio_10_20", 1.0)))
+                # Use intraday return when available, else daily return
+                momentum_1d = float(intraday.get("intraday_return", latest.get("return_1d", 0)))
 
                 # --- BUY SIGNALS: Momentum breakout ---
                 score = 0.0
                 reasons = []
 
+                # Determine price-vs-indicator checks:
+                # When we have intraday raw prices, compare price directly;
+                # otherwise use the normalized ratio (positive = above).
+                if has_intraday and vwap_price > 0:
+                    above_vwap = price > vwap_price
+                    below_vwap = price < vwap_price
+                else:
+                    above_vwap = vwap > 0  # normalized: positive means above
+                    below_vwap = vwap < 0
+
+                if has_intraday and ema10_price > 0:
+                    above_ema10 = price > ema10_price
+                    below_ema10 = price < ema10_price
+                else:
+                    above_ema10 = ema10 > 0  # normalized: positive means above
+                    below_ema10 = ema10 < 0
+
                 # 1. Price above VWAP (buying pressure)
-                if vwap > 0 and price > vwap:
+                if above_vwap:
                     score += 0.20
-                    reasons.append("above_vwap")
+                    reasons.append("above_vwap" + ("_5m" if has_intraday else ""))
 
                 # 2. RSI in momentum zone (50-70)
                 if 50 <= rsi <= 70:
                     score += 0.20
-                    reasons.append(f"rsi_momentum={rsi:.0f}")
+                    reasons.append(f"rsi_momentum={rsi:.0f}" + ("_5m" if has_intraday else ""))
                 elif 45 <= rsi < 50:
                     score += 0.10  # Partial credit
 
@@ -101,9 +131,9 @@ class MomentumStrategy(Strategy):
                     score += 0.10
 
                 # 5. Price above EMA10 (short-term uptrend)
-                if ema10 > 0 and price > ema10:
+                if above_ema10:
                     score += 0.10
-                    reasons.append("above_ema10")
+                    reasons.append("above_ema10" + ("_5m" if has_intraday else ""))
 
                 # 6. ADX shows trending market (bonus)
                 if adx > 25:
@@ -120,13 +150,13 @@ class MomentumStrategy(Strategy):
 
                 # --- SELL SIGNALS: Momentum reversal ---
                 sell_score = 0.0
-                if vwap > 0 and price < vwap:
+                if below_vwap:
                     sell_score += 0.25
                 if rsi > 75:
                     sell_score += 0.25
                 if macd_hist < 0 and macd_hist < macd_hist_prev:
                     sell_score += 0.25
-                if ema10 > 0 and price < ema10:
+                if below_ema10:
                     sell_score += 0.25
 
                 # Determine action
@@ -149,7 +179,10 @@ class MomentumStrategy(Strategy):
                     "vol_ratio": vol_ratio,
                     "momentum_1d": momentum_1d,
                     "bb_width": bb_width,
-                    "atr_14": float(latest.get("atr_14", 0)),
+                    "atr_14": float(
+                        intraday.get("atr_14", latest.get("atr_14", 0))
+                    ),
+                    "intraday_source": has_intraday,
                 }
 
                 signals.append(
@@ -163,6 +196,7 @@ class MomentumStrategy(Strategy):
                             "reasons": reasons,
                             "buy_score": round(confidence, 3),
                             "sell_score": round(sell_score, 3),
+                            "intraday_bars": has_intraday,
                         },
                     )
                 )

@@ -91,6 +91,118 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
     return adx_val
 
 
+def compute_intraday_features(df: pd.DataFrame) -> dict:
+    """Compute intraday features from 5-minute bar data.
+
+    Returns a dict (not DataFrame) with key momentum indicators derived
+    from intraday bars.  All values are normalized the same way as daily
+    features (ratios, percentages) so that downstream consumers can use
+    them interchangeably.
+
+    Expects a DataFrame with columns: open, high, low, close, volume and
+    at least ~30 rows (150 min of 5-min bars) for reliable indicators.
+    """
+    if df.empty or len(df) < 14:
+        return {}
+
+    # Normalize column names
+    cols = {str(c).lower(): c for c in df.columns}
+    close = df[cols.get("close", "close")].astype(float)
+    high = df[cols.get("high", "high")].astype(float)
+    low = df[cols.get("low", "low")].astype(float)
+    vol = df[cols.get("volume", "volume")].astype(float)
+    open_col = df[cols.get("open", "open")].astype(float)
+
+    result: dict[str, float | None] = {}
+
+    try:
+        # --- Intraday VWAP (cumulative) ---
+        typical_price = (high + low + close) / 3
+        cum_tp_vol = (typical_price * vol).cumsum()
+        cum_vol = vol.cumsum()
+        vwap_series = cum_tp_vol / (cum_vol + 1e-10)
+        latest_vwap = float(vwap_series.iloc[-1])
+        latest_close = float(close.iloc[-1])
+        # Normalized: distance from VWAP as fraction of price
+        result["vwap"] = (latest_close - latest_vwap) / (latest_close + 1e-10)
+        result["vwap_price"] = latest_vwap  # raw VWAP for price comparison
+    except Exception:
+        result["vwap"] = None
+        result["vwap_price"] = None
+
+    try:
+        # --- Intraday RSI (14-period on 5-min bars) ---
+        rsi_series = rsi(close, 14)
+        result["rsi_14"] = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else None
+    except Exception:
+        result["rsi_14"] = None
+
+    try:
+        # --- Intraday MACD histogram (12/26/9 on 5-min bars) ---
+        macd_data = macd(close, fast=12, slow=26, signal=9)
+        macd_hist_val = float(macd_data["histogram"].iloc[-1])
+        # Normalize by price for scale independence
+        result["macd_histogram"] = macd_hist_val / (float(close.iloc[-1]) + 1e-10)
+        # Also store previous bar for "accelerating" check
+        if len(macd_data["histogram"]) >= 2:
+            prev_hist = float(macd_data["histogram"].iloc[-2])
+            result["macd_histogram_prev"] = prev_hist / (float(close.iloc[-1]) + 1e-10)
+        else:
+            result["macd_histogram_prev"] = None
+    except Exception:
+        result["macd_histogram"] = None
+        result["macd_histogram_prev"] = None
+
+    try:
+        # --- Volume ratio: current bar vs average of last 20 bars ---
+        vol_mean_20 = vol.rolling(20).mean()
+        if len(vol_mean_20) >= 1 and not np.isnan(vol_mean_20.iloc[-1]):
+            result["volume_ratio"] = float(vol.iloc[-1]) / (float(vol_mean_20.iloc[-1]) + 1e-10)
+        else:
+            result["volume_ratio"] = None
+    except Exception:
+        result["volume_ratio"] = None
+
+    try:
+        # --- EMA10 on 5-min bars (normalized as price distance ratio) ---
+        ema10_series = ema(close, 10)
+        ema10_val = float(ema10_series.iloc[-1])
+        result["ema_10"] = float(close.iloc[-1]) / (ema10_val + 1e-10) - 1
+        result["ema_10_price"] = ema10_val  # raw EMA for price comparison
+    except Exception:
+        result["ema_10"] = None
+        result["ema_10_price"] = None
+
+    try:
+        # --- Intraday return: cumulative return from first bar open to latest close ---
+        first_open = float(open_col.iloc[0])
+        if first_open > 0:
+            result["intraday_return"] = (float(close.iloc[-1]) - first_open) / first_open
+        else:
+            result["intraday_return"] = None
+    except Exception:
+        result["intraday_return"] = None
+
+    try:
+        # --- ADX (14-period on 5-min bars) ---
+        adx_series = adx(high, low, close, 14)
+        adx_val = float(adx_series.iloc[-1])
+        result["adx_14"] = adx_val if not np.isnan(adx_val) else None
+    except Exception:
+        result["adx_14"] = None
+
+    try:
+        # --- ATR (14-period on 5-min bars, normalized by price) ---
+        atr_series = atr(high, low, close, 14)
+        atr_val = float(atr_series.iloc[-1])
+        result["atr_14"] = atr_val / (float(close.iloc[-1]) + 1e-10) if not np.isnan(atr_val) else None
+    except Exception:
+        result["atr_14"] = None
+
+    # Filter out None values for clean output
+    return {k: v for k, v in result.items() if v is not None}
+
+
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute all technical indicators for a DataFrame with OHLCV columns.
 

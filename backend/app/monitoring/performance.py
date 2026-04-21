@@ -260,7 +260,7 @@ class PerformanceTracker:
             for name, metrics in self.symbol_metrics.items()
         }
 
-    def get_underperforming_symbols(self, min_trades: int = 5, max_loss: float = -500.0) -> set[str]:
+    def get_underperforming_symbols(self, min_trades: int = 3, max_loss: float = -300.0) -> set[str]:
         """Return symbols that are consistently losing money.
 
         A symbol is flagged if it has >= min_trades and total P&L < max_loss.

@@ -97,6 +97,8 @@ class TradingEngine:
         self._daily_symbol_trades: dict[str, int] = {}
         # Cache snapshot features for ATR lookups in _execute_buy
         self._snapshot_features: dict[str, dict] = {}
+        # Cache intraday features for momentum strategy
+        self._intraday_features: dict[str, dict] = {}
         # Track symbols with pending EOD sell to prevent duplicate sells → short positions
         self._eod_sell_pending: set[str] = set()
         # Track cancelled order timestamps per symbol to prevent retry spam
@@ -280,6 +282,8 @@ class TradingEngine:
                         }
                     except Exception:
                         pass
+            # Store intraday features for momentum strategy
+            self._intraday_features = snapshot.intraday_features
 
             # 2a. Staleness check: skip cycle if data is too old
             data_age = (datetime.now(UTC) - snapshot.timestamp).total_seconds()
@@ -409,8 +413,9 @@ class TradingEngine:
 
                 # Apply adaptive per-symbol + per-regime threshold adjustment
                 if signal.action == SignalAction.BUY:
+                    _, _, conf_mult = self._get_regime_multipliers()
                     adaptive_threshold = self._adaptive.get_adjusted_threshold(
-                        settings.confidence_threshold, signal.symbol, regime_name,
+                        settings.confidence_threshold * conf_mult, signal.symbol, regime_name,
                     )
                     if signal.confidence < adaptive_threshold:
                         logger.debug(
@@ -1097,13 +1102,37 @@ class TradingEngine:
             self._pending_stop_retries.add(symbol)
             return False
 
+    def _get_regime_multipliers(self) -> tuple[float, float, float]:
+        """Return (stop_mult, tp_mult, confidence_mult) based on current market regime.
+
+        Trending: wider stops, wider targets, lower confidence threshold.
+        Ranging: tighter stops, tighter targets, higher threshold.
+        High volatility: wider stops, skip (via high confidence requirement).
+        """
+        regime = self._regime_detector.current_regime
+        if regime is None:
+            return 1.0, 1.0, 1.0
+
+        r = regime.regime.value
+        if r == "trending_up":
+            return 1.25, 1.3, 0.9   # wider stops, bigger targets, easier entry
+        elif r == "trending_down":
+            return 1.0, 0.8, 1.2    # normal stops, tighter targets, harder entry
+        elif r == "high_volatility":
+            return 1.5, 1.0, 1.3    # much wider stops, normal targets, very selective
+        elif r == "low_volatility":
+            return 0.8, 0.8, 0.95   # tighter stops, tighter targets, slightly easier
+        return 1.0, 1.0, 1.0        # ranging: defaults
+
     def _calculate_atr_stop(self, filled_price: float, symbol: str) -> float:
         """Calculate stop price using ATR if available, else fallback to 3%."""
         atr_val = self._get_atr(symbol)
+        stop_mult, _, _ = self._get_regime_multipliers()
         if atr_val and atr_val > 0:
             # atr_14 is now a ratio (atr/close), convert back to raw ATR
             atr_raw = atr_val * filled_price if atr_val < 1.0 else atr_val
-            stop_price = round(filled_price - settings.atr_stop_multiplier * atr_raw, 2)
+            effective_atr_mult = settings.atr_stop_multiplier * stop_mult
+            stop_price = round(filled_price - effective_atr_mult * atr_raw, 2)
             min_stop = round(filled_price * (1 - settings.min_stop_loss_pct / 100), 2)
             stop_price = min(stop_price, min_stop)
         else:
@@ -1171,7 +1200,8 @@ class TradingEngine:
         # R:R gate: check risk/reward ratio before executing
         stop_price_est = self._calculate_atr_stop(price, signal.symbol)
         atr_val = self._get_atr(signal.symbol)
-        tp_est = calculate_take_profit(price, signal.symbol, atr_val)
+        _, tp_mult, _ = self._get_regime_multipliers()
+        tp_est = calculate_take_profit(price, signal.symbol, atr_val, regime_multiplier=tp_mult)
         risk = price - stop_price_est
         reward = tp_est - price
         if risk > 0 and (reward / risk) < 1.5:
@@ -1312,7 +1342,8 @@ class TradingEngine:
 
                 # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
-                tp = calculate_take_profit(result.filled_price, signal.symbol, atr_val)
+                _, tp_mult, _ = self._get_regime_multipliers()
+                tp = calculate_take_profit(result.filled_price, signal.symbol, atr_val, regime_multiplier=tp_mult)
                 # If we got a worse entry, shift TP up to maintain R:R ratio
                 if slippage > 0:
                     tp = round(tp + slippage, 2)

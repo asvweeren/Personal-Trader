@@ -351,6 +351,7 @@ def calculate_take_profit(
     entry_price: float,
     symbol: str | None = None,
     atr: float | None = None,
+    regime_multiplier: float = 1.0,
 ) -> float:
     """Calculate take-profit target price using ATR with a minimum percentage floor.
 
@@ -361,7 +362,8 @@ def calculate_take_profit(
     # ATR-based target (convert ratio ATR to absolute if needed)
     if atr and atr > 0:
         atr_raw = atr * entry_price if atr < 1.0 else atr
-        atr_target = entry_price + settings.atr_take_profit_multiplier * atr_raw
+        effective_tp_mult = settings.atr_take_profit_multiplier * regime_multiplier
+        atr_target = entry_price + effective_tp_mult * atr_raw
     else:
         atr_target = 0.0
 

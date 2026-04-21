@@ -101,6 +101,7 @@ class MarketSnapshot:
     ohlcv: dict[str, pd.DataFrame]
     features: dict[str, dict]
     computed_features_df: dict[str, pd.DataFrame] = field(default_factory=dict)
+    intraday_features: dict[str, dict] = field(default_factory=dict)
 
 
 class MarketDataService:
@@ -274,20 +275,24 @@ class MarketDataService:
         """Get a complete market snapshot with prices and OHLCV data for all symbols."""
         prices = await self.get_current_prices(symbols)
 
-        # Fetch all symbols in parallel instead of sequentially
-        async def _fetch_one(symbol: str):
+        # Fetch daily and intraday bars for all symbols in parallel
+        async def _fetch_daily(symbol: str):
             df = await self.get_historical_data(symbol, duration="1 Y", bar_size="1 day")
             df = self._drop_incomplete_daily_bar(df)
             return symbol, df
 
+        async def _fetch_intraday(symbol: str):
+            df = await self.get_historical_data(symbol, duration="1 D", bar_size="5 mins")
+            return symbol, df
+
         import asyncio
-        results = await asyncio.gather(
-            *[_fetch_one(s) for s in symbols],
-            return_exceptions=True,
+        daily_results, intraday_results = await asyncio.gather(
+            asyncio.gather(*[_fetch_daily(s) for s in symbols], return_exceptions=True),
+            asyncio.gather(*[_fetch_intraday(s) for s in symbols], return_exceptions=True),
         )
 
         ohlcv = {}
-        for result in results:
+        for result in daily_results:
             if isinstance(result, Exception):
                 logger.warning("market_data.fetch_error", error=str(result))
                 continue
@@ -296,10 +301,10 @@ class MarketDataService:
             if (not prices.get(symbol)) and not df.empty:
                 prices[symbol] = float(df["close"].iloc[-1])
 
-        # Pre-compute features once for all symbols — avoids 3-4x redundant
+        # Pre-compute daily features once for all symbols — avoids 3-4x redundant
         # compute_features() calls per symbol per cycle across strategies
         computed_features_df: dict[str, pd.DataFrame] = {}
-        from app.data.indicators import compute_features
+        from app.data.indicators import compute_features, compute_intraday_features
 
         for symbol, df in ohlcv.items():
             if df.empty or len(df) < 50:
@@ -309,12 +314,29 @@ class MarketDataService:
             except Exception:
                 logger.warning("market_data.compute_features_error", symbol=symbol)
 
+        # Compute intraday features from 5-min bars
+        intraday_features: dict[str, dict] = {}
+        for result in intraday_results:
+            if isinstance(result, Exception):
+                logger.debug("market_data.intraday_fetch_error", error=str(result))
+                continue
+            symbol, df = result
+            if df.empty or len(df) < 14:
+                continue
+            try:
+                features = compute_intraday_features(df)
+                if features:
+                    intraday_features[symbol] = features
+            except Exception:
+                logger.debug("market_data.intraday_features_error", symbol=symbol)
+
         return MarketSnapshot(
             timestamp=datetime.now(UTC),
             prices=prices,
             ohlcv=ohlcv,
             features={},
             computed_features_df=computed_features_df,
+            intraday_features=intraday_features,
         )
 
     # ── Data quality validation ─────────────────────────────────────

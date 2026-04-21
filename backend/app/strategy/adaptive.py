@@ -39,6 +39,7 @@ class SymbolProfile:
     wins: int = 0
     losses: int = 0
     total_pnl: float = 0.0
+    consecutive_losses: int = 0
     confidence_adjustment: float = 0.0  # Added to base threshold
     avg_winning_confidence: float = 0.0
     avg_losing_confidence: float = 0.0
@@ -54,6 +55,7 @@ class SymbolProfile:
         self.total_pnl += pnl
         if pnl > 0:
             self.wins += 1
+            self.consecutive_losses = 0
             self._winning_confidences.append(confidence)
             # Keep last 50
             self._winning_confidences = self._winning_confidences[-50:]
@@ -62,6 +64,7 @@ class SymbolProfile:
             )
         else:
             self.losses += 1
+            self.consecutive_losses += 1
             self._losing_confidences.append(confidence)
             self._losing_confidences = self._losing_confidences[-50:]
             self.avg_losing_confidence = (
@@ -100,6 +103,7 @@ class SymbolProfile:
             "wins": self.wins,
             "losses": self.losses,
             "total_pnl": round(self.total_pnl, 2),
+            "consecutive_losses": self.consecutive_losses,
             "win_rate": round(self.win_rate, 4),
             "confidence_adjustment": round(self.confidence_adjustment, 4),
             "avg_winning_confidence": round(self.avg_winning_confidence, 4),
@@ -301,16 +305,19 @@ class AdaptiveManager:
     def should_skip_symbol(self, symbol: str) -> bool:
         """Check if a symbol should be skipped based on adaptive learning.
 
-        More nuanced than the static blacklist — uses win rate and P&L trend.
+        More aggressive than static blacklist — catches losers early.
         """
         profile = self._symbol_profiles.get(symbol)
         if profile is None:
             return False
-        # Skip if >= 15 trades with < 25% win rate
-        if profile.trades >= 15 and profile.win_rate < 0.25:
+        # Skip if >= 5 trades with < 25% win rate
+        if profile.trades >= 5 and profile.win_rate < 0.25:
             return True
-        # Skip if >= 10 trades and losing significant money
-        if profile.trades >= 10 and profile.total_pnl < -1000:
+        # Skip if >= 3 trades and losing significant money
+        if profile.trades >= 3 and profile.total_pnl < -500:
+            return True
+        # Skip if 3+ consecutive losses (recent losing streak)
+        if profile.consecutive_losses >= 3:
             return True
         return False
 
@@ -349,6 +356,7 @@ class AdaptiveManager:
                     wins=data.get("wins", 0),
                     losses=data.get("losses", 0),
                     total_pnl=data.get("total_pnl", 0.0),
+                    consecutive_losses=data.get("consecutive_losses", 0),
                     confidence_adjustment=data.get("confidence_adjustment", 0.0),
                     avg_winning_confidence=data.get("avg_winning_confidence", 0.0),
                     avg_losing_confidence=data.get("avg_losing_confidence", 0.0),

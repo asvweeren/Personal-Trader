@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import BrokerAdapter
 from app.data.feature_store import FeatureStore
-from app.data.indicators import compute_features
+from app.data.indicators import compute_features, compute_intraday_features
 from app.data.market_data import MarketDataService, MarketSnapshot
 from app.data.news_fetcher import NewsFetcher
 from app.data.sentiment import SentimentAnalyzer, SentimentResult
@@ -39,11 +39,16 @@ class DataPipeline:
         self._feature_store = feature_store or FeatureStore()
         self._symbols: list[str] = []
         self._latest_features: dict[str, dict] = {}
+        self._intraday_features: dict[str, dict] = {}
         self._latest_sentiment: dict[str, SentimentResult] = {}
 
     @property
     def market_data(self) -> MarketDataService:
         return self._market_data
+
+    @property
+    def intraday_features(self) -> dict[str, dict]:
+        return self._intraday_features
 
     @property
     def feature_store(self) -> FeatureStore:
@@ -136,6 +141,59 @@ class DataPipeline:
         logger.info("pipeline.features_computed", count=len(features))
         return features
 
+    async def refresh_intraday_features(self) -> dict[str, dict]:
+        """Compute intraday features from 5-minute bars for all open symbols.
+
+        Fetches 1-day of 5-minute bars, computes momentum indicators, and
+        caches results in Redis with a 120s TTL (matching the trading cycle).
+        """
+        from app.risk.market_hours import get_exchange_for_symbol, is_market_open
+        open_symbols = [
+            s for s in self._symbols
+            if is_market_open(get_exchange_for_symbol(s))
+        ]
+        logger.info(
+            "pipeline.refresh_intraday_features",
+            symbols=len(self._symbols),
+            open=len(open_symbols),
+        )
+        features: dict[str, dict] = {}
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_one(symbol: str):
+            async with sem:
+                try:
+                    df = await self._market_data.get_historical_data(
+                        symbol, duration="1 D", bar_size="5 mins",
+                    )
+                    if df.empty or len(df) < 14:
+                        return symbol, {}
+                    feat = compute_intraday_features(df)
+                    return symbol, feat
+                except Exception:
+                    logger.debug("pipeline.intraday_feature_error", symbol=symbol)
+                    return symbol, {}
+
+        results = await asyncio.gather(
+            *[_fetch_one(s) for s in open_symbols],
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.debug("pipeline.intraday_gather_error", error=str(result))
+                continue
+            symbol, feat = result
+            if feat:
+                features[symbol] = feat
+                self._intraday_features[symbol] = feat
+                await self._feature_store.store_features(
+                    f"{symbol}:intraday", feat, ttl=120,
+                )
+
+        logger.info("pipeline.intraday_features_computed", count=len(features))
+        return features
+
     async def refresh_sentiment(self) -> dict[str, SentimentResult]:
         """Fetch news and compute sentiment for top symbols during market hours only.
 
@@ -221,6 +279,12 @@ class DataPipeline:
     async def get_enriched_snapshot(self) -> MarketSnapshot:
         """Get a market snapshot enriched with pre-computed features."""
         snapshot = await self._market_data.get_snapshot(self._symbols)
+
+        # Merge cached intraday features into snapshot
+        for symbol in self._symbols:
+            intraday = self._intraday_features.get(symbol)
+            if intraday:
+                snapshot.intraday_features.setdefault(symbol, {}).update(intraday)
 
         # Merge cached features into snapshot
         for symbol in self._symbols:
