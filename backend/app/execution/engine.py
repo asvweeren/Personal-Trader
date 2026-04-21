@@ -364,8 +364,8 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            # Day trading mode: momentum (primary) + ML (confirmation).
-            # Skip sentiment (too slow for intraday) and ensemble.
+            # Active: momentum (rules-based) + agentic (Claude AI) + ml_xgboost (confirmation).
+            # Skip: sentiment (legacy, replaced by agentic), ensemble, nn_lstm.
             _skip_strategies = {"ensemble", "sentiment", "nn_lstm"}
             strategies_to_run = [
                 s for s in self._strategies if s.name not in _skip_strategies

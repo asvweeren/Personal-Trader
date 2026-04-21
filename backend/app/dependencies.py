@@ -107,7 +107,17 @@ def load_strategies() -> list[Strategy]:
     except Exception:
         logger.exception("strategies.load_error", name="ml_xgboost")
 
-    # 3. Sentiment Strategy (Claude LLM) - disabled for day trading (too slow)
+    # 3. Agentic Strategy (Claude AI trading agent) — primary AI-driven strategy
+    if settings.anthropic_api_key:
+        try:
+            from app.strategy.agentic_strategy import AgenticStrategy
+            agentic = AgenticStrategy(confidence_threshold=settings.confidence_threshold)
+            strategies.append(agentic)
+            logger.info("strategies.loaded", name="agentic")
+        except Exception:
+            logger.exception("strategies.load_error", name="agentic")
+
+    # 3b. Sentiment Strategy (Claude LLM) - disabled for day trading (too slow)
     if settings.anthropic_api_key:
         try:
             from app.strategy.sentiment_strategy import SentimentStrategy
