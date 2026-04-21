@@ -22,7 +22,8 @@ class ConnectionManager:
         logger.info("ws.connected", total=len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         logger.info("ws.disconnected", total=len(self.active_connections))
 
     async def broadcast(self, message: dict):

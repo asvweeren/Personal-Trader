@@ -78,21 +78,21 @@ class Settings(BaseSettings):
     )
     initial_capital: float = 5000.0
     max_daily_loss_pct: float = 2.0         # Tight daily loss halt for day trading
-    max_position_pct: float = 4.0           # Smaller positions, more trades
-    max_open_positions: int = 5             # Fewer concurrent positions for focus
-    min_cash_reserve_pct: float = 30.0      # Higher cash reserve for day trading
+    max_position_pct: float = 8.0           # Adequate position sizing for day trading
+    max_open_positions: int = 8             # More concurrent positions for diversification
+    min_cash_reserve_pct: float = 20.0      # Day trades close EOD, less reserve needed
     max_sector_concentration_pct: float = 35.0
     max_total_exposure_pct: float = 60.0    # Max 60% deployed at once (day trading)
     confidence_threshold: float = 0.60      # Momentum strategy threshold
     max_hourly_loss_pct: float = 1.0        # Tighter hourly loss circuit breaker
 
-    # ATR-based stop-loss — tight stops for day trading
-    atr_stop_multiplier: float = 1.5        # Tight ATR stop for intraday
-    min_stop_loss_pct: float = 1.0          # 1% minimum stop (day trading)
+    # ATR-based stop-loss — room to breathe for intraday volatility
+    atr_stop_multiplier: float = 2.0        # 2x ATR stop for intraday
+    min_stop_loss_pct: float = 1.5          # 1.5% minimum stop distance
 
-    # Take-profit — quick targets, minimum 1.5:1 R:R
-    atr_take_profit_multiplier: float = 2.5  # 2.5x ATR target
-    min_take_profit_pct: float = 1.5         # 1.5% minimum target (day trading)
+    # Take-profit — realistic intraday targets
+    atr_take_profit_multiplier: float = 1.5  # 1.5x ATR target (achievable intraday)
+    min_take_profit_pct: float = 2.0         # 2% minimum target
 
     # Order execution
     order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
@@ -118,8 +118,8 @@ class Settings(BaseSettings):
     extended_hours_enabled: bool = True      # Trade pre-market and after-hours
 
     # Smart entry/exit filters
-    opening_range_minutes: int = 30          # Wait 30 min after open for range to establish
-    breakeven_stop_trigger_pct: float = 0.8  # Move stop to breakeven quickly at +0.8%
+    opening_range_minutes: int = 15          # Wait 15 min after open to catch early momentum
+    breakeven_stop_trigger_pct: float = 1.5  # Move stop to breakeven at +1.5% (let winners develop)
     stale_position_hours: float = 3.0        # Close stale positions after 3 hours
     stale_position_min_pnl_pct: float = 0.2  # Close if < 0.2% P&L after 3h
     partial_profit_enabled: bool = True      # Take 50% profit at first target
@@ -131,8 +131,8 @@ class Settings(BaseSettings):
     twap_slices: int = 4
 
     # Progressive trailing stop tiers: "gain%:trail%,..."
-    # Tight intraday trailing stops to lock in profits quickly
-    trailing_stop_tiers: str = "1.0:0.5,2.0:0.8,3.0:1.0,5.0:1.5"
+    # Wider tiers to let winners run before trailing kicks in
+    trailing_stop_tiers: str = "2.0:1.0,3.0:1.5,5.0:2.0,8.0:2.5"
 
     # Symbol blacklist: comma-separated symbols to never trade
     # Blacklisted biggest losers from historical performance analysis

@@ -135,7 +135,7 @@ async def get_strategy_performance(db: AsyncSession = Depends(get_db)):
             Trade.strategy_name,
             func.count(Trade.id).label("total_trades"),
             func.sum(case((Trade.realized_pnl > 0, 1), else_=0)).label("winning_trades"),
-            func.sum(case((Trade.realized_pnl <= 0, 1), else_=0)).label("losing_trades"),
+            func.sum(case((Trade.realized_pnl < 0, 1), else_=0)).label("losing_trades"),
             func.coalesce(func.sum(Trade.realized_pnl), 0).label("total_pnl"),
             func.coalesce(func.avg(Trade.realized_pnl), 0).label("avg_pnl"),
             func.coalesce(

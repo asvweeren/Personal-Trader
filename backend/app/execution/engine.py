@@ -99,6 +99,8 @@ class TradingEngine:
         self._snapshot_features: dict[str, dict] = {}
         # Track symbols with pending EOD sell to prevent duplicate sells → short positions
         self._eod_sell_pending: set[str] = set()
+        # Track cancelled order timestamps per symbol to prevent retry spam
+        self._cancelled_cooldown: dict[str, datetime] = {}
 
     @property
     def state(self) -> EngineState:
@@ -610,6 +612,20 @@ class TradingEngine:
                         )
                         continue
 
+                # Cancelled order cooldown: don't retry a symbol that just failed
+                cancel_time = self._cancelled_cooldown.get(signal.symbol)
+                if cancel_time:
+                    mins_since_cancel = (datetime.now(UTC) - cancel_time).total_seconds() / 60
+                    if mins_since_cancel < settings.reentry_cooldown_minutes:
+                        logger.info(
+                            "engine.signal_skipped_cancel_cooldown",
+                            symbol=signal.symbol,
+                            mins_since_cancel=round(mins_since_cancel, 1),
+                        )
+                        continue
+                    else:
+                        del self._cancelled_cooldown[signal.symbol]
+
                 # Per-symbol daily trade limit: prevent over-trading same symbol
                 symbol_trades_today = self._daily_symbol_trades.get(signal.symbol, 0)
                 if symbol_trades_today >= settings.max_trades_per_symbol_per_day:
@@ -1089,7 +1105,7 @@ class TradingEngine:
             atr_raw = atr_val * filled_price if atr_val < 1.0 else atr_val
             stop_price = round(filled_price - settings.atr_stop_multiplier * atr_raw, 2)
             min_stop = round(filled_price * (1 - settings.min_stop_loss_pct / 100), 2)
-            stop_price = max(stop_price, min_stop)
+            stop_price = min(stop_price, min_stop)
         else:
             stop_price = round(filled_price * 0.97, 2)
         return stop_price
@@ -1158,7 +1174,7 @@ class TradingEngine:
         tp_est = calculate_take_profit(price, signal.symbol, atr_val)
         risk = price - stop_price_est
         reward = tp_est - price
-        if risk > 0 and (reward / risk) < 2.0:
+        if risk > 0 and (reward / risk) < 1.5:
             logger.info(
                 "engine.insufficient_rr",
                 symbol=signal.symbol,
@@ -1312,6 +1328,8 @@ class TradingEngine:
             await send_alert("Trade Opened", alert_msg)
         else:
             trade.status = TradeStatus.CANCELLED
+            self._cancelled_cooldown[signal.symbol] = datetime.now(UTC)
+            self._daily_symbol_trades[signal.symbol] = self._daily_symbol_trades.get(signal.symbol, 0) + 1
             logger.warning(
                 "engine.trade_cancelled_after_retries",
                 symbol=signal.symbol,
