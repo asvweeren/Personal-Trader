@@ -101,8 +101,8 @@ RULES:
 - Day trading only: all positions close at end of day
 - Only recommend BUY if you have HIGH conviction (strong momentum + volume + trend alignment)
 - Maximum 3 BUY recommendations per analysis
-- Each recommendation needs confidence 0.0-1.0 (only recommend if >= 0.65)
-- Consider: RSI momentum zone (50-70 is ideal), MACD acceleration, volume surge, price above VWAP/EMA
+- Confidence scale: 0.80 = good setup, 0.85 = strong setup, 0.90+ = excellent setup. Minimum 0.75.
+- Consider: RSI momentum zone (50-70 is ideal), MACD acceleration, volume surge, price above VWAP/EMA, strong ADX (>25)
 - Avoid: overbought (RSI>75), low volume (<1.0x), weak ADX (<20), wide BB (high volatility without direction)
 - You can also recommend SELL for any symbol showing reversal signals
 
@@ -110,7 +110,7 @@ MARKET DATA:
 {market_context}
 
 Respond with ONLY valid JSON array. Each element:
-{{"symbol": "TICKER", "action": "BUY" or "SELL" or "HOLD", "confidence": 0.65-1.0, "reasoning": "brief explanation"}}
+{{"symbol": "TICKER", "action": "BUY" or "SELL" or "HOLD", "confidence": 0.75-0.95, "reasoning": "one sentence"}}
 
 If no good opportunities exist, return: []
 JSON:"""
@@ -189,6 +189,14 @@ JSON:"""
                         "atr_14": feat.get("atr_14", 0),
                         "rsi_14": feat.get("rsi_14", 0),
                         "adx_14": feat.get("adx_14", 0),
+                        "macd_histogram": feat.get("macd_histogram", 0),
+                        "sma_50": feat.get("sma_50", 0),
+                        "sma_20": feat.get("sma_20", 0),
+                        "ema_10": feat.get("ema_10", 0),
+                        "vwap": feat.get("vwap", 0),
+                        "bb_width": feat.get("bb_width", 0),
+                        "volume_ratio": feat.get("volume_ratio", feat.get("vol_ratio_10_20", 1.0)),
+                        "return_1d": feat.get("return_1d", 0),
                     },
                     metadata={
                         "reasoning": reasoning,
