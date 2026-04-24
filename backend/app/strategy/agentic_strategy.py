@@ -49,6 +49,26 @@ class AgenticStrategy(Strategy):
                 await asyncio.sleep(wait)
         self._calls.append(time.monotonic())
 
+    def _get_features(self, market_data: MarketSnapshot, symbol: str) -> dict:
+        """Extract features from computed_features_df (primary) or fallback to features dict."""
+        feat = {}
+        # Primary source: computed features DataFrame (always populated by engine)
+        df = market_data.computed_features_df.get(symbol)
+        if df is not None and not df.empty:
+            try:
+                row = df.iloc[-1]
+                feat = {
+                    k: float(v) for k, v in row.items()
+                    if isinstance(v, (int, float)) and v == v  # skip NaN
+                }
+            except Exception:
+                pass
+        # Overlay intraday features if available
+        intraday = market_data.intraday_features.get(symbol, {})
+        if intraday:
+            feat.update(intraday)
+        return feat
+
     def _build_market_context(self, market_data: MarketSnapshot, symbols: list[str]) -> str:
         """Build a concise market context string for the LLM."""
         lines = []
@@ -62,25 +82,24 @@ class AgenticStrategy(Strategy):
             if price <= 0:
                 continue
 
-            # Get intraday features (preferred) or daily features
-            intraday = market_data.intraday_features.get(symbol, {})
-            daily = market_data.features.get(symbol, {})
-            feat = {**daily, **intraday}  # intraday overrides daily
+            feat = self._get_features(market_data, symbol)
+            if not feat:
+                continue
 
-            rsi = feat.get("rsi_14", feat.get("rsi_14_intraday", 0))
+            rsi = feat.get("rsi_14", 0)
             macd_hist = feat.get("macd_histogram", 0)
             vwap = feat.get("vwap", 0)
             adx = feat.get("adx_14", 0)
             atr = feat.get("atr_14", 0)
-            vol_ratio = feat.get("vol_ratio_10_20", feat.get("volume_ratio_intraday", 1.0))
+            vol_ratio = feat.get("vol_ratio_10_20", 1.0)
             ema10 = feat.get("ema_10", 0)
             momentum = feat.get("return_1d", 0)
             bb_width = feat.get("bb_width", 0)
             sentiment = feat.get("sentiment_score", 0)
 
-            above_vwap = "above" if (vwap != 0 and ((vwap > 0 and price > vwap) or (vwap < 0))) else "below"
-            above_ema = "above" if ema10 < 0 else "below" if ema10 > 0 else "at"
-            # ema_10 feature is normalized: (price/ema - 1), positive = above
+            # ema_10/vwap are normalized: positive = price above
+            above_vwap = "above" if vwap < 0 else "below" if vwap > 0 else "at"
+            above_ema = "above" if ema10 > 0 else "below" if ema10 < 0 else "at"
 
             line = (
                 f"{symbol}: ${price:.2f} | RSI={rsi:.0f} | MACD_hist={macd_hist:.4f} | "
@@ -146,6 +165,12 @@ JSON:"""
                     raw = raw[:-3]
                 raw = raw.strip()
 
+            # Extract JSON array even if Claude adds reasoning after it
+            bracket_start = raw.find("[")
+            bracket_end = raw.rfind("]")
+            if bracket_start >= 0 and bracket_end > bracket_start:
+                raw = raw[bracket_start:bracket_end + 1]
+
             decisions = json.loads(raw)
 
             input_tokens = response.usage.input_tokens
@@ -176,9 +201,7 @@ JSON:"""
                 action = SignalAction.BUY if action_str == "BUY" else SignalAction.SELL
                 reasoning = d.get("reasoning", "")
 
-                intraday = market_data.intraday_features.get(symbol, {})
-                daily = market_data.features.get(symbol, {})
-                feat = {**daily, **intraday}
+                feat = self._get_features(market_data, symbol)
 
                 signals.append(TradingSignal(
                     symbol=symbol,
