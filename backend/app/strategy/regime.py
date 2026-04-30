@@ -153,18 +153,22 @@ class RegimeDetector:
             confidence = min(0.5 + (self.VOL_RATIO_LOW - vol_ratio) * 0.5, 0.90)
             return MarketRegime.LOW_VOLATILITY, confidence
 
-        # Trending
+        # Trending (use breadth to determine direction)
         if adx > self.ADX_TRENDING:
             trend_confidence = min(0.5 + (adx - self.ADX_TRENDING) / 30, 0.95)
             if breadth > 0.6:
                 return MarketRegime.TRENDING_UP, trend_confidence
             elif breadth < 0.4:
                 return MarketRegime.TRENDING_DOWN, trend_confidence
+            # Ambiguous direction but trending — classify by breadth lean
+            if breadth < 0.5:
+                return MarketRegime.TRENDING_DOWN, trend_confidence * 0.7
+            else:
+                return MarketRegime.TRENDING_UP, trend_confidence * 0.7
 
-        # Ranging (low ADX, balanced breadth)
-        if adx < self.ADX_TRENDING:
-            range_confidence = min(0.5 + (self.ADX_TRENDING - adx) / 25, 0.85)
-            return MarketRegime.RANGING, range_confidence
+        # Weak trend / ranging — still check if bearish leaning
+        if breadth < 0.35:
+            return MarketRegime.TRENDING_DOWN, 0.55
 
-        # Default: ranging with lower confidence
-        return MarketRegime.RANGING, 0.5
+        range_confidence = min(0.5 + (self.ADX_TRENDING - adx) / 25, 0.85)
+        return MarketRegime.RANGING, range_confidence

@@ -507,30 +507,45 @@ class TradingEngine:
                     )
                     continue
 
-                # Gate 1: SPY/QQQ momentum — don't BUY if broad market is weak
-                if signal.action == SignalAction.BUY and signal.symbol not in ("SPY", "QQQ", "IWM", "DIA"):
+                # Gate 1: Market health — don't BUY if broad market is weak
+                # Features are normalized ratios: sma_50 < 0 means price below SMA50
+                if signal.action == SignalAction.BUY:
                     market_bearish = False
+                    bearish_reason = ""
                     for index_sym in ("SPY", "QQQ"):
                         idx_features = self._snapshot_features.get(index_sym, {})
-                        idx_price = snapshot.prices.get(index_sym, 0)
+                        if not idx_features:
+                            continue
+                        # Price below 50-day SMA (sma_50 is ratio: close/sma - 1)
                         idx_sma50 = idx_features.get("sma_50", 0)
+                        if idx_sma50 < -0.02:
+                            market_bearish = True
+                            bearish_reason = f"{index_sym} below SMA50 ({idx_sma50:.3f})"
+                        # Price below 20-day SMA
                         idx_sma20 = idx_features.get("sma_20", 0)
-                        if idx_price > 0 and idx_sma50 > 0 and idx_price < idx_sma50:
+                        if idx_sma20 < -0.01:
                             market_bearish = True
-                        if idx_price > 0 and idx_sma20 > 0 and idx_price < idx_sma20:
+                            bearish_reason = f"{index_sym} below SMA20 ({idx_sma20:.3f})"
+                        # Daily return < -1% (selloff)
+                        idx_return = idx_features.get("return_1d", 0)
+                        if idx_return < -0.01:
                             market_bearish = True
-                        # Gate 1b: Skip if SPY/QQQ intraday return < -1% (crash protection)
-                        idx_momentum = idx_features.get("momentum_1d", 0)
-                        if idx_momentum < -0.01:
+                            bearish_reason = f"{index_sym} daily return {idx_return:.2%}"
+                        # 5-day return < -3% (multi-day decline)
+                        idx_return5 = idx_features.get("return_5d", 0)
+                        if idx_return5 < -0.03:
                             market_bearish = True
-                        # Gate 1c: Skip if ATR/price ratio > 3% (high volatility day)
+                            bearish_reason = f"{index_sym} 5d return {idx_return5:.2%}"
+                        # ATR ratio > 3% (high volatility — atr_14 is already atr/close)
                         idx_atr = idx_features.get("atr_14", 0)
-                        if idx_price > 0 and idx_atr > 0 and (idx_atr / idx_price) > 0.03:
+                        if idx_atr > 0.03:
                             market_bearish = True
+                            bearish_reason = f"{index_sym} ATR={idx_atr:.3f}"
                     if market_bearish:
                         logger.info(
                             "engine.signal_skipped_market_bearish",
                             symbol=signal.symbol,
+                            reason=bearish_reason,
                         )
                         continue
 
@@ -1117,9 +1132,9 @@ class TradingEngine:
         if r == "trending_up":
             return 1.25, 1.3, 0.9   # wider stops, bigger targets, easier entry
         elif r == "trending_down":
-            return 1.0, 0.8, 1.2    # normal stops, tighter targets, harder entry
+            return 1.0, 0.6, 1.5    # normal stops, tight targets, MUCH harder entry
         elif r == "high_volatility":
-            return 1.5, 1.0, 1.3    # much wider stops, normal targets, very selective
+            return 1.5, 1.0, 1.4    # much wider stops, normal targets, very selective
         elif r == "low_volatility":
             return 0.8, 0.8, 0.95   # tighter stops, tighter targets, slightly easier
         return 1.0, 1.0, 1.0        # ranging: defaults
