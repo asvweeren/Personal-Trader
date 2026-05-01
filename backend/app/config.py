@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.60      # Momentum strategy threshold
     max_hourly_loss_pct: float = 1.0        # Tighter hourly loss circuit breaker
 
+    # Short selling
+    enable_short_selling: bool = True       # Allow opening short positions
+    max_short_exposure_pct: float = 30.0    # Max 30% of portfolio in shorts
+
     # ATR-based stop-loss — room to breathe for intraday volatility
     atr_stop_multiplier: float = 2.0        # 2x ATR stop for intraday
     min_stop_loss_pct: float = 1.5          # 1.5% minimum stop distance

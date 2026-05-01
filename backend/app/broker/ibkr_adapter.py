@@ -308,8 +308,8 @@ class IBKRAdapter(BrokerAdapter):
             min_tick = self._get_min_tick(order.symbol, order.limit_price)
             order.limit_price = round_to_tick(order.limit_price, min_tick)
 
-        # Safety net: prevent SELL orders from exceeding current position
-        if order.side == OrderSide.SELL:
+        # Safety net: prevent accidental shorts when short selling is disabled
+        if order.side == OrderSide.SELL and not settings.enable_short_selling:
             try:
                 positions = await self.get_positions()
                 held_qty = 0
@@ -320,7 +320,7 @@ class IBKRAdapter(BrokerAdapter):
                 if order.quantity > held_qty:
                     raise BrokerOrderError(
                         f"SELL {order.quantity} {order.symbol} rejected: "
-                        f"would exceed position of {held_qty} and create a short"
+                        f"short selling disabled (position: {held_qty})"
                     )
             except BrokerOrderError:
                 raise
@@ -330,7 +330,6 @@ class IBKRAdapter(BrokerAdapter):
                     symbol=order.symbol,
                     side=order.side.value,
                 )
-                # Don't block the order if position check fails
 
         try:
             contract = self._make_contract(order.symbol)

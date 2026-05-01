@@ -114,24 +114,24 @@ class AgenticStrategy(Strategy):
         return "\n".join(lines)
 
     def _build_prompt(self, market_context: str) -> str:
-        return f"""You are an expert day trader analyzing US stocks. Your job is to identify the best BUY opportunities from the data below.
+        return f"""You are an expert day trader analyzing US stocks. Identify the best BUY and SELL (short) opportunities.
 
 RULES:
 - Day trading only: all positions close at end of day
-- Only recommend BUY if you have HIGH conviction (strong momentum + volume + trend alignment)
-- Maximum 3 BUY recommendations per analysis
-- Confidence scale: 0.80 = good setup, 0.85 = strong setup, 0.90+ = excellent setup. Minimum 0.75.
-- Consider: RSI momentum zone (50-70 is ideal), MACD acceleration, volume surge, price above VWAP/EMA, strong ADX (>25)
-- Avoid: overbought (RSI>75), low volume (<1.0x), weak ADX (<20), wide BB (high volatility without direction)
-- You can also recommend SELL for any symbol showing reversal signals
+- BUY: strong bullish momentum (RSI 50-70, MACD accelerating, above VWAP/EMA, ADX>25, volume surge)
+- SELL (short): strong bearish momentum (RSI<40, MACD declining, below VWAP/EMA, ADX>25, negative momentum)
+- Maximum 3 recommendations total (BUY + SELL combined)
+- Confidence: 0.80 = good, 0.85 = strong, 0.90+ = excellent. Minimum 0.75.
+- In bearish markets prefer SELL signals over BUY
+- Avoid: low volume (<1.0x), weak ADX (<20), unclear direction
 
 MARKET DATA:
 {market_context}
 
-Respond with ONLY valid JSON array. Each element:
-{{"symbol": "TICKER", "action": "BUY" or "SELL" or "HOLD", "confidence": 0.75-0.95, "reasoning": "one sentence"}}
+Respond with ONLY a valid JSON array:
+{{"symbol": "TICKER", "action": "BUY" or "SELL", "confidence": 0.75-0.95, "reasoning": "one sentence"}}
 
-If no good opportunities exist, return: []
+If no opportunities: []
 JSON:"""
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:

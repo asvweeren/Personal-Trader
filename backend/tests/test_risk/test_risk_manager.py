@@ -58,15 +58,17 @@ async def test_sell_signal_with_position_approved():
 
 
 @pytest.mark.asyncio
-async def test_sell_signal_without_position_rejected():
+async def test_sell_signal_without_position_opens_short():
+    """SELL without position should proceed to position sizing when shorts enabled."""
     rm = RiskManager()
     rm.set_daily_start_value(5000)
-    portfolio = make_portfolio()
+    portfolio = make_portfolio(total_value=5000, cash=3000)
     signal = make_signal(action=SignalAction.SELL)
 
-    decision = await rm.evaluate_signal(signal, portfolio, 150.0)
-    assert decision.approved is False
-    assert "No position" in decision.reason
+    with patch("app.risk.manager.is_market_open", return_value=True):
+        decision = await rm.evaluate_signal(signal, portfolio, 150.0)
+    # Short selling enabled: should pass through to position sizing (not rejected for "No position")
+    assert "No position" not in (decision.reason or "")
 
 
 @pytest.mark.asyncio

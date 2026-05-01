@@ -148,24 +148,59 @@ class MomentumStrategy(Strategy):
                 # Cap at 1.0
                 confidence = min(score, 1.0)
 
-                # --- SELL SIGNALS: Momentum reversal ---
+                # --- SELL/SHORT SIGNALS: Bearish momentum ---
                 sell_score = 0.0
+                sell_reasons = []
+
+                # 1. Price below VWAP (selling pressure)
                 if below_vwap:
-                    sell_score += 0.25
-                if rsi > 75:
-                    sell_score += 0.25
+                    sell_score += 0.15
+                    sell_reasons.append("below_vwap")
+
+                # 2. RSI in bearish zone (<40) or overbought reversal (>75)
+                if rsi < 40:
+                    sell_score += 0.20
+                    sell_reasons.append(f"rsi_bearish={rsi:.0f}")
+                elif rsi > 75:
+                    sell_score += 0.15
+                    sell_reasons.append(f"rsi_overbought={rsi:.0f}")
+
+                # 3. MACD decelerating (negative and falling)
                 if macd_hist < 0 and macd_hist < macd_hist_prev:
-                    sell_score += 0.25
+                    sell_score += 0.20
+                    sell_reasons.append("macd_declining")
+                elif macd_hist < 0:
+                    sell_score += 0.10
+
+                # 4. Price below EMA10 (short-term downtrend)
                 if below_ema10:
-                    sell_score += 0.25
+                    sell_score += 0.15
+                    sell_reasons.append("below_ema10")
+
+                # 5. ADX trending (confirms directional move)
+                if adx > 25:
+                    sell_score += 0.10
+                    sell_reasons.append(f"trending_adx={adx:.0f}")
+
+                # 6. Negative momentum (bonus)
+                if momentum_1d < -0.005:
+                    sell_score += 0.10
+                    sell_reasons.append(f"intraday_down={momentum_1d:.2%}")
+
+                # 7. Volume surge on decline (institutional selling)
+                if vol_ratio > 1.3 and below_vwap:
+                    sell_score += 0.10
+                    sell_reasons.append(f"volume_sell={vol_ratio:.1f}x")
+
+                sell_score = min(sell_score, 1.0)
 
                 # Determine action
                 if confidence >= self._confidence_threshold and confidence > sell_score:
                     action = SignalAction.BUY
                     final_confidence = confidence
-                elif sell_score >= 0.60:
+                elif sell_score >= self._confidence_threshold and sell_score > confidence:
                     action = SignalAction.SELL
-                    final_confidence = min(sell_score, 1.0)
+                    final_confidence = sell_score
                 else:
                     action = SignalAction.HOLD
                     final_confidence = max(confidence, sell_score)

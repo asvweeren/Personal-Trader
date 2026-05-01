@@ -155,14 +155,27 @@ class RiskManager:
         if signal.action == SignalAction.HOLD:
             return RiskDecision(approved=False, signal=signal, reason="HOLD signal, no action")
 
-        # For SELL signals on existing positions, fewer checks needed
+        # For SELL signals: close existing position (auto-approve) or open short
         if signal.action == SignalAction.SELL:
             has_position = any(p.symbol == signal.symbol for p in portfolio.positions)
-            if not has_position:
+            if has_position:
+                return RiskDecision(approved=True, signal=signal)
+            # Opening a short position — run through same risk checks as BUY
+            if not settings.enable_short_selling:
                 return RiskDecision(
-                    approved=False, signal=signal, reason="No position to sell",
+                    approved=False, signal=signal, reason="Short selling disabled",
                 )
-            return RiskDecision(approved=True, signal=signal)
+            # Check short exposure limit
+            short_exposure = sum(
+                abs(p.market_value) for p in portfolio.positions if p.quantity < 0
+            )
+            max_short = portfolio.account_summary.total_value * settings.max_short_exposure_pct / 100
+            if short_exposure >= max_short:
+                return RiskDecision(
+                    approved=False, signal=signal,
+                    reason=f"Short exposure {short_exposure:.0f} >= max {max_short:.0f}",
+                )
+            # Fall through to position sizing below (same as BUY)
 
         # Regime-aware position sizing
         effective_max_position_pct = self.max_position_pct

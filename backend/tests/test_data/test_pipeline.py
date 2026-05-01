@@ -91,7 +91,8 @@ async def test_refresh_features_handles_errors(_mock_open, pipeline):
 
 
 @pytest.mark.asyncio
-async def test_refresh_sentiment(pipeline):
+@patch("app.data.pipeline.is_market_open", return_value=True)
+async def test_refresh_sentiment(mock_market_open, pipeline):
     """Should call sentiment analyzer for each symbol."""
     pipeline._news_fetcher.fetch_symbol_news = AsyncMock(return_value=[])
     pipeline._sentiment.analyze = AsyncMock(

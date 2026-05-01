@@ -412,8 +412,11 @@ class TradingEngine:
                     continue
 
                 # Apply adaptive per-symbol + per-regime threshold adjustment
-                if signal.action == SignalAction.BUY:
+                if signal.action in (SignalAction.BUY, SignalAction.SELL):
                     _, _, conf_mult = self._get_regime_multipliers()
+                    # In bearish regime, lower threshold for shorts (easier entry)
+                    if signal.action == SignalAction.SELL and conf_mult > 1.0:
+                        conf_mult = max(0.9, 1.0 / conf_mult)  # Invert: harder BUY = easier SHORT
                     adaptive_threshold = self._adaptive.get_adjusted_threshold(
                         settings.confidence_threshold * conf_mult, signal.symbol, regime_name,
                     )
@@ -421,6 +424,7 @@ class TradingEngine:
                         logger.debug(
                             "engine.adaptive_threshold_skip",
                             symbol=signal.symbol,
+                            action=signal.action.value,
                             confidence=round(signal.confidence, 3),
                             adaptive_threshold=round(adaptive_threshold, 3),
                         )
@@ -603,12 +607,22 @@ class TradingEngine:
                         )
                         continue
 
-                # Handle SELL signals via position close
+                # Handle SELL signals: close existing long or open short
                 if signal.action == SignalAction.SELL:
-                    await self._handle_sell_signal(signal, price, db_signal.id)
-                    continue
+                    open_trade = self._open_trades.get(signal.symbol)
+                    if open_trade and open_trade.side == TradeSide.BUY:
+                        # Close existing long position
+                        await self._handle_sell_signal(signal, price, db_signal.id)
+                        continue
+                    elif open_trade:
+                        # Already have a short position, skip
+                        continue
+                    elif not settings.enable_short_selling:
+                        continue
+                    # No position + short enabled → fall through to open a short
+                    # (passes through same gates as BUY below)
 
-                # Skip duplicate BUY if we already have an open/pending trade for this symbol
+                # Skip duplicate if we already have an open/pending trade for this symbol
                 if signal.symbol in self._open_trades:
                     logger.info(
                         "engine.signal_skipped_existing",
@@ -730,7 +744,7 @@ class TradingEngine:
                     )
                     continue
 
-                # Limit BUY executions per cycle to prevent 240s timeout
+                # Limit executions per cycle to prevent 240s timeout
                 if buys_this_cycle >= max_buys_per_cycle:
                     logger.info(
                         "engine.signal_skipped_cycle_limit",
@@ -738,7 +752,10 @@ class TradingEngine:
                         buys_this_cycle=buys_this_cycle,
                     )
                     continue
-                await self._execute_buy(signal, qty, price, db_signal.id)
+                if signal.action == SignalAction.BUY:
+                    await self._execute_buy(signal, qty, price, db_signal.id)
+                elif signal.action == SignalAction.SELL:
+                    await self._execute_short(signal, qty, price, db_signal.id)
                 buys_this_cycle += 1
 
             await self._db.commit()
@@ -817,11 +834,16 @@ class TradingEngine:
     async def _handle_sell_signal(
         self, signal: TradingSignal, price: float, signal_id: int
     ) -> None:
-        """Handle a SELL signal by closing the open trade for the symbol."""
+        """Handle a SELL signal: close existing long or open short position."""
         open_trade = self._open_trades.get(signal.symbol)
         if not open_trade:
-            logger.info("engine.no_position_to_sell", symbol=signal.symbol)
-            return
+            # No existing position — open a SHORT if enabled
+            if not settings.enable_short_selling:
+                return
+            # Route through the same gates as BUY (risk eval, etc.)
+            # The signal flow will call _execute_short
+            logger.info("engine.short_signal", symbol=signal.symbol, confidence=round(signal.confidence, 3))
+            return  # Handled by main signal loop below
 
         if not self._trading_enabled:
             logger.info(
@@ -1389,6 +1411,158 @@ class TradingEngine:
 
         await self._db.flush()
 
+    def _calculate_short_stop(self, filled_price: float, symbol: str) -> float:
+        """Calculate stop price for short position (ABOVE entry)."""
+        atr_val = self._get_atr(symbol)
+        stop_mult, _, _ = self._get_regime_multipliers()
+        if atr_val and atr_val > 0:
+            atr_raw = atr_val * filled_price if atr_val < 1.0 else atr_val
+            effective_atr_mult = settings.atr_stop_multiplier * stop_mult
+            stop_price = round(filled_price + effective_atr_mult * atr_raw, 2)
+            max_stop = round(filled_price * (1 + settings.min_stop_loss_pct / 100), 2)
+            stop_price = max(stop_price, max_stop)
+        else:
+            stop_price = round(filled_price * 1.03, 2)
+        return stop_price
+
+    def _calculate_short_take_profit(self, filled_price: float, symbol: str) -> float:
+        """Calculate take-profit for short position (BELOW entry)."""
+        atr_val = self._get_atr(symbol)
+        _, tp_mult, _ = self._get_regime_multipliers()
+        if atr_val and atr_val > 0:
+            atr_raw = atr_val * filled_price if atr_val < 1.0 else atr_val
+            effective_tp_mult = settings.atr_take_profit_multiplier * tp_mult
+            tp_price = round(filled_price - effective_tp_mult * atr_raw, 2)
+            min_tp = round(filled_price * (1 - settings.min_take_profit_pct / 100), 2)
+            tp_price = min(tp_price, min_tp)
+        else:
+            tp_price = round(filled_price * 0.97, 2)
+        return tp_price
+
+    async def _execute_short(
+        self, signal: TradingSignal, quantity: int, price: float, signal_id: int
+    ) -> None:
+        """Execute a SHORT signal: sell to open a short position."""
+        # R:R gate for shorts (inverted)
+        stop_price_est = self._calculate_short_stop(price, signal.symbol)
+        tp_est = self._calculate_short_take_profit(price, signal.symbol)
+        risk = stop_price_est - price
+        reward = price - tp_est
+        if risk > 0 and (reward / risk) < 1.5:
+            logger.info(
+                "engine.insufficient_rr_short",
+                symbol=signal.symbol,
+                rr=round(reward / risk, 2),
+                price=price,
+                stop=stop_price_est,
+                tp=tp_est,
+            )
+            return
+
+        trade = Trade(
+            symbol=signal.symbol,
+            side=TradeSide.SELL,
+            quantity=quantity,
+            status=TradeStatus.PENDING,
+            strategy_name=signal.strategy_name,
+            signal_id=signal_id,
+        )
+        self._db.add(trade)
+        await self._db.flush()
+
+        max_retries = settings.order_max_retries
+        timeout_secs = settings.order_fill_timeout_seconds
+        filled = False
+
+        for attempt in range(1, max_retries + 1):
+            result = await self._order_manager.submit_order(
+                trade_id=trade.id,
+                symbol=signal.symbol,
+                side="SELL",
+                quantity=quantity,
+                order_type=OrderType.MARKET,
+                expected_price=price,
+            )
+
+            mapped_status = self._order_manager._map_status(result.status)
+            if mapped_status in (OrderStatus.SUBMITTED, OrderStatus.PARTIALLY_FILLED):
+                for _ in range(timeout_secs):
+                    await asyncio.sleep(1)
+                    try:
+                        updated = await self._broker.get_order_status(result.order_id)
+                        mapped_status = self._order_manager._map_status(updated.status)
+                        if mapped_status == OrderStatus.FILLED:
+                            result = updated
+                            break
+                        if mapped_status in (OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.ERROR):
+                            result = updated
+                            break
+                    except Exception:
+                        break
+
+            if mapped_status == OrderStatus.FILLED:
+                filled = True
+                break
+
+            if mapped_status == OrderStatus.SUBMITTED:
+                try:
+                    await self._broker.cancel_order(result.order_id)
+                except Exception:
+                    pass
+
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+
+        if filled:
+            trade.status = TradeStatus.OPEN
+            trade.quantity = quantity
+            trade.entry_price = result.filled_price
+            self._open_trades[signal.symbol] = trade
+            self._daily_symbol_trades[signal.symbol] = self._daily_symbol_trades.get(signal.symbol, 0) + 1
+            logger.info(
+                "engine.short_opened",
+                symbol=signal.symbol,
+                quantity=quantity,
+                price=result.filled_price,
+            )
+
+            # Place stop-loss for short (BUY stop ABOVE entry)
+            await asyncio.sleep(2)
+            if result.filled_price:
+                stop_price = self._calculate_short_stop(result.filled_price, signal.symbol)
+                trade.stop_loss = stop_price
+                # For shorts, stop is a BUY order
+                try:
+                    await self._order_manager.submit_order(
+                        trade_id=trade.id,
+                        symbol=signal.symbol,
+                        side="BUY",
+                        quantity=quantity,
+                        order_type=OrderType.STOP,
+                        stop_price=stop_price,
+                    )
+                except Exception:
+                    logger.exception("engine.short_stop_failed", symbol=signal.symbol)
+                    self._pending_stop_retries.add(signal.symbol)
+
+                tp = self._calculate_short_take_profit(result.filled_price, signal.symbol)
+                trade.take_profit = tp
+
+            alert_msg = (
+                f"{signal.symbol}: SHORT {quantity} @ {result.filled_price:.2f}\n"
+                f"Strategy: {signal.strategy_name} (confidence: {signal.confidence:.0%})"
+            )
+            if trade.stop_loss and trade.take_profit:
+                alert_msg += f"\nStop: {trade.stop_loss:.2f} | Target: {trade.take_profit:.2f}"
+            await send_alert("Short Opened", alert_msg)
+        else:
+            trade.status = TradeStatus.CANCELLED
+            self._cancelled_cooldown[signal.symbol] = datetime.now(UTC)
+            self._daily_symbol_trades[signal.symbol] = self._daily_symbol_trades.get(signal.symbol, 0) + 1
+            logger.warning("engine.short_cancelled", symbol=signal.symbol, attempts=max_retries)
+
+        await self._db.flush()
+
     async def _handle_order_fill(self, fill: dict) -> None:
         """Update trade record when a pending order is filled via polling."""
         trade_id = fill["trade_id"]
@@ -1623,8 +1797,11 @@ class TradingEngine:
             if current_price is None:
                 continue
 
-            if current_price >= trade.take_profit:
-                # Partial profit-taking: sell half, trail the rest
+            # Direction-aware TP: longs = price above target, shorts = price below target
+            is_short = trade.side == TradeSide.SELL
+            tp_hit = (current_price <= trade.take_profit) if is_short else (current_price >= trade.take_profit)
+            if tp_hit:
+                # Partial profit-taking: close half, trail the rest
                 partial_qty = trade.quantity // 2
                 already_partial = trade.partial_taken
 
@@ -1642,17 +1819,18 @@ class TradingEngine:
                         current_price=current_price,
                         take_profit=trade.take_profit,
                     )
-                    # Cancel existing stop before partial sell
+                    # Cancel existing stop before partial close
                     await self._cancel_pending_sells(symbol)
                     remaining = len(self._order_manager._pending_by_symbol.get(symbol, set()))
                     if remaining > 0:
                         logger.warning("engine.tp_cancel_incomplete", symbol=symbol)
                         continue
 
+                    close_side = "BUY" if is_short else "SELL"
                     result = await self._order_manager.submit_order(
                         trade_id=trade.id,
                         symbol=symbol,
-                        side="SELL",
+                        side=close_side,
                         quantity=partial_qty,
                         order_type=OrderType.MARKET,
                         expected_price=current_price,
@@ -1660,23 +1838,37 @@ class TradingEngine:
                     result = await self._await_market_fill(result)
                     mapped_status = self._order_manager._map_status(result.status)
                     if mapped_status == OrderStatus.FILLED and result.filled_price:
-                        # Update trade: reduce quantity, keep position open
                         trade.quantity -= partial_qty
                         trade.partial_taken = True
-                        # Move stop to breakeven + buffer on remaining shares
-                        breakeven = round(trade.entry_price * 1.001, 2)
+                        # Move stop to breakeven + buffer
+                        if is_short:
+                            breakeven = round(trade.entry_price * 0.999, 2)
+                        else:
+                            breakeven = round(trade.entry_price * 1.001, 2)
                         trade.stop_loss = breakeven
-                        # Set new take-profit 50% higher than original distance
+                        # Set new take-profit 50% further than original distance
                         original_distance = trade.take_profit - trade.entry_price
                         trade.take_profit = round(
                             trade.entry_price + original_distance * 1.5, 2
                         )
                         # Place new stop for reduced quantity
                         await asyncio.sleep(0.5)
-                        await self._place_stop_verified(
-                            trade.id, symbol, trade.quantity, breakeven
-                        )
-                        partial_pnl = (result.filled_price - trade.entry_price) * partial_qty
+                        stop_side = "BUY" if is_short else "SELL"
+                        try:
+                            await self._order_manager.submit_order(
+                                trade_id=trade.id,
+                                symbol=symbol,
+                                side=stop_side,
+                                quantity=trade.quantity,
+                                order_type=OrderType.STOP,
+                                stop_price=breakeven,
+                            )
+                        except Exception:
+                            logger.exception("engine.partial_stop_failed", symbol=symbol)
+                        if is_short:
+                            partial_pnl = (trade.entry_price - result.filled_price) * partial_qty
+                        else:
+                            partial_pnl = (result.filled_price - trade.entry_price) * partial_qty
                         await send_alert(
                             "Partial Profit Taken",
                             f"{symbol}: sold {partial_qty} @ {result.filled_price:.2f} "
@@ -1700,10 +1892,11 @@ class TradingEngine:
                     logger.warning("engine.tp_cancel_incomplete", symbol=symbol)
                     continue
 
+                close_side = "BUY" if is_short else "SELL"
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
                     symbol=symbol,
-                    side="SELL",
+                    side=close_side,
                     quantity=trade.quantity,
                     order_type=OrderType.MARKET,
                     expected_price=current_price,
@@ -1719,9 +1912,10 @@ class TradingEngine:
                     self._last_close_time[symbol] = datetime.now(UTC)
                     self._record_adaptive_outcome(trade)
                     partial_note = " (2nd target)" if trade.partial_taken else ""
+                    action_word = "covered" if is_short else "sold"
                     await send_alert(
                         "Take-Profit Hit",
-                        f"{symbol}: sold {trade.quantity} @ {result.filled_price:.2f} "
+                        f"{symbol}: {action_word} {trade.quantity} @ {result.filled_price:.2f} "
                         f"(target {trade.take_profit:.2f}, entry {trade.entry_price:.2f}){partial_note}",
                     )
 
@@ -1764,10 +1958,12 @@ class TradingEngine:
                 # Mark as pending to prevent duplicate sells
                 self._eod_sell_pending.add(symbol)
 
+                is_short = trade.side == TradeSide.SELL
+                close_side = "BUY" if is_short else "SELL"
                 result = await self._order_manager.submit_order(
                     trade_id=trade.id,
                     symbol=symbol,
-                    side="SELL",
+                    side=close_side,
                     quantity=trade.quantity,
                     order_type=OrderType.MARKET,
                     expected_price=current_price,
@@ -1782,14 +1978,14 @@ class TradingEngine:
                     self._eod_sell_pending.discard(symbol)
                     self._last_close_time[symbol] = datetime.now(UTC)
                     pnl = trade.realized_pnl or 0.0
-                    # Record outcome for dynamic strategy weight adjustment
                     for strategy in self._strategies:
                         if hasattr(strategy, "record_outcome"):
                             strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
                     self._record_adaptive_outcome(trade)
+                    action_word = "covered short" if is_short else "closed"
                     await send_alert(
                         "EOD Close",
-                        f"{symbol}: closed at {result.filled_price:.2f} "
+                        f"{symbol}: {action_word} at {result.filled_price:.2f} "
                         f"({mins_left:.0f} min before close, P&L: {pnl:+.2f})",
                     )
 
