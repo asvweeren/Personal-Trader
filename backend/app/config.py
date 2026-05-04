@@ -77,66 +77,73 @@ class Settings(BaseSettings):
         "IWM,EFA,VGK,DIA,XLF,XLE"
     )
     initial_capital: float = 5000.0
-    max_daily_loss_pct: float = 2.0         # Tight daily loss halt for day trading
-    max_position_pct: float = 8.0           # Adequate position sizing for day trading
-    max_open_positions: int = 8             # More concurrent positions for diversification
-    min_cash_reserve_pct: float = 20.0      # Day trades close EOD, less reserve needed
+
+    # ── SWING TRADING CONFIGURATION ──
+    # Hold positions for days/weeks, follow established daily trends.
+    # Fewer trades (0-2/day), wider stops, no forced EOD close.
+
+    max_daily_loss_pct: float = 5.0          # Wider daily drawdown for swing holds
+    max_position_pct: float = 12.0           # Larger positions, fewer concurrent
+    max_open_positions: int = 5              # Concentrated portfolio
+    min_cash_reserve_pct: float = 15.0       # Swing uses more capital
     max_sector_concentration_pct: float = 35.0
-    max_total_exposure_pct: float = 60.0    # Max 60% deployed at once (day trading)
-    confidence_threshold: float = 0.60      # Momentum strategy threshold
-    max_hourly_loss_pct: float = 1.0        # Tighter hourly loss circuit breaker
+    max_total_exposure_pct: float = 80.0     # More capital deployed (held longer)
+    confidence_threshold: float = 0.60       # Signal threshold
+    max_hourly_loss_pct: float = 3.0         # Wider hourly tolerance for swing
 
     # Short selling
-    enable_short_selling: bool = True       # Allow opening short positions
-    max_short_exposure_pct: float = 30.0    # Max 30% of portfolio in shorts
+    enable_short_selling: bool = True        # Profit from downtrends
+    max_short_exposure_pct: float = 30.0     # Max 30% of portfolio in shorts
 
-    # ATR-based stop-loss — room to breathe for intraday volatility
-    atr_stop_multiplier: float = 2.0        # 2x ATR stop for intraday
-    min_stop_loss_pct: float = 1.5          # 1.5% minimum stop distance
+    # ATR-based stop-loss — daily ATR, wide stops for multi-day holds
+    atr_stop_multiplier: float = 3.0         # 3x daily ATR stop for swing
+    min_stop_loss_pct: float = 3.0           # 3% minimum stop distance
 
-    # Take-profit — 3x ATR gives 1.5 R:R with 2x ATR stop
-    atr_take_profit_multiplier: float = 3.0  # 3x ATR target (1.5 R:R vs 2x ATR stop)
-    min_take_profit_pct: float = 2.0         # 2% minimum target
+    # Take-profit — 6x ATR gives 2:1 R:R with 3x ATR stop
+    atr_take_profit_multiplier: float = 6.0  # 6x daily ATR target
+    min_take_profit_pct: float = 5.0         # 5% minimum target
 
     # Order execution
-    order_fill_timeout_seconds: int = 15     # Max seconds to wait for market order fill
-    order_max_retries: int = 2               # Max retry attempts for failed market orders
-    max_slippage_pct: float = 0.5            # Alert when slippage exceeds this %
-    consecutive_loss_alert_threshold: int = 5  # Alert after N consecutive losing trades
+    order_fill_timeout_seconds: int = 15
+    order_max_retries: int = 2
+    max_slippage_pct: float = 0.5
+    consecutive_loss_alert_threshold: int = 3
 
-    # Trade management — day trading: fast entries, fast exits
-    min_hold_minutes: int = 10               # 10 min minimum hold (day trading)
-    reentry_cooldown_minutes: int = 30       # 30 min cooldown (can retrade same day)
-    max_trades_per_symbol_per_day: int = 2   # Can trade same symbol twice per day
+    # Trade management — swing: slow entries, patient exits
+    min_hold_minutes: int = 480              # 8 hours minimum hold
+    reentry_cooldown_minutes: int = 1440     # 1 day cooldown before re-entry
+    max_trades_per_symbol_per_day: int = 1   # One trade per symbol per day
 
-    # End-of-day close — close during regular hours (not after-hours, paper can't fill)
-    eod_close_enabled: bool = True           # Never hold overnight
-    eod_close_minutes_before: int = 15       # Close 15 min before regular close
-    eod_use_regular_close: bool = True       # Use regular session close (16:00 ET) not extended
+    # EOD close — DISABLED for swing trading (hold overnight)
+    eod_close_enabled: bool = False          # Allow overnight holds
+    eod_close_minutes_before: int = 15
+    eod_use_regular_close: bool = True
 
-    # Day trading — force close any position older than 1 day as safety net
-    max_hold_days: int = 1                   # Force close after 1 day (safety net for EOD failures)
-    max_new_positions_per_day: int = 6       # More trades allowed for day trading
+    # Swing: hold up to 14 calendar days, max 2 new positions per day
+    max_hold_days: int = 14                  # Force close after 2 weeks
+    max_new_positions_per_day: int = 2       # Selective: max 2 new entries per day
 
-    # Extended hours trading (pre-market 4:00 AM + after-hours to 8:00 PM ET)
-    extended_hours_enabled: bool = True      # Trade pre-market and after-hours
+    # Extended hours
+    extended_hours_enabled: bool = False     # Trade only regular hours for swing
 
-    # Smart entry/exit filters
-    opening_range_minutes: int = 30          # Wait 30 min — data shows 9AM open trades lose 89%
-    breakeven_stop_trigger_pct: float = 1.5  # Move stop to breakeven at +1.5% (let winners develop)
-    stale_position_hours: float = 3.0        # Close stale positions after 3 hours
-    stale_position_min_pnl_pct: float = 0.2  # Close if < 0.2% P&L after 3h
-    partial_profit_enabled: bool = True      # Take 50% profit at first target
-    min_relative_volume: float = 1.2         # Require above-average volume (conviction)
+    # Smart entry/exit filters — relaxed for swing
+    opening_range_minutes: int = 0           # No opening range filter for swing
+    breakeven_stop_trigger_pct: float = 3.0  # Move stop to breakeven at +3%
+    stale_position_hours: float = 0          # Disabled — let swing trades develop
+    stale_position_min_pnl_pct: float = 1.0
+    partial_profit_enabled: bool = True      # Take 50% at first TP target
+    min_relative_volume: float = 1.0         # Relaxed volume filter for swing
 
     # Smart execution
     smart_execution_enabled: bool = True
     vwap_duration_minutes: int = 15
     twap_slices: int = 4
 
-    # Progressive trailing stop tiers: "gain%:trail%,..."
-    # Wider tiers to let winners run before trailing kicks in
-    trailing_stop_tiers: str = "2.0:1.0,3.0:1.5,5.0:2.0,8.0:2.5"
+    # Cycle interval (minutes) — how often the engine checks for signals
+    cycle_interval_minutes: int = 60         # Hourly cycles for swing trading
+
+    # Progressive trailing stop tiers — wider for swing moves
+    trailing_stop_tiers: str = "5.0:2.0,8.0:3.0,12.0:4.0,20.0:5.0"
 
     # Symbol blacklist: comma-separated symbols to never trade
     # Blacklisted biggest losers from historical performance analysis

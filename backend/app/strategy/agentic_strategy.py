@@ -74,7 +74,7 @@ class AgenticStrategy(Strategy):
         lines = []
         now = datetime.now(UTC)
         lines.append(f"Timestamp: {now.strftime('%Y-%m-%d %H:%M UTC')}")
-        lines.append(f"Strategy: Day trading (all positions close EOD)")
+        lines.append(f"Strategy: Swing trading (hold days/weeks)")
         lines.append("")
 
         for symbol in symbols:
@@ -88,50 +88,52 @@ class AgenticStrategy(Strategy):
 
             rsi = feat.get("rsi_14", 0)
             macd_hist = feat.get("macd_histogram", 0)
-            vwap = feat.get("vwap", 0)
             adx = feat.get("adx_14", 0)
             atr = feat.get("atr_14", 0)
-            vol_ratio = feat.get("vol_ratio_10_20", 1.0)
-            ema10 = feat.get("ema_10", 0)
-            momentum = feat.get("return_1d", 0)
+            sma20 = feat.get("sma_20", 0)
+            sma50 = feat.get("sma_50", 0)
+            momentum_10d = feat.get("momentum_10d", 0)
+            momentum_20d = feat.get("momentum_20d", 0)
+            vol_ratio = feat.get("volume_ratio", feat.get("volume_sma_20", 1.0))
             bb_width = feat.get("bb_width", 0)
-            sentiment = feat.get("sentiment_score", 0)
+            regime = feat.get("regime_bull_bear", 0)
+            return_5d = feat.get("return_5d", 0)
 
-            # ema_10/vwap are normalized: positive = price above
-            above_vwap = "above" if vwap < 0 else "below" if vwap > 0 else "at"
-            above_ema = "above" if ema10 > 0 else "below" if ema10 < 0 else "at"
+            # SMA ratios: positive = price above SMA
+            trend_sma50 = "ABOVE" if sma50 > 0 else "BELOW"
+            trend_sma20 = "ABOVE" if sma20 > 0 else "BELOW"
+            regime_str = "BULL" if regime == 1.0 else "BEAR" if regime == -1.0 else "NEUTRAL"
 
             line = (
-                f"{symbol}: ${price:.2f} | RSI={rsi:.0f} | MACD_hist={macd_hist:.4f} | "
-                f"VWAP={above_vwap} | ADX={adx:.0f} | ATR={atr:.3f} | "
-                f"Vol={vol_ratio:.1f}x | EMA10={above_ema} | "
-                f"Momentum={momentum:.2%} | BB_width={bb_width:.3f}"
+                f"{symbol}: ${price:.2f} | SMA50={trend_sma50}({sma50:+.1%}) | "
+                f"SMA20={trend_sma20}({sma20:+.1%}) | RSI={rsi:.0f} | "
+                f"MACD_hist={macd_hist:.4f} | ADX={adx:.0f} | "
+                f"5d={return_5d:+.1%} | 10d={momentum_10d:+.1%} | 20d={momentum_20d:+.1%} | "
+                f"Vol={vol_ratio:.1f}x | Regime={regime_str}"
             )
-            if sentiment:
-                line += f" | Sentiment={sentiment:.2f}"
             lines.append(line)
 
         return "\n".join(lines)
 
     def _build_prompt(self, market_context: str) -> str:
-        return f"""You are an expert day trader analyzing US stocks. Identify the best BUY and SELL (short) opportunities.
+        return f"""You are an expert swing trader analyzing US stocks for multi-day positions.
 
 RULES:
-- Day trading only: all positions close at end of day
-- BUY: strong bullish momentum (RSI 50-70, MACD accelerating, above VWAP/EMA, ADX>25, volume surge)
-- SELL (short): strong bearish momentum (RSI<40, MACD declining, below VWAP/EMA, ADX>25, negative momentum)
-- Maximum 3 recommendations total (BUY + SELL combined)
-- Confidence: 0.80 = good, 0.85 = strong, 0.90+ = excellent. Minimum 0.75.
-- In bearish markets prefer SELL signals over BUY
-- Avoid: low volume (<1.0x), weak ADX (<20), unclear direction
+- Swing trading: hold positions for days to weeks. Be patient and selective.
+- BUY: established uptrend (above SMA50, RSI 40-60, MACD positive, positive multi-day momentum, ADX>20)
+- SELL (short): established downtrend (below SMA50, RSI 40-60, MACD negative, negative momentum, ADX>20)
+- Maximum 2 recommendations per analysis. Quality over quantity.
+- Confidence: 0.80 = good trend setup, 0.85 = strong trend, 0.90+ = textbook entry. Minimum 0.75.
+- Avoid: ranging markets (ADX<20), overbought entries (RSI>70), oversold shorts (RSI<30)
+- Prefer stocks with clear multi-week trends (10d/20d momentum aligned)
 
-MARKET DATA:
+MARKET DATA (daily indicators):
 {market_context}
 
 Respond with ONLY a valid JSON array:
 {{"symbol": "TICKER", "action": "BUY" or "SELL", "confidence": 0.75-0.95, "reasoning": "one sentence"}}
 
-If no opportunities: []
+If no clear setups: []
 JSON:"""
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:

@@ -364,9 +364,9 @@ class TradingEngine:
                                 sub._current_regime = regime_state
 
             all_signals: list[TradingSignal] = []
-            # Active: momentum (rules-based) + agentic (Claude AI) + ml_xgboost (confirmation).
-            # Skip: sentiment (legacy, replaced by agentic), ensemble, nn_lstm.
-            _skip_strategies = {"ensemble", "sentiment", "nn_lstm"}
+            # Active: swing (daily trend following) + agentic (Claude AI).
+            # Skip: momentum (intraday), ml_xgboost (broken), sentiment, ensemble, nn_lstm.
+            _skip_strategies = {"momentum", "ml_xgboost", "ensemble", "sentiment", "nn_lstm"}
             strategies_to_run = [
                 s for s in self._strategies if s.name not in _skip_strategies
             ]

@@ -84,15 +84,17 @@ def stop_scheduler() -> None:
 def schedule_data_pipeline(pipeline) -> None:
     """Register data pipeline jobs on the scheduler."""
 
-    # Refresh technical features every 5 minutes during market hours
+    # Refresh technical features at cycle interval (matches trading cycle)
+    from app.config import settings as cfg
+    feat_interval = cfg.cycle_interval_minutes
     scheduler.add_job(
         pipeline.refresh_features,
-        IntervalTrigger(minutes=5),
+        IntervalTrigger(minutes=feat_interval),
         id="refresh_features",
         replace_existing=True,
         max_instances=1,
     )
-    logger.info("scheduler.job_added", job="refresh_features", interval="5min")
+    logger.info("scheduler.job_added", job="refresh_features", interval=f"{feat_interval}min")
 
     # Refresh sentiment every 60 minutes (cost-optimized: ~15 symbols, market hours only)
     scheduler.add_job(
@@ -117,14 +119,16 @@ def schedule_data_pipeline(pipeline) -> None:
 
 def schedule_trading_engine(engine) -> None:
     """Register trading engine cycle on the scheduler."""
+    from app.config import settings as cfg
+    cycle_interval = cfg.cycle_interval_minutes
     scheduler.add_job(
         engine.run_cycle,
-        IntervalTrigger(minutes=5),
+        IntervalTrigger(minutes=cycle_interval),
         id="trading_cycle",
         replace_existing=True,
         max_instances=1,
     )
-    logger.info("scheduler.job_added", job="trading_cycle", interval="5min")
+    logger.info("scheduler.job_added", job="trading_cycle", interval=f"{cycle_interval}min")
 
 
 def schedule_heartbeat() -> None:

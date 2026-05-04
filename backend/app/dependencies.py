@@ -89,16 +89,16 @@ def load_strategies() -> list[Strategy]:
     """Load and initialize all available trading strategies."""
     strategies: list[Strategy] = []
 
-    # 1. Momentum Strategy (primary for day trading)
+    # 1. Swing Strategy (primary — daily trend following)
     try:
-        from app.strategy.momentum_strategy import MomentumStrategy
-        momentum = MomentumStrategy(confidence_threshold=settings.confidence_threshold)
-        strategies.append(momentum)
-        logger.info("strategies.loaded", name="momentum")
+        from app.strategy.swing_strategy import SwingStrategy
+        swing = SwingStrategy(confidence_threshold=settings.confidence_threshold)
+        strategies.append(swing)
+        logger.info("strategies.loaded", name="swing")
     except Exception:
-        logger.exception("strategies.load_error", name="momentum")
+        logger.exception("strategies.load_error", name="swing")
 
-    # 2. ML Strategy (XGBoost) - secondary confirmation
+    # 2. ML Strategy (XGBoost) - disabled until retrained for swing timeframe
     try:
         from app.strategy.ml_strategy import MLStrategy
         ml = MLStrategy()
@@ -107,7 +107,7 @@ def load_strategies() -> list[Strategy]:
     except Exception:
         logger.exception("strategies.load_error", name="ml_xgboost")
 
-    # 3. Agentic Strategy (Claude AI trading agent) — primary AI-driven strategy
+    # 3. Agentic Strategy (Claude AI) — swing trading decisions
     if settings.anthropic_api_key:
         try:
             from app.strategy.agentic_strategy import AgenticStrategy
