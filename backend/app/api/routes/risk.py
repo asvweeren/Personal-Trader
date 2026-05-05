@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, select
@@ -35,11 +37,14 @@ async def get_risk_metrics(
                 from app.risk.var_calculator import VaRCalculator
                 pipeline = get_data_pipeline()
                 var_calc = VaRCalculator()
-                var_result = await var_calc.calculate_portfolio_var(
-                    portfolio, pipeline._market_data
+                var_result = await asyncio.wait_for(
+                    var_calc.calculate_portfolio_var(
+                        portfolio, pipeline._market_data
+                    ),
+                    timeout=3.0,
                 )
                 var_data = var_result.to_dict()
-            except Exception:
+            except (asyncio.TimeoutError, Exception):
                 pass
 
         return {
