@@ -59,10 +59,6 @@ class VaRCalculator:
         if total_value <= 0:
             return VaRResult()
 
-        # Collect historical returns for each position
-        portfolio_returns = []
-        position_weights: dict[str, float] = {}
-
         from app.dependencies import should_skip_eu
 
         # Use the same cache key the trading engine uses ("1 Y", "1 day") so we
@@ -70,10 +66,10 @@ class VaRCalculator:
         # on every dashboard poll (which hits IBKR's 60-req/10-min pacing limit
         # and triggers Error 366 cancellations).
         eligible = [p for p in portfolio.positions if not should_skip_eu(p.symbol)]
-        for pos in eligible:
-            position_weights[pos.symbol] = (
-                pos.market_value / total_value if total_value > 0 else 0.0
-            )
+        position_weights = {
+            p.symbol: (p.market_value / total_value if total_value > 0 else 0.0)
+            for p in eligible
+        }
 
         async def _fetch(symbol: str):
             return symbol, await market_data.get_historical_data(
@@ -85,47 +81,30 @@ class VaRCalculator:
             return_exceptions=True,
         )
 
+        # Per-symbol return series, trimmed to the lookback window
+        per_symbol_returns: dict[str, np.ndarray] = {}
         for result in results:
             if isinstance(result, Exception):
                 logger.debug("var.data_error", error=str(result))
                 continue
             symbol, df = result
-            weight = position_weights.get(symbol, 0.0)
             if df is None or len(df) < 5:
                 continue
-            # Slice to the lookback window for VaR
             closes = df["close"].values.astype(float)[-(lookback_days + 1):]
             if len(closes) < 5:
                 continue
-            returns = np.diff(closes) / closes[:-1]
-            if len(portfolio_returns) == 0:
-                portfolio_returns = [
-                    np.zeros(len(returns)) for _ in range(len(returns))
-                ]
-            min_len = min(len(returns), len(portfolio_returns))
-            for j in range(min_len):
-                portfolio_returns[j] = (
-                    portfolio_returns[j] + weight * returns[-(min_len - j)]
-                    if isinstance(portfolio_returns[j], np.ndarray)
-                    else weight * returns[-(min_len - j)]
-                )
+            per_symbol_returns[symbol] = np.diff(closes) / closes[:-1]
 
-        if not portfolio_returns or all(
-            isinstance(r, np.ndarray) and np.all(r == 0) for r in portfolio_returns
-        ):
-            # Fallback: use a simple estimation
+        if not per_symbol_returns:
             return self._estimate_var(total_value, portfolio)
 
-        # Convert to simple array
-        try:
-            returns_array = np.array([
-                float(r) if not isinstance(r, np.ndarray) else float(np.sum(r))
-                for r in portfolio_returns
-            ])
-            returns_array = returns_array[np.isfinite(returns_array)]
-        except Exception:
-            return self._estimate_var(total_value, portfolio)
+        # Align series on the shortest length (right-align: most recent days)
+        min_len = min(len(r) for r in per_symbol_returns.values())
+        portfolio_returns = np.zeros(min_len)
+        for symbol, returns in per_symbol_returns.items():
+            portfolio_returns += position_weights.get(symbol, 0.0) * returns[-min_len:]
 
+        returns_array = portfolio_returns[np.isfinite(portfolio_returns)]
         if len(returns_array) < 5:
             return self._estimate_var(total_value, portfolio)
 
