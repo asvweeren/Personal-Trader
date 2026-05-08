@@ -1,5 +1,6 @@
 """Value at Risk (VaR) and stress testing for portfolio risk assessment."""
 
+import asyncio
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -64,39 +65,50 @@ class VaRCalculator:
 
         from app.dependencies import should_skip_eu
 
-        for pos in portfolio.positions:
-            # Skip EU symbols when EU trading is disabled (no IBKR data subscription)
-            if should_skip_eu(pos.symbol):
+        # Use the same cache key the trading engine uses ("1 Y", "1 day") so we
+        # share its in-memory cache instead of issuing parallel fresh IBKR requests
+        # on every dashboard poll (which hits IBKR's 60-req/10-min pacing limit
+        # and triggers Error 366 cancellations).
+        eligible = [p for p in portfolio.positions if not should_skip_eu(p.symbol)]
+        for pos in eligible:
+            position_weights[pos.symbol] = (
+                pos.market_value / total_value if total_value > 0 else 0.0
+            )
+
+        async def _fetch(symbol: str):
+            return symbol, await market_data.get_historical_data(
+                symbol, duration="1 Y", bar_size="1 day"
+            )
+
+        results = await asyncio.gather(
+            *[_fetch(p.symbol) for p in eligible],
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.debug("var.data_error", error=str(result))
                 continue
-
-            weight = pos.market_value / total_value if total_value > 0 else 0.0
-            position_weights[pos.symbol] = weight
-
-            try:
-                df = await market_data.get_historical_data(
-                    pos.symbol,
-                    duration=f"{lookback_days} D",
-                    bar_size="1 day",
+            symbol, df = result
+            weight = position_weights.get(symbol, 0.0)
+            if df is None or len(df) < 5:
+                continue
+            # Slice to the lookback window for VaR
+            closes = df["close"].values.astype(float)[-(lookback_days + 1):]
+            if len(closes) < 5:
+                continue
+            returns = np.diff(closes) / closes[:-1]
+            if len(portfolio_returns) == 0:
+                portfolio_returns = [
+                    np.zeros(len(returns)) for _ in range(len(returns))
+                ]
+            min_len = min(len(returns), len(portfolio_returns))
+            for j in range(min_len):
+                portfolio_returns[j] = (
+                    portfolio_returns[j] + weight * returns[-(min_len - j)]
+                    if isinstance(portfolio_returns[j], np.ndarray)
+                    else weight * returns[-(min_len - j)]
                 )
-                if df is not None and len(df) >= 5:
-                    closes = df["close"].values.astype(float)
-                    returns = np.diff(closes) / closes[:-1]
-                    if len(portfolio_returns) == 0:
-                        portfolio_returns = [
-                            np.zeros(len(returns))
-                            for _ in range(len(returns))
-                        ]
-                    # Weight the returns
-                    min_len = min(len(returns), len(portfolio_returns))
-                    for j in range(min_len):
-                        portfolio_returns[j] = (
-                            portfolio_returns[j] + weight * returns[-(min_len - j)]
-                            if isinstance(portfolio_returns[j], np.ndarray)
-                            else weight * returns[-(min_len - j)]
-                        )
-            except Exception:
-                logger.debug("var.data_error", symbol=pos.symbol, exc_info=True)
-                continue
 
         if not portfolio_returns or all(
             isinstance(r, np.ndarray) and np.all(r == 0) for r in portfolio_returns
