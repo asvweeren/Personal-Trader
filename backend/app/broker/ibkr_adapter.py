@@ -18,6 +18,7 @@ from app.broker.base import (
     Position,
     round_to_tick,
 )
+from app.config import settings
 from app.core.exceptions import BrokerConnectionError, BrokerOrderError
 from app.risk.market_hours import parse_symbol_for_ibkr
 
