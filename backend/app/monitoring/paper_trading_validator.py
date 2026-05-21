@@ -6,6 +6,7 @@ anomalies, generates summary reports, and determines live-trading readiness.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -24,6 +25,31 @@ from app.models.trade import Trade, TradeStatus
 from app.models.validation_report import ValidationReport
 
 logger = structlog.get_logger()
+
+
+def _json_safe(obj: Any) -> Any:
+    """Recursively replace NaN/inf floats with None so values can be stored in JSONB."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def _finite_or(value: Any, fallback: float) -> float:
+    """Return value as float, or fallback if NaN/inf/None."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if math.isnan(v) or math.isinf(v):
+        return fallback
+    return v
+
 
 # ── Readiness thresholds ────────────────────────────────────
 
@@ -500,15 +526,15 @@ class PaperTradingValidator:
             win_rate=summary.win_rate,
             daily_pnl=summary.daily_pnl,
             cumulative_pnl=summary.cumulative_pnl,
-            sharpe_ratio=cumulative.get("sharpe_ratio", 0.0),
-            max_drawdown_pct=cumulative.get("max_drawdown_pct", 0.0),
-            profit_factor=cumulative.get("profit_factor", 0.0),
+            sharpe_ratio=_finite_or(cumulative.get("sharpe_ratio"), 0.0),
+            max_drawdown_pct=_finite_or(cumulative.get("max_drawdown_pct"), 0.0),
+            profit_factor=_finite_or(cumulative.get("profit_factor"), 0.0),
             portfolio_value=summary.portfolio_value,
             backtest_deviation_pct=deviation,
-            anomalies=[a.__dict__ for a in summary.anomalies] if summary.anomalies else None,
-            metrics_snapshot=cumulative,
+            anomalies=_json_safe([a.__dict__ for a in summary.anomalies]) if summary.anomalies else None,
+            metrics_snapshot=_json_safe(cumulative),
             risk_events_count=risk_count,
-            risk_events_summary=risk_summary if risk_summary else None,
+            risk_events_summary=_json_safe(risk_summary) if risk_summary else None,
             summary_text="\n".join(narrative_parts),
         )
 
