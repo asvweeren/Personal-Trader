@@ -17,6 +17,11 @@ logger = structlog.get_logger()
 # Columns that are not features (raw OHLCV + timestamp)
 NON_FEATURE_COLS = {"timestamp", "open", "high", "low", "close", "volume"}
 
+# Features excluded due to instability / heavy drift across market regimes.
+# macd_cross is a discrete -1/0/1 signal that walk-forward consistently flags
+# as drifting on out-of-sample data.
+EXCLUDED_FEATURES = {"macd_cross"}
+
 
 @dataclass
 class DataSplit:
@@ -89,10 +94,10 @@ def create_binary_target(
 
 
 def select_feature_columns(df: pd.DataFrame) -> list[str]:
-    """Select all computed feature columns (exclude raw OHLCV and target)."""
+    """Select all computed feature columns (exclude raw OHLCV, target, and unstable features)."""
     return [
         c for c in df.columns
-        if c not in NON_FEATURE_COLS and c != "target"
+        if c not in NON_FEATURE_COLS and c not in EXCLUDED_FEATURES and c != "target"
     ]
 
 

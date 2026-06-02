@@ -103,7 +103,7 @@ async def train_on_window(
         try:
             feat_df = compute_features(df)
             feat_df["target"] = create_binary_target(
-                feat_df, forward_periods=5, buy_threshold=0.015,
+                feat_df, forward_periods=10, buy_threshold=0.015,
             )
             feat_df = feat_df.dropna()
             if len(feat_df) >= 60:

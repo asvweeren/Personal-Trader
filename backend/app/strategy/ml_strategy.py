@@ -52,12 +52,14 @@ class MLStrategy(Strategy):
         self,
         confidence_threshold: float = 0.60,
         model_path: str | None = None,
+        allowed_symbols: set[str] | None = None,
     ):
         self._model = None
         self._confidence_threshold = confidence_threshold
         self._feature_columns: list[str] = []
         self._model_metadata: dict = {}
         self._model_path = Path(model_path) if model_path else MODEL_DIR / "xgboost_model.pkl"
+        self._allowed_symbols = allowed_symbols
         self._load_model()
 
     def _load_model(self) -> None:
@@ -158,10 +160,10 @@ class MLStrategy(Strategy):
 
         For a binary classifier, random chance is 50%. The gate should be
         well above that to ensure only high-conviction signals pass.
-        Raised from 0.58 to 0.68 after analysis showed 37.7% BUY precision
-        was generating too many false positives.
+        Lowered from 0.68 to 0.55 after walk-forward showed 0.68 produced
+        0 trades on most out-of-sample windows.
         """
-        return 0.68
+        return 0.55
 
     def get_regime_threshold(self) -> float:
         """Get confidence threshold adjusted for current market regime.
@@ -233,6 +235,8 @@ class MLStrategy(Strategy):
         )
 
         for symbol, df in market_data.ohlcv.items():
+            if self._allowed_symbols and symbol not in self._allowed_symbols:
+                continue
             if df.empty or len(df) < 50:
                 continue
 

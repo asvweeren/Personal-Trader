@@ -149,12 +149,24 @@ class Settings(BaseSettings):
     # Blacklisted biggest losers from historical performance analysis
     symbol_blacklist: str = "SHOP,DDOG,LRCX,MCHP,RI.PA,SAP.DE"
 
+    # Per-strategy symbol allowlist for ml_xgboost.
+    # Walk-forward showed the model has edge on SPY/QQQ/NVDA but loses on
+    # AAPL/MSFT. Empty string = no filter (legacy behaviour).
+    ml_xgboost_allowed_symbols: str = "SPY,QQQ,NVDA"
+
     @property
     def symbol_blacklist_set(self) -> set[str]:
         """Parse symbol_blacklist string into a set."""
         if not self.symbol_blacklist:
             return set()
         return {s.strip() for s in self.symbol_blacklist.split(",") if s.strip()}
+
+    @property
+    def ml_xgboost_allowed_symbols_set(self) -> set[str]:
+        """Parse ml_xgboost_allowed_symbols string into a set. Empty = no filter."""
+        if not self.ml_xgboost_allowed_symbols:
+            return set()
+        return {s.strip() for s in self.ml_xgboost_allowed_symbols.split(",") if s.strip()}
 
     @property
     def trailing_stop_tiers_parsed(self) -> list[tuple[float, float]]:

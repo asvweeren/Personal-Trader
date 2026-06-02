@@ -98,12 +98,16 @@ def load_strategies() -> list[Strategy]:
     except Exception:
         logger.exception("strategies.load_error", name="swing")
 
-    # 2. ML Strategy (XGBoost) - disabled until retrained for swing timeframe
+    # 2. ML Strategy (XGBoost) — restricted to symbols with proven edge (walk-forward)
     try:
         from app.strategy.ml_strategy import MLStrategy
-        ml = MLStrategy()
+        ml = MLStrategy(allowed_symbols=settings.ml_xgboost_allowed_symbols_set or None)
         strategies.append(ml)
-        logger.info("strategies.loaded", name="ml_xgboost")
+        logger.info(
+            "strategies.loaded",
+            name="ml_xgboost",
+            allowed_symbols=sorted(settings.ml_xgboost_allowed_symbols_set) or "all",
+        )
     except Exception:
         logger.exception("strategies.load_error", name="ml_xgboost")
 
