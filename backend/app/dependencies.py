@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, timedelta
 
 import structlog
@@ -25,6 +26,10 @@ _risk_manager: RiskManager | None = None
 _performance_tracker: PerformanceTracker | None = None
 _data_pipeline: DataPipeline | None = None
 _trading_engine: TradingEngine | None = None
+# Serializes engine initialization so concurrent callers (app startup vs. the
+# broker watchdog's lazy init) can never build two TradingEngine instances that
+# both start(), reconcile, and manage orders on the same account.
+_engine_init_lock = asyncio.Lock()
 
 
 def get_event_bus() -> EventBus:
@@ -232,8 +237,21 @@ async def get_startup_symbols() -> list[str]:
 async def init_trading_engine(db: AsyncSession) -> TradingEngine:
     """Initialize the trading engine with all dependencies."""
     global _trading_engine
+    # Fast path: already initialized, no need to take the lock.
     if _trading_engine is not None:
         return _trading_engine
+
+    async with _engine_init_lock:
+        # Re-check under the lock: a concurrent caller may have finished
+        # initializing while we were awaiting the lock.
+        if _trading_engine is not None:
+            return _trading_engine
+        return await _build_trading_engine(db)
+
+
+async def _build_trading_engine(db: AsyncSession) -> TradingEngine:
+    """Construct the TradingEngine singleton. Must be called under _engine_init_lock."""
+    global _trading_engine
 
     broker = get_broker()
     risk_manager = get_risk_manager()

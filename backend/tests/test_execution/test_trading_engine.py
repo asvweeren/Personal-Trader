@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -133,6 +134,27 @@ async def test_engine_start_error():
     with pytest.raises(Exception):
         await engine.start()
     assert engine.state == EngineState.ERROR
+
+
+@pytest.mark.asyncio
+async def test_engine_start_idempotent():
+    """A second start() while already running must not re-run reconciliation.
+
+    Both the app startup path and the broker watchdog can reach start() during
+    the initialization race window; re-running stale-order reconciliation and
+    open-trade loading against the same account is a real order-integrity risk.
+    """
+    engine = make_engine()
+    await engine.start()
+    assert engine.state == EngineState.RUNNING
+
+    engine._reconcile_stale_orders = AsyncMock()
+    engine._load_open_trades = AsyncMock()
+    await engine.start()
+
+    engine._reconcile_stale_orders.assert_not_awaited()
+    engine._load_open_trades.assert_not_awaited()
+    assert engine.state == EngineState.RUNNING
 
 
 # ── Cycle tests ──────────────────────────────────────────────
@@ -444,3 +466,37 @@ async def test_cycle_strategy_error_continues():
     # Should not raise - error from FailStrategy is caught
     await engine.run_cycle()
     assert engine._cycle_count == 1
+
+
+# ── Engine init concurrency ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_init_trading_engine_single_build_under_concurrency(monkeypatch):
+    """Concurrent init callers must share one engine, never build two.
+
+    App startup and the broker watchdog can both call init_trading_engine()
+    around the same time. Without serialization each would construct its own
+    TradingEngine and both would start()/reconcile against the same account.
+    """
+    import app.dependencies as deps
+
+    monkeypatch.setattr(deps, "_trading_engine", None)
+    build_count = 0
+    sentinel = MagicMock(name="engine")
+
+    async def fake_build(db):
+        nonlocal build_count
+        build_count += 1
+        await asyncio.sleep(0.01)  # widen the race window between callers
+        deps._trading_engine = sentinel
+        return sentinel
+
+    monkeypatch.setattr(deps, "_build_trading_engine", fake_build)
+
+    results = await asyncio.gather(
+        *[deps.init_trading_engine(MagicMock()) for _ in range(5)]
+    )
+
+    assert build_count == 1
+    assert all(r is sentinel for r in results)

@@ -138,7 +138,17 @@ class TradingEngine:
         logger.info("engine.symbols_updated", old=old, new=symbols)
 
     async def start(self) -> None:
-        """Initialize the trading engine."""
+        """Initialize the trading engine.
+
+        Idempotent: if the engine is already starting or running (e.g. both the
+        app startup path and the broker watchdog reach start() during the
+        initialization race window), the second call is a no-op so daily
+        tracking, open-trade loading, and stale-order reconciliation never run
+        twice against the same account.
+        """
+        if self._state in (EngineState.STARTING, EngineState.RUNNING):
+            logger.info("engine.start_skipped_already_active", state=self._state.value)
+            return
         self._state = EngineState.STARTING
 
         try:
