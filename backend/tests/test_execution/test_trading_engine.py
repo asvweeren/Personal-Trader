@@ -12,7 +12,7 @@ from app.broker.base import (
 )
 from app.data.market_data import MarketSnapshot
 from app.execution.engine import EngineState, TradingEngine
-from app.models.trade import Trade, TradeSide
+from app.models.trade import Trade, TradeSide, TradeStatus
 from app.monitoring.performance import PerformanceTracker
 from app.risk.manager import RiskDecision, RiskManager
 from app.strategy.base import SignalAction, Strategy, TradingSignal
@@ -466,6 +466,88 @@ async def test_cycle_strategy_error_continues():
     # Should not raise - error from FailStrategy is caught
     await engine.run_cycle()
     assert engine._cycle_count == 1
+
+
+# ── Naked-position guard (stop-loss placement failure) ───────
+
+
+def _open_trade(symbol="AAPL", side=TradeSide.BUY, qty=10, entry=150.0, stop=145.0):
+    t = MagicMock(spec=Trade)
+    t.id = 1
+    t.symbol = symbol
+    t.side = side
+    t.quantity = qty
+    t.status = TradeStatus.OPEN
+    t.entry_price = entry
+    t.stop_loss = stop
+    t.strategy_name = "mock"
+    t.realized_pnl = 0.0
+    t.commission = 0.0
+    t.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    t.closed_at = None
+    return t
+
+
+@pytest.mark.asyncio
+async def test_pending_stop_retry_flattens_after_max_attempts():
+    """A position whose stop keeps failing must be flattened, never held naked forever."""
+    engine = make_engine(trading_enabled=True)
+    await engine.start()
+
+    trade = _open_trade()
+    engine._open_trades["AAPL"] = trade
+    engine._pending_stop_retries.add("AAPL")
+
+    engine._place_stop_verified = AsyncMock(return_value=False)
+    engine._flatten_position = AsyncMock()
+    engine._broker.cancel_open_orders_for_symbol = AsyncMock()
+
+    # Attempts below the threshold do not flatten yet.
+    for _ in range(engine._MAX_STOP_RETRY_ATTEMPTS - 1):
+        await engine._retry_pending_stops()
+    engine._flatten_position.assert_not_called()
+    assert "AAPL" in engine._pending_stop_retries
+
+    # The attempt that reaches the threshold flattens and clears the queue.
+    await engine._retry_pending_stops()
+    engine._flatten_position.assert_called_once()
+    assert "AAPL" not in engine._pending_stop_retries
+    assert "AAPL" not in engine._stop_retry_attempts
+
+
+@pytest.mark.asyncio
+async def test_pending_stop_retry_success_clears_queue():
+    """A successful stop placement clears the retry queue and never flattens."""
+    engine = make_engine(trading_enabled=True)
+    await engine.start()
+
+    trade = _open_trade()
+    engine._open_trades["AAPL"] = trade
+    engine._pending_stop_retries.add("AAPL")
+
+    engine._place_stop_verified = AsyncMock(return_value=True)
+    engine._flatten_position = AsyncMock()
+    engine._broker.cancel_open_orders_for_symbol = AsyncMock()
+
+    await engine._retry_pending_stops()
+
+    engine._flatten_position.assert_not_called()
+    assert "AAPL" not in engine._pending_stop_retries
+
+
+@pytest.mark.asyncio
+async def test_flatten_position_closes_long():
+    """_flatten_position market-closes the position and removes it from tracking."""
+    engine = make_engine(trading_enabled=True)
+    await engine.start()
+
+    trade = _open_trade()
+    engine._open_trades["AAPL"] = trade
+    engine._broker.cancel_open_orders_for_symbol = AsyncMock()
+
+    await engine._flatten_position("AAPL", trade, "no_stop_protection")
+
+    assert "AAPL" not in engine._open_trades
 
 
 # ── Engine init concurrency ──────────────────────────────────

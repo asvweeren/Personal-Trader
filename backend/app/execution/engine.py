@@ -53,6 +53,11 @@ class EngineState(StrEnum):
 class TradingEngine:
     """Orchestrates the trading loop: data -> strategy -> risk -> execution."""
 
+    # Consecutive failed stop-placement retries tolerated before an unprotected
+    # position is force-closed (retries run on the 1-minute safety loop, so this
+    # bounds naked exposure to ~this many minutes).
+    _MAX_STOP_RETRY_ATTEMPTS = 5
+
     def __init__(
         self,
         broker: BrokerAdapter,
@@ -93,6 +98,9 @@ class TradingEngine:
         self._last_stop_update_price: dict[str, float] = {}
         # Track trades that need stop-loss placement retry (IBKR race condition)
         self._pending_stop_retries: set[str] = set()
+        # Count consecutive failed stop-placement retries per symbol; once this
+        # reaches _MAX_STOP_RETRY_ATTEMPTS the unprotected position is flattened.
+        self._stop_retry_attempts: dict[str, int] = {}
         # Track per-symbol daily trade count to prevent over-trading
         self._daily_symbol_trades: dict[str, int] = {}
         # Cache snapshot features for ATR lookups in _execute_buy
@@ -1373,45 +1381,66 @@ class TradingEngine:
             # Place stop-loss (ATR-based with min floor, adjusted for slippage)
             # Brief pause to let IBKR register the filled position before placing stop
             await asyncio.sleep(2)
-            if result.filled_price:
-                stop_price = self._calculate_atr_stop(result.filled_price, signal.symbol)
+            stop_ok = False
+            # Fall back to the expected price if the broker did not report a fill
+            # price, so a filled position is never left without a stop attempt.
+            entry_ref = result.filled_price or price
+            if entry_ref:
+                stop_price = self._calculate_atr_stop(entry_ref, signal.symbol)
 
                 # Slippage correction: tighten stop if we got a worse entry
-                slippage = result.filled_price - price if price > 0 else 0
+                slippage = result.filled_price - price if (result.filled_price and price > 0) else 0
                 if slippage > 0:
                     # Bought higher than expected — full adjustment to maintain original risk
                     stop_price = round(stop_price + slippage, 2)
 
                 trade.stop_loss = stop_price
-                await self._place_stop_verified(
+                stop_ok = await self._place_stop_verified(
                     trade.id, signal.symbol, quantity, stop_price
                 )
 
                 # Set take-profit target (ATR-based with min floor, adjusted for slippage)
                 atr_val = self._get_atr(signal.symbol)
                 _, tp_mult, _ = self._get_regime_multipliers()
-                tp = calculate_take_profit(result.filled_price, signal.symbol, atr_val, regime_multiplier=tp_mult)
+                tp = calculate_take_profit(entry_ref, signal.symbol, atr_val, regime_multiplier=tp_mult)
                 # If we got a worse entry, shift TP up to maintain R:R ratio
                 if slippage > 0:
                     tp = round(tp + slippage, 2)
                 # Enforce minimum risk:reward — raise TP if geometry falls short
-                risk = result.filled_price - stop_price
+                risk = entry_ref - stop_price
                 if risk > 0:
                     min_tp = round(
-                        result.filled_price + settings.min_risk_reward_ratio * risk, 2
+                        entry_ref + settings.min_risk_reward_ratio * risk, 2
                     )
                     if min_tp > tp:
                         tp = min_tp
                 trade.take_profit = tp
 
-            # Alert: Trade Opened
+            # Alert: Trade Opened — only advertise the stop if the broker confirmed it
             alert_msg = (
                 f"{signal.symbol}: BUY {quantity} @ {result.filled_price:.2f}\n"
                 f"Strategy: {signal.strategy_name} (confidence: {signal.confidence:.0%})"
             )
-            if trade.stop_loss and trade.take_profit:
+            if stop_ok and trade.stop_loss and trade.take_profit:
                 alert_msg += f"\nStop: {trade.stop_loss:.2f} | Target: {trade.take_profit:.2f}"
+            elif trade.take_profit:
+                alert_msg += (
+                    f"\n⚠️ Stop NOT confirmed (retrying) | Target: {trade.take_profit:.2f}"
+                )
             await send_alert("Trade Opened", alert_msg)
+
+            # Naked-position guard: a filled entry with no confirmed broker stop is
+            # unprotected. The 1-minute safety loop retries the stop and flattens
+            # the position if it cannot be protected — alert the operator now.
+            if not stop_ok:
+                self._pending_stop_retries.add(signal.symbol)
+                await send_alert(
+                    "⚠️ Stop-loss NOT placed",
+                    f"{signal.symbol}: position is OPEN without a confirmed broker "
+                    f"stop-loss. Auto-retry runs every minute; the position will be "
+                    f"force-closed if it cannot be protected.",
+                    critical=True,
+                )
         else:
             trade.status = TradeStatus.CANCELLED
             self._cancelled_cooldown[signal.symbol] = datetime.now(UTC)
@@ -1672,6 +1701,7 @@ class TradingEngine:
             trade = self._open_trades.get(symbol)
             if not trade or not trade.stop_loss or trade.stop_loss <= 0:
                 self._pending_stop_retries.discard(symbol)
+                self._stop_retry_attempts.pop(symbol, None)
                 continue
 
             # Cancel any stale stop orders before retrying
@@ -1686,6 +1716,89 @@ class TradingEngine:
             )
             if success:
                 self._pending_stop_retries.discard(symbol)
+                self._stop_retry_attempts.pop(symbol, None)
+                continue
+
+            # Still unprotected — escalate. After enough failed attempts the
+            # position cannot be safely held, so flatten it rather than run
+            # naked indefinitely.
+            attempts = self._stop_retry_attempts.get(symbol, 0) + 1
+            self._stop_retry_attempts[symbol] = attempts
+            if attempts >= self._MAX_STOP_RETRY_ATTEMPTS:
+                logger.error(
+                    "engine.stop_unrecoverable_flattening",
+                    symbol=symbol,
+                    attempts=attempts,
+                )
+                await self._flatten_position(symbol, trade, "no_stop_protection")
+                self._pending_stop_retries.discard(symbol)
+                self._stop_retry_attempts.pop(symbol, None)
+
+    async def _flatten_position(self, symbol: str, trade: Trade, reason: str) -> None:
+        """Market-close a single position that could not be protected by a stop.
+
+        Handles both longs (close with SELL) and shorts (close with BUY). Used
+        as the last-resort escalation when stop placement keeps failing, so a
+        filled position is never held unprotected indefinitely.
+        """
+        if trade.status != TradeStatus.OPEN or trade.entry_price is None:
+            return
+        if symbol in self._eod_sell_pending:
+            return
+
+        close_side = "BUY" if trade.side == TradeSide.SELL else "SELL"
+        current_price = trade.stop_loss or trade.entry_price
+
+        self._eod_sell_pending.add(symbol)
+        try:
+            # Clear any stale/partial stop orders before flattening.
+            try:
+                await self._broker.cancel_open_orders_for_symbol(symbol)
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+            result = await self._order_manager.submit_order(
+                trade_id=trade.id,
+                symbol=symbol,
+                side=close_side,
+                quantity=trade.quantity,
+                order_type=OrderType.MARKET,
+                expected_price=current_price,
+            )
+            result = await self._await_market_fill(result)
+            mapped_status = self._order_manager._map_status(result.status)
+            if mapped_status == OrderStatus.FILLED and result.filled_price:
+                await self._portfolio_tracker.record_trade_close(
+                    trade, result.filled_price
+                )
+                self._open_trades.pop(symbol, None)
+                self._eod_sell_pending.discard(symbol)
+                self._last_close_time[symbol] = datetime.now(UTC)
+                self._record_adaptive_outcome(trade)
+                pnl = trade.realized_pnl or 0.0
+                logger.error(
+                    "engine.flattened_no_stop",
+                    symbol=symbol,
+                    reason=reason,
+                    price=result.filled_price,
+                    pnl=round(pnl, 2),
+                )
+                await send_alert(
+                    "Position Force-Closed (no stop)",
+                    f"{symbol}: could not place a protective stop-loss after "
+                    f"repeated retries; position force-closed @ "
+                    f"{result.filled_price:.2f} (P&L {pnl:+.2f}).",
+                    critical=True,
+                )
+            else:
+                self._eod_sell_pending.discard(symbol)
+                logger.error(
+                    "engine.flatten_failed", symbol=symbol, status=result.status
+                )
+        except Exception:
+            self._eod_sell_pending.discard(symbol)
+            logger.exception("engine.flatten_error", symbol=symbol)
 
     async def _check_trailing_stops(self, prices: dict[str, float]) -> None:
         """Update trailing stops for open positions using progressive tiers."""

@@ -590,6 +590,18 @@ def schedule_eod_safety_close(engine) -> None:
             except Exception:
                 logger.exception("scheduler.daily_loss_check_error")
 
+            # Naked-position guard — retry failed stop-loss placements every
+            # minute so a filled position without a confirmed broker stop is
+            # protected (or flattened) within ~1 min instead of waiting for the
+            # next hourly trading cycle. Runs regardless of swing/EOD mode.
+            if engine._pending_stop_retries:
+                try:
+                    if is_any_market_open(list(engine._pending_stop_retries)):
+                        await engine._retry_pending_stops()
+                        await engine._db.commit()
+                except Exception:
+                    logger.exception("scheduler.stop_retry_error")
+
             # Skip EOD close if disabled (swing trading mode)
             if not cfg.eod_close_enabled:
                 return
