@@ -1340,10 +1340,24 @@ class TradingEngine:
                 )
                 break
 
-            # Not filled — cancel pending order before retry
+            # Not filled — cancel pending order before retry. Confirm the cancel
+            # actually took: the order can fill in the race between the timeout
+            # expiring and the cancel landing, and retrying then would place a
+            # DUPLICATE position. If it filled anyway, accept the fill.
             if mapped_status == OrderStatus.SUBMITTED:
                 try:
                     await self._broker.cancel_order(result.order_id)
+                    await asyncio.sleep(1)
+                    confirm = await self._broker.get_order_status(result.order_id)
+                    if self._order_manager._map_status(confirm.status) == OrderStatus.FILLED:
+                        result = confirm
+                        filled = True
+                        logger.warning(
+                            "engine.fill_after_cancel_race",
+                            symbol=signal.symbol,
+                            order_id=result.order_id,
+                        )
+                        break
                 except Exception:
                     pass
 

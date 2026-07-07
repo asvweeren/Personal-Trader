@@ -550,6 +550,54 @@ async def test_flatten_position_closes_long():
     assert "AAPL" not in engine._open_trades
 
 
+@pytest.mark.asyncio
+async def test_buy_accepts_fill_after_cancel_race_no_duplicate():
+    """If an order fills during the cancel/retry race, accept it — never duplicate."""
+    from app.config import settings
+
+    saved = {
+        "t": settings.order_fill_timeout_seconds,
+        "r": settings.order_max_retries,
+        "tp": settings.min_take_profit_pct,
+        "o": settings.opening_range_minutes,
+    }
+    settings.order_fill_timeout_seconds = 1
+    settings.order_max_retries = 2
+    settings.min_take_profit_pct = 8.0
+    settings.opening_range_minutes = 0
+    try:
+        engine = make_engine(trading_enabled=True)
+        await engine.start()
+
+        # place_order returns SUBMITTED (IBKR does not fill synchronously).
+        engine._broker.place_order = AsyncMock(
+            return_value=OrderResult(order_id="o1", status="SUBMITTED")
+        )
+        # The poll window sees SUBMITTED; after the cancel the order is FILLED.
+        engine._broker.get_order_status = AsyncMock(side_effect=[
+            OrderResult(order_id="o1", status="SUBMITTED"),
+            OrderResult(order_id="o1", status="FILLED",
+                        filled_price=150.0, filled_quantity=10),
+        ])
+        engine._broker.cancel_order = AsyncMock(return_value=True)
+        engine._place_stop_verified = AsyncMock(return_value=True)
+
+        sig = TradingSignal(
+            symbol="AAPL", action=SignalAction.BUY,
+            confidence=0.9, strategy_name="mock",
+        )
+        await engine._execute_buy(sig, quantity=10, price=150.0, signal_id=1)
+
+        # One position, and the order was placed exactly once (no duplicate retry).
+        assert "AAPL" in engine._open_trades
+        assert engine._broker.place_order.await_count == 1
+    finally:
+        settings.order_fill_timeout_seconds = saved["t"]
+        settings.order_max_retries = saved["r"]
+        settings.min_take_profit_pct = saved["tp"]
+        settings.opening_range_minutes = saved["o"]
+
+
 # ── Engine init concurrency ──────────────────────────────────
 
 
