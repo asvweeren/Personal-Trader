@@ -387,7 +387,15 @@ def schedule_broker_watchdog(broker) -> None:
 
     async def broker_watchdog():
         try:
-            connected = await broker.is_connected()
+            # Bound the connectivity probe: a half-dead IBKR socket can make
+            # is_connected() hang forever, which — with max_instances=1 — would
+            # wedge every future watchdog run and leave a dropped connection
+            # unrecovered (root cause of the silent multi-hour trading outages).
+            try:
+                connected = await asyncio.wait_for(broker.is_connected(), timeout=15)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning("watchdog.is_connected_timeout")
+                connected = False
             if not connected:
                 now = time.monotonic()
                 if _broker_down_since["ts"] is None:
@@ -422,9 +430,13 @@ def schedule_broker_watchdog(broker) -> None:
                 if not reconnecting:
                     logger.warning("watchdog.broker_offline", down_seconds=int(down_seconds))
                     try:
-                        await broker.connect()
+                        # IBKR connect can legitimately take ~30s; cap it so a
+                        # stuck handshake cannot occupy the watchdog slot forever.
+                        await asyncio.wait_for(broker.connect(), timeout=90)
                         logger.info("watchdog.broker_reconnected")
                         _broker_down_since["ts"] = None
+                    except (TimeoutError, asyncio.TimeoutError):
+                        logger.warning("watchdog.reconnect_timeout")
                     except Exception:
                         logger.warning("watchdog.reconnect_failed", exc_info=True)
                 else:
@@ -466,11 +478,25 @@ def schedule_broker_watchdog(broker) -> None:
             except RuntimeError:
                 pass  # Engine not initialized — start it
 
+            # Run lazy init as a detached, guarded task rather than awaiting it
+            # inside the watchdog job. Engine/pipeline startup awaits slow broker
+            # RPCs; holding the (max_instances=1) watchdog slot open for its full
+            # duration blocks every subsequent connectivity check. Detaching it
+            # keeps the reconnect loop responsive; the timeout resets the guard so
+            # a hung init retries on a later cycle instead of latching forever.
             _initializing["active"] = True
-            try:
-                await _lazy_init_engine()
-            finally:
-                _initializing["active"] = False
+
+            async def _guarded_lazy_init():
+                try:
+                    await asyncio.wait_for(_lazy_init_engine(), timeout=240)
+                except (TimeoutError, asyncio.TimeoutError):
+                    logger.warning("watchdog.lazy_init_timeout")
+                except Exception:
+                    logger.warning("watchdog.lazy_init_error", exc_info=True)
+                finally:
+                    _initializing["active"] = False
+
+            asyncio.create_task(_guarded_lazy_init())
 
         except Exception:
             logger.warning("scheduler.watchdog_error", exc_info=True)
