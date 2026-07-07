@@ -61,6 +61,29 @@ def test_position_size_exceeded():
         check_position_size(portfolio, order_value=1500, max_position_pct=20.0)
 
 
+def test_position_size_absolute_notional_cap():
+    """An order under the pct limit is still rejected if it exceeds the absolute cap."""
+    from app.config import settings
+
+    # Large portfolio so pct check passes, but a hard notional cap blocks it.
+    portfolio = make_portfolio(total_value=250_000, cash=250_000)
+    with patch.object(settings, "max_position_notional", 10_000):
+        # 8% of portfolio (passes pct) but €20k > €10k cap → rejected
+        with pytest.raises(PositionSizeLimitExceeded):
+            check_position_size(portfolio, order_value=20_000, max_position_pct=20.0)
+        # Under the cap → allowed
+        check_position_size(portfolio, order_value=5_000, max_position_pct=20.0)
+
+
+def test_position_size_notional_cap_disabled_by_default():
+    """max_position_notional=0 disables the absolute cap (pct check only)."""
+    from app.config import settings
+
+    portfolio = make_portfolio(total_value=250_000, cash=250_000)
+    with patch.object(settings, "max_position_notional", 0.0):
+        check_position_size(portfolio, order_value=40_000, max_position_pct=20.0)
+
+
 # ── Max positions ─────────────────────────────────────────────
 
 

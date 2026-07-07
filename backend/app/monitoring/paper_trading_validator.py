@@ -53,11 +53,14 @@ def _finite_or(value: Any, fallback: float) -> float:
 
 # ── Readiness thresholds ────────────────────────────────────
 
-MIN_TRADING_DAYS = 20
+MIN_TRADING_DAYS = 20  # ~4 trading weeks
 MIN_SHARPE_RATIO = 0.5
 MAX_DRAWDOWN_PCT = 15.0
 MIN_WIN_RATE = 40.0
-MIN_PROFIT_FACTOR = 1.2
+# Cost buffer: paper trades record zero commission/spread, so a paper profit
+# factor barely above 1.0 would be a real-money loss. Require a margin so the
+# edge survives live IBKR commissions + spread + slippage.
+MIN_PROFIT_FACTOR = 1.3
 MAX_BACKTEST_DEVIATION_PCT = 30.0
 
 

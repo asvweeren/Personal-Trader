@@ -88,20 +88,33 @@ class Settings(BaseSettings):
     min_cash_reserve_pct: float = 15.0       # Swing uses more capital
     max_sector_concentration_pct: float = 35.0
     max_total_exposure_pct: float = 80.0     # More capital deployed (held longer)
-    confidence_threshold: float = 0.60       # Signal threshold
+    confidence_threshold: float = 0.68       # Selective: raised from 0.60 to cut low-conviction noise
     max_hourly_loss_pct: float = 3.0         # Wider hourly tolerance for swing
+
+    # Daily-loss halt behaviour — enforced continuously, not just on new signals
+    daily_loss_force_close: bool = True      # Force-close all positions when daily loss halt fires
+
+    # Absolute notional cap per position (0 = disabled). Belt-and-suspenders
+    # backstop on top of max_position_pct so a single oversized order can never
+    # be placed regardless of how position size was computed.
+    max_position_notional: float = 0.0
 
     # Short selling
     enable_short_selling: bool = True        # Profit from downtrends
     max_short_exposure_pct: float = 30.0     # Max 30% of portfolio in shorts
 
-    # ATR-based stop-loss — daily ATR, wide stops for multi-day holds
-    atr_stop_multiplier: float = 3.0         # 3x daily ATR stop for swing
+    # ATR-based stop-loss — daily ATR, wide stops for multi-day holds.
+    # Stop must sit OUTSIDE normal daily noise or it gets tagged on ruis.
+    atr_stop_multiplier: float = 2.5         # 2.5x daily ATR stop for swing
     min_stop_loss_pct: float = 3.0           # 3% minimum stop distance
 
-    # Take-profit — 6x ATR gives 2:1 R:R with 3x ATR stop
-    atr_take_profit_multiplier: float = 6.0  # 6x daily ATR target
-    min_take_profit_pct: float = 5.0         # 5% minimum target
+    # Take-profit — 4x ATR / 4.5% floor gives ~1.5:1 R:R (realistic within hold
+    # window). Was 6x/5% which was almost never reached (1 TP hit in 178 trades).
+    atr_take_profit_multiplier: float = 4.0  # 4x daily ATR target
+    min_take_profit_pct: float = 4.5         # 4.5% minimum target
+
+    # Minimum risk:reward gate — reject entries whose TP/stop geometry is worse
+    min_risk_reward_ratio: float = 1.5
 
     # Order execution
     order_fill_timeout_seconds: int = 15
@@ -127,7 +140,7 @@ class Settings(BaseSettings):
     extended_hours_enabled: bool = False     # Trade only regular hours for swing
 
     # Smart entry/exit filters — relaxed for swing
-    opening_range_minutes: int = 0           # No opening range filter for swing
+    opening_range_minutes: int = 30          # Skip entries in first 30 min after open (US open 14:00 UTC was worst hour: -€23k)
     breakeven_stop_trigger_pct: float = 3.0  # Move stop to breakeven at +3%
     stale_position_hours: float = 0          # Disabled — let swing trades develop
     stale_position_min_pnl_pct: float = 1.0
@@ -153,6 +166,12 @@ class Settings(BaseSettings):
     # Walk-forward showed the model has edge on SPY/QQQ/NVDA but loses on
     # AAPL/MSFT. Empty string = no filter (legacy behaviour).
     ml_xgboost_allowed_symbols: str = "SPY,QQQ,NVDA"
+
+    # Triple-barrier labelling for ML training — label entries by whether the
+    # take-profit is hit before the stop within the hold window (matches live
+    # exit geometry). Default off; enable to retrain a barrier-aware model, then
+    # validate before relying on it. Uses min_take_profit_pct / min_stop_loss_pct.
+    ml_use_triple_barrier: bool = False
 
     @property
     def symbol_blacklist_set(self) -> set[str]:

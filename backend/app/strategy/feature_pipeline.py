@@ -44,6 +44,12 @@ class FeaturePipelineConfig:
     sell_threshold: float = -0.008  # -0.8% = SELL (class 0)
     # Binary mode: BUY vs NOT_BUY (ignores sell_threshold)
     binary_mode: bool = True
+    # Triple-barrier labelling — label by whether TP is hit before SL within the
+    # holding window, matching production exit geometry. When True, overrides the
+    # close-to-close binary target. tp/sl are fractions (0.045 = 4.5%).
+    use_triple_barrier: bool = False
+    tb_take_profit_pct: float = 0.045
+    tb_stop_loss_pct: float = 0.03
     # Feature selection
     correlation_threshold: float = 0.85  # Remove features above this correlation
     min_variance: float = 1e-8  # Remove near-constant features
@@ -90,6 +96,63 @@ def create_binary_target(
     forward_return = future_close / df["close"] - 1
     target = (forward_return > buy_threshold).astype(int)
     target.name = "target"
+    return target
+
+
+def create_triple_barrier_target(
+    df: pd.DataFrame,
+    forward_periods: int = 10,
+    take_profit_pct: float = 0.045,
+    stop_loss_pct: float = 0.03,
+) -> pd.Series:
+    """Label 1=BUY if the take-profit barrier is hit before the stop barrier.
+
+    This matches what the system actually trades: a position is opened, a stop
+    and a take-profit are set, and the trade resolves at whichever barrier the
+    price touches first within the holding window. Training on close-to-close
+    forward return (create_binary_target) teaches the model direction but not
+    whether a trade *survives its stop* — which is where the live edge leaked.
+
+    For each bar, scans the next `forward_periods` bars:
+      - hits TP (high >= entry*(1+tp)) before SL (low <= entry*(1-sl)) → 1
+      - hits SL first, or neither and closes below entry → 0
+    The final `forward_periods` rows get NaN (insufficient lookahead) and are
+    dropped downstream.
+    """
+    entry = df["close"].to_numpy(dtype=float)
+    high = df["high"].to_numpy(dtype=float)
+    low = df["low"].to_numpy(dtype=float)
+    close = df["close"].to_numpy(dtype=float)
+    n = len(df)
+    labels = np.full(n, np.nan)
+
+    for i in range(n - forward_periods):
+        e = entry[i]
+        if e <= 0:
+            continue
+        tp_level = e * (1 + take_profit_pct)
+        sl_level = e * (1 - stop_loss_pct)
+        outcome = 0
+        for j in range(i + 1, i + 1 + forward_periods):
+            hit_tp = high[j] >= tp_level
+            hit_sl = low[j] <= sl_level
+            if hit_tp and hit_sl:
+                # Both barriers touched in the same bar — assume the stop fills
+                # first (conservative; avoids over-optimistic labels).
+                outcome = 0
+                break
+            if hit_tp:
+                outcome = 1
+                break
+            if hit_sl:
+                outcome = 0
+                break
+        else:
+            # Neither barrier hit — label by whether it closed above entry
+            outcome = int(close[i + forward_periods] > e)
+        labels[i] = outcome
+
+    target = pd.Series(labels, index=df.index, name="target")
     return target
 
 
@@ -167,14 +230,25 @@ def time_based_split(
     df: pd.DataFrame,
     train_pct: float = 0.70,
     val_pct: float = 0.15,
+    embargo: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split data chronologically (no shuffling - critical for time series)."""
+    """Split data chronologically (no shuffling - critical for time series).
+
+    Args:
+        embargo: Number of rows to drop from the END of each preceding block
+            (train, val) so their forward-looking targets cannot peek into the
+            next block. With a forward-return label of N periods, the last N
+            rows of train have targets computed from the first N rows of val —
+            classic look-ahead leakage that inflates validation/test accuracy.
+            Set embargo >= forward_periods to purge it.
+    """
     n = len(df)
     train_end = int(n * train_pct)
     val_end = int(n * (train_pct + val_pct))
 
-    train = df.iloc[:train_end]
-    val = df.iloc[train_end:val_end]
+    embargo = max(0, int(embargo))
+    train = df.iloc[: max(0, train_end - embargo)]
+    val = df.iloc[train_end : max(train_end, val_end - embargo)]
     test = df.iloc[val_end:]
 
     return train, val, test
@@ -232,7 +306,14 @@ def prepare_ml_data(
         features_df = compute_features(raw_df)
 
         # 2. Create target
-        if config.binary_mode:
+        if config.use_triple_barrier:
+            features_df["target"] = create_triple_barrier_target(
+                features_df,
+                forward_periods=config.forward_periods,
+                take_profit_pct=config.tb_take_profit_pct,
+                stop_loss_pct=config.tb_stop_loss_pct,
+            )
+        elif config.binary_mode:
             features_df["target"] = create_binary_target(
                 features_df,
                 forward_periods=config.forward_periods,
@@ -264,9 +345,11 @@ def prepare_ml_data(
 
     logger.info("feature_pipeline.features_selected", count=len(feature_cols))
 
-    # 5. Time-based split
+    # 5. Time-based split with an embargo equal to the label horizon so the
+    #    forward-return targets near each boundary can't leak into the next set.
     train_df, val_df, test_df = time_based_split(
-        features_df, config.train_pct, config.val_pct
+        features_df, config.train_pct, config.val_pct,
+        embargo=config.forward_periods,
     )
 
     X_train = train_df[feature_cols]

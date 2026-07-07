@@ -60,6 +60,7 @@ def get_risk_manager() -> RiskManager:
             max_position_pct=settings.max_position_pct,
             max_open_positions=settings.max_open_positions,
             min_cash_reserve_pct=settings.min_cash_reserve_pct,
+            session_factory=_session_factory,
         )
     return _risk_manager
 

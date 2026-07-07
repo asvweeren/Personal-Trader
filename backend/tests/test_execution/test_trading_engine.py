@@ -350,6 +350,44 @@ async def test_trailing_stop_no_decrease():
     assert mock_trade.stop_loss == 97.0
 
 
+# ── Continuous daily-loss halt ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_daily_loss_halt_triggers_and_blocks():
+    """The 1-min safety check halts trading when the portfolio breaches the
+    daily-loss limit even if no new signal arrives (force-close off)."""
+    from app.config import settings
+
+    rm = RiskManager(max_daily_loss_pct=5.0)
+    rm.set_daily_start_value(5000.0)
+
+    engine = make_engine(risk_manager=rm)
+    # Broker now reports a 6% loss (4700 < 5000 * 0.95). Set after make_engine,
+    # which otherwise resets get_portfolio to the 5000 default.
+    engine._broker.get_portfolio = AsyncMock(return_value=make_portfolio(total=4700.0))
+
+    with patch.object(settings, "daily_loss_force_close", False):
+        triggered = await engine.check_daily_loss_halt()
+
+    assert triggered is True
+    assert rm.daily_loss_triggered is True
+
+
+@pytest.mark.asyncio
+async def test_daily_loss_halt_not_triggered_when_within_limit():
+    rm = RiskManager(max_daily_loss_pct=5.0)
+    rm.set_daily_start_value(5000.0)
+
+    engine = make_engine(risk_manager=rm)
+    engine._broker.get_portfolio = AsyncMock(return_value=make_portfolio(total=4900.0))  # -2%
+
+    triggered = await engine.check_daily_loss_halt()
+
+    assert triggered is False
+    assert rm.daily_loss_triggered is False
+
+
 # ── Trading toggle tests ────────────────────────────────────
 
 

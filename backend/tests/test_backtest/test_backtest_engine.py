@@ -461,16 +461,20 @@ async def test_result_config_populated():
 
 
 def test_backtest_config_defaults():
-    """Verify updated defaults for better Sharpe ratio."""
+    """Backtest defaults mirror the live config so P&L reflects real geometry."""
+    from app.config import settings
+
     config = BacktestConfig(
         strategy=HoldStrategy(),
         symbol="AAPL",
         start_date="2025-01-01",
         end_date="2025-06-01",
     )
-    assert config.take_profit_pct == 3.0
-    assert config.max_position_pct == 30.0
-    assert config.trailing_stop_tiers == "4.0:1.5,6.0:2.0,8.0:2.5,10.0:3.0"
+    # Exit geometry pulls from the live config floors (parity with execution engine)
+    assert config.stop_loss_pct == settings.min_stop_loss_pct
+    assert config.take_profit_pct == settings.min_take_profit_pct
+    assert config.max_position_pct == settings.max_position_pct
+    assert config.trailing_stop_tiers == settings.trailing_stop_tiers
 
 
 @pytest.mark.asyncio

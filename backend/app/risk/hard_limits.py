@@ -48,7 +48,22 @@ def check_daily_loss(
 def check_position_size(
     portfolio: Portfolio, order_value: float, max_position_pct: float
 ) -> None:
-    """Check if a new order would exceed max position size. Raises if violated."""
+    """Check if a new order would exceed max position size. Raises if violated.
+
+    Enforces both the percentage-of-portfolio limit and an optional absolute
+    notional ceiling (settings.max_position_notional, 0 = disabled). The
+    absolute cap is a backstop so a single oversized order can never be placed
+    regardless of how the quantity was computed upstream.
+    """
+    from app.config import settings
+
+    max_notional = getattr(settings, "max_position_notional", 0.0) or 0.0
+    if max_notional > 0 and order_value > max_notional:
+        raise PositionSizeLimitExceeded(
+            f"Order value ${order_value:,.0f} exceeds absolute notional cap "
+            f"${max_notional:,.0f}"
+        )
+
     total_value = portfolio.account_summary.total_value
     if total_value <= 0:
         raise PositionSizeLimitExceeded("Portfolio value is zero")

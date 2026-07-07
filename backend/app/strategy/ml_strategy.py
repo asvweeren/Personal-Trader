@@ -349,7 +349,12 @@ class MLStrategy(Strategy):
 
             binary_mode = True  # Default to binary
 
-            # Prepare data through feature pipeline
+            from app.config import settings as _settings
+
+            # Prepare data through feature pipeline. Triple-barrier labelling
+            # (opt-in via ml_use_triple_barrier) labels each entry by whether the
+            # take-profit is hit before the stop within the hold window, matching
+            # production exit geometry — closes the train/live accuracy gap.
             config = FeaturePipelineConfig(
                 forward_periods=5,
                 buy_threshold=0.015,
@@ -358,6 +363,9 @@ class MLStrategy(Strategy):
                 train_pct=0.70,
                 val_pct=0.15,
                 binary_mode=binary_mode,
+                use_triple_barrier=getattr(_settings, "ml_use_triple_barrier", False),
+                tb_take_profit_pct=_settings.min_take_profit_pct / 100.0,
+                tb_stop_loss_pct=_settings.min_stop_loss_pct / 100.0,
             )
             data = prepare_ml_data(
                 historical_data, config, normalize=False,

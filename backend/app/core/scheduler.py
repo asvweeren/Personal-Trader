@@ -554,11 +554,18 @@ def schedule_eod_safety_close(engine) -> None:
         from app.risk.market_hours import is_any_market_open
 
         try:
-            # Skip if EOD close is disabled (swing trading mode)
-            if not cfg.eod_close_enabled:
+            if engine.state.value != "RUNNING" or not engine.trading_enabled:
                 return
 
-            if engine.state.value != "RUNNING" or not engine.trading_enabled:
+            # Continuous daily-loss halt — runs even in swing mode (EOD disabled)
+            # and even with no open trades, since it also blocks new entries.
+            try:
+                await engine.check_daily_loss_halt()
+            except Exception:
+                logger.exception("scheduler.daily_loss_check_error")
+
+            # Skip EOD close if disabled (swing trading mode)
+            if not cfg.eod_close_enabled:
                 return
             if not engine._open_trades:
                 return

@@ -29,6 +29,68 @@ def make_signal(symbol="AAPL", action=SignalAction.BUY, confidence=0.8):
     )
 
 
+# ── risk event persistence ───────────────────────────────────
+
+
+class _FakeSession:
+    """Captures added objects and whether commit() was called."""
+
+    def __init__(self, store):
+        self._store = store
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def add(self, obj):
+        self._store["added"].append(obj)
+
+    async def commit(self):
+        self._store["committed"] = True
+
+
+@pytest.mark.asyncio
+async def test_log_risk_event_persists_and_commits():
+    """Risk events must be committed via an independent session, not left in a
+    flushed-but-uncommitted state (the bug that left risk_events empty)."""
+    from app.models.risk_event import RiskEventSeverity, RiskEventType
+
+    store = {"added": [], "committed": False}
+    rm = RiskManager(session_factory=lambda: _FakeSession(store))
+    rm.set_daily_start_value(5000)
+
+    await rm._log_risk_event(
+        RiskEventType.DAILY_LOSS_TRIGGERED,
+        RiskEventSeverity.CRITICAL,
+        "AAPL",
+        "Daily loss 6% exceeds 5%",
+        "All trading halted",
+        make_portfolio(total_value=4700),
+    )
+
+    assert store["committed"] is True
+    assert len(store["added"]) == 1
+    assert store["added"][0].daily_loss_pct == pytest.approx(6.0)
+
+
+@pytest.mark.asyncio
+async def test_log_risk_event_no_session_does_not_raise():
+    """With no db and no factory the call is a no-op, not an exception."""
+    from app.models.risk_event import RiskEventSeverity, RiskEventType
+
+    rm = RiskManager()  # no session_factory
+    await rm._log_risk_event(
+        RiskEventType.SIGNAL_REJECTED,
+        RiskEventSeverity.INFO,
+        "AAPL",
+        "desc",
+        "action",
+        make_portfolio(),
+    )
+
+
 # ── evaluate_signal tests ────────────────────────────────────
 
 

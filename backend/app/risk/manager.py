@@ -57,12 +57,16 @@ class RiskManager:
         max_open_positions: int = 10,
         min_cash_reserve_pct: float = 30.0,
         db: AsyncSession | None = None,
+        session_factory=None,
     ):
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_position_pct = max_position_pct
         self.max_open_positions = max_open_positions
         self.min_cash_reserve_pct = min_cash_reserve_pct
         self._db = db
+        # Independent session factory so risk events persist even when the
+        # manager is a long-lived singleton with no request-scoped session.
+        self._session_factory = session_factory
         self.daily_start_value: float = 0.0
         self.daily_loss_triggered: bool = False
         # Hourly loss tracking — pause trading if losses accelerate
@@ -487,20 +491,25 @@ class RiskManager:
                 description=description,
             )
 
-        if not self._db:
+        if not self._db and not self._session_factory:
+            logger.warning(
+                "risk.event_not_persisted",
+                event_type=event_type.value,
+                reason="no db session or session_factory configured",
+            )
             return
 
-        try:
-            daily_loss_pct = 0.0
-            portfolio_value = 0.0
-            if portfolio:
-                portfolio_value = portfolio.account_summary.total_value
-                if self.daily_start_value > 0:
-                    daily_loss_pct = (
-                        (self.daily_start_value - portfolio_value) / self.daily_start_value
-                    ) * 100
+        daily_loss_pct = 0.0
+        portfolio_value = 0.0
+        if portfolio:
+            portfolio_value = portfolio.account_summary.total_value
+            if self.daily_start_value > 0:
+                daily_loss_pct = (
+                    (self.daily_start_value - portfolio_value) / self.daily_start_value
+                ) * 100
 
-            event = RiskEvent(
+        def _build_event() -> RiskEvent:
+            return RiskEvent(
                 event_type=event_type.value,
                 severity=severity.value,
                 symbol=symbol,
@@ -509,7 +518,19 @@ class RiskManager:
                 portfolio_value=portfolio_value,
                 daily_loss_pct=round(daily_loss_pct, 2),
             )
-            self._db.add(event)
-            await self._db.flush()
+
+        # Prefer an independent short-lived session so the event is committed
+        # even if the caller's transaction later rolls back. Fall back to the
+        # request-scoped session (flush + commit) when no factory is available.
+        try:
+            if self._session_factory is not None:
+                async with self._session_factory() as session:
+                    session.add(_build_event())
+                    await session.commit()
+            else:
+                self._db.add(_build_event())
+                await self._db.commit()
         except Exception:
-            logger.debug("risk.event_persist_error", event_type=event_type.value)
+            logger.exception(
+                "risk.event_persist_error", event_type=event_type.value
+            )

@@ -1384,6 +1384,14 @@ class TradingEngine:
                 # If we got a worse entry, shift TP up to maintain R:R ratio
                 if slippage > 0:
                     tp = round(tp + slippage, 2)
+                # Enforce minimum risk:reward — raise TP if geometry falls short
+                risk = result.filled_price - stop_price
+                if risk > 0:
+                    min_tp = round(
+                        result.filled_price + settings.min_risk_reward_ratio * risk, 2
+                    )
+                    if min_tp > tp:
+                        tp = min_tp
                 trade.take_profit = tp
 
             # Alert: Trade Opened
@@ -2130,6 +2138,131 @@ class TradingEngine:
                     f"{symbol}: closed at {result.filled_price:.2f} after "
                     f"{held_days:.1f} days (P&L: {pnl_pct:+.1f}%, ${pnl:+.2f})",
                 )
+
+    async def check_daily_loss_halt(self) -> bool:
+        """Continuously enforce the daily-loss limit outside the trading cycle.
+
+        The per-signal check in RiskManager.evaluate_signal only fires when a
+        new signal arrives; losses that accumulate via open positions hitting
+        stops are never caught there. This method runs on the 1-minute safety
+        loop, evaluates the live portfolio value against the day's start value,
+        and on first breach: sets the halt flag, logs a CRITICAL risk event,
+        alerts, and (if configured) force-closes every open position.
+
+        Returns True if the halt is active.
+        """
+        from app.models.risk_event import RiskEventSeverity, RiskEventType
+
+        rm = self._risk_manager
+        start_value = rm.daily_start_value
+        if start_value <= 0:
+            return rm.daily_loss_triggered
+
+        try:
+            portfolio = await self._broker.get_portfolio()
+        except Exception:
+            logger.warning("engine.daily_loss_check_no_portfolio")
+            return rm.daily_loss_triggered
+
+        current_value = portfolio.account_summary.total_value
+        loss_pct = ((start_value - current_value) / start_value) * 100
+        if loss_pct < rm.max_daily_loss_pct:
+            return rm.daily_loss_triggered
+
+        already_triggered = rm.daily_loss_triggered
+        rm.daily_loss_triggered = True
+
+        if not already_triggered:
+            action = (
+                "All trading halted; force-closing positions"
+                if settings.daily_loss_force_close
+                else "All trading halted"
+            )
+            await rm._log_risk_event(
+                RiskEventType.DAILY_LOSS_TRIGGERED,
+                RiskEventSeverity.CRITICAL,
+                None,
+                f"Daily loss {loss_pct:.2f}% >= limit {rm.max_daily_loss_pct}% — trading halted",
+                action,
+                portfolio,
+            )
+            await event_bus.publish(RISK_DAILY_STOP, {
+                "loss_pct": round(loss_pct, 2),
+                "limit_pct": rm.max_daily_loss_pct,
+                "portfolio_value": round(current_value, 2),
+            })
+            try:
+                await send_alert(
+                    "Daily Loss Limit Hit",
+                    f"Daily loss {loss_pct:.2f}% reached the {rm.max_daily_loss_pct}% "
+                    f"limit. Trading halted"
+                    + (" and open positions are being closed." if settings.daily_loss_force_close else "."),
+                    critical=True,
+                )
+            except Exception:
+                logger.warning("engine.daily_loss_alert_failed", exc_info=True)
+
+        if settings.daily_loss_force_close and self._open_trades:
+            prices: dict[str, float] = {}
+            try:
+                snap = await self._market_data.get_snapshot(list(self._open_trades.keys()))
+                prices = snap.prices
+            except Exception:
+                logger.warning("engine.daily_loss_no_prices")
+            await self._force_close_all("daily_loss", prices)
+
+        return True
+
+    async def _force_close_all(self, reason: str, prices: dict[str, float]) -> None:
+        """Market-close every open position (used by the daily-loss halt)."""
+        for symbol, trade in list(self._open_trades.items()):
+            if trade.status != TradeStatus.OPEN or trade.entry_price is None:
+                continue
+            if symbol in self._eod_sell_pending:
+                continue
+            current_price = prices.get(symbol)
+            if current_price is None or current_price <= 0:
+                # Fall back to entry price only for logging; still submit at market
+                current_price = trade.entry_price
+
+            self._eod_sell_pending.add(symbol)
+            try:
+                await self._cancel_pending_sells(symbol)
+                await asyncio.sleep(0.5)
+                result = await self._order_manager.submit_order(
+                    trade_id=trade.id,
+                    symbol=symbol,
+                    side="SELL",
+                    quantity=trade.quantity,
+                    order_type=OrderType.MARKET,
+                    expected_price=current_price,
+                )
+                result = await self._await_market_fill(result)
+                mapped_status = self._order_manager._map_status(result.status)
+                if mapped_status == OrderStatus.FILLED and result.filled_price:
+                    await self._portfolio_tracker.record_trade_close(
+                        trade, result.filled_price
+                    )
+                    self._open_trades.pop(symbol, None)
+                    self._eod_sell_pending.discard(symbol)
+                    self._last_close_time[symbol] = datetime.now(UTC)
+                    pnl = trade.realized_pnl or 0.0
+                    for strategy in self._strategies:
+                        if hasattr(strategy, "record_outcome"):
+                            strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+                    self._record_adaptive_outcome(trade)
+                    logger.warning(
+                        "engine.force_close",
+                        symbol=symbol,
+                        reason=reason,
+                        price=result.filled_price,
+                        pnl=round(pnl, 2),
+                    )
+                else:
+                    self._eod_sell_pending.discard(symbol)
+            except Exception:
+                self._eod_sell_pending.discard(symbol)
+                logger.exception("engine.force_close_error", symbol=symbol)
 
     async def _load_open_trades(self) -> None:
         """Load open trades from database on startup for recovery.

@@ -6,6 +6,7 @@ from app.strategy.feature_pipeline import (
     FeaturePipelineConfig,
     balance_classes,
     create_target,
+    create_triple_barrier_target,
     get_feature_importance,
     normalize_features,
     prepare_ml_data,
@@ -144,6 +145,67 @@ def test_split_no_overlap():
     train, val, test = time_based_split(df, 0.60, 0.20)
     all_indices = set(train.index) | set(val.index) | set(test.index)
     assert len(all_indices) == len(df)
+
+
+def test_split_embargo_purges_boundary_rows():
+    """Embargo drops the last N rows of train and val so forward labels can't leak."""
+    df = pd.DataFrame({"x": range(100)})
+    train, val, test = time_based_split(df, 0.70, 0.15, embargo=5)
+    # train ends at 70 → drop last 5 → 65 rows, last index 64
+    assert len(train) == 65
+    assert train.iloc[-1]["x"] == 64
+    # val spans [70, 85) → drop last 5 → indices 70..79
+    assert val.iloc[0]["x"] == 70
+    assert val.iloc[-1]["x"] == 79
+    # test is untouched, still starts at 85
+    assert test.iloc[0]["x"] == 85
+    # A gap now exists between train and val (65..69 purged) — no leakage
+    assert val.iloc[0]["x"] - train.iloc[-1]["x"] > 1
+
+
+# ── triple-barrier target tests ──────────────────────────────
+
+
+def test_triple_barrier_labels_tp_before_sl():
+    """Price rising to TP before touching SL is labelled BUY (1)."""
+    # Entry 100 at row 0; row 1 spikes to 106 (>4.5% TP), never near 97 (SL)
+    df = pd.DataFrame({
+        "open": [100, 100],
+        "high": [100, 106],
+        "low": [100, 100],
+        "close": [100, 105],
+    })
+    target = create_triple_barrier_target(
+        df, forward_periods=1, take_profit_pct=0.045, stop_loss_pct=0.03
+    )
+    assert target.iloc[0] == 1
+
+
+def test_triple_barrier_labels_sl_before_tp():
+    """Price dropping to SL is labelled NOT_BUY (0)."""
+    df = pd.DataFrame({
+        "open": [100, 100],
+        "high": [100, 101],
+        "low": [100, 96],   # -4% < -3% SL
+        "close": [100, 97],
+    })
+    target = create_triple_barrier_target(
+        df, forward_periods=1, take_profit_pct=0.045, stop_loss_pct=0.03
+    )
+    assert target.iloc[0] == 0
+
+
+def test_triple_barrier_tail_is_nan():
+    """The last forward_periods rows have no lookahead → NaN (dropped downstream)."""
+    df = pd.DataFrame({
+        "open": [100] * 5,
+        "high": [100] * 5,
+        "low": [100] * 5,
+        "close": [100] * 5,
+    })
+    target = create_triple_barrier_target(df, forward_periods=2)
+    assert target.iloc[-1] != target.iloc[-1]  # NaN != NaN
+    assert target.iloc[-2] != target.iloc[-2]
 
 
 # ── prepare_ml_data tests ────────────────────────────────────
