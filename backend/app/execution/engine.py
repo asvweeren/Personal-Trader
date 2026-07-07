@@ -111,6 +111,11 @@ class TradingEngine:
         self._eod_sell_pending: set[str] = set()
         # Track cancelled order timestamps per symbol to prevent retry spam
         self._cancelled_cooldown: dict[str, datetime] = {}
+        # Serializes DB/broker work between the trading cycle and the 1-minute
+        # safety loop so they never use the shared AsyncSession concurrently.
+        self._cycle_lock = asyncio.Lock()
+        # Wall-clock of the last reconciliation run (drift-detection throttle).
+        self._last_reconcile_at: datetime | None = None
 
     @property
     def state(self) -> EngineState:
@@ -224,7 +229,10 @@ class TradingEngine:
             return
 
         try:
-            await asyncio.wait_for(self._run_cycle_inner(), timeout=240)
+            # Hold the cycle lock so the 1-minute safety loop cannot touch the
+            # shared DB session while a cycle is running.
+            async with self._cycle_lock:
+                await asyncio.wait_for(self._run_cycle_inner(), timeout=240)
         except TimeoutError:
             logger.error(
                 "engine.cycle_timeout",
@@ -315,32 +323,9 @@ class TradingEngine:
                 self._last_cycle_at = datetime.now(UTC)
                 return
 
-            # 2b. Reconciliation every 3rd cycle (~15 min)
-            if self._cycle_count > 0 and self._cycle_count % 3 == 0:
-                try:
-                    portfolio_for_recon = await self._portfolio_tracker.get_current()
-                    recon_result = await reconcile(self._open_trades, portfolio_for_recon)
-                    set_last_result(recon_result)
-                    await event_bus.publish(RECONCILIATION_UPDATE, recon_result.to_dict())
-                    if not recon_result.is_clean:
-                        actions = await auto_fix(recon_result, self, self._db)
-                        if actions:
-                            await send_alert(
-                                "Position Reconciliation",
-                                "Mismatches detected and fixed:\n" + "\n".join(actions),
-                            )
-                        logger.warning("reconciliation.mismatches", result=recon_result.to_dict())
-                    else:
-                        logger.info("reconciliation.ok", matches=len(recon_result.matches))
-                except Exception:
-                    logger.debug("reconciliation.error", exc_info=True)
-
-                # Also close DB trades that are OPEN but have no broker position
-                # (handles duplicates and trades orphaned across restarts)
-                try:
-                    await self._close_orphaned_db_trades(portfolio_for_recon)
-                except Exception:
-                    logger.debug("reconciliation.db_cleanup_error", exc_info=True)
+            # 2b. Reconciliation — time-throttled (~5 min) rather than tied to the
+            # cycle count, which regressed to ~3h once cycles became hourly.
+            await self.reconcile_if_due()
 
             # 2c. Detect market regime
             try:
@@ -1701,6 +1686,53 @@ class TradingEngine:
 
         await self._db.flush()
 
+    async def reconcile_if_due(self, interval_minutes: float = 5.0) -> None:
+        """Run reconciliation at most once per ``interval_minutes``.
+
+        Called both from the trading cycle and the 1-minute safety loop (both
+        hold the cycle lock, so the shared session is never used concurrently).
+        The time throttle replaces the old cycle-count throttle, which had
+        regressed to ~3h once cycles became hourly.
+        """
+        now = datetime.now(UTC)
+        last = self._last_reconcile_at
+        if last is not None and (now - last).total_seconds() < interval_minutes * 60:
+            return
+        self._last_reconcile_at = now
+        await self._run_reconciliation()
+
+    async def _run_reconciliation(self) -> None:
+        """Reconcile tracked positions against the broker and auto-fix drift.
+
+        Catches partial-fill residue, orphaned positions, and externally-changed
+        state. Must be called with the cycle lock held.
+        """
+        try:
+            portfolio_for_recon = await self._portfolio_tracker.get_current()
+            recon_result = await reconcile(self._open_trades, portfolio_for_recon)
+            set_last_result(recon_result)
+            await event_bus.publish(RECONCILIATION_UPDATE, recon_result.to_dict())
+            if not recon_result.is_clean:
+                actions = await auto_fix(recon_result, self, self._db)
+                if actions:
+                    await send_alert(
+                        "Position Reconciliation",
+                        "Mismatches detected and fixed:\n" + "\n".join(actions),
+                    )
+                logger.warning("reconciliation.mismatches", result=recon_result.to_dict())
+            else:
+                logger.info("reconciliation.ok", matches=len(recon_result.matches))
+        except Exception:
+            logger.debug("reconciliation.error", exc_info=True)
+            return
+
+        # Also close DB trades that are OPEN but have no broker position
+        # (handles duplicates and trades orphaned across restarts)
+        try:
+            await self._close_orphaned_db_trades(portfolio_for_recon)
+        except Exception:
+            logger.debug("reconciliation.db_cleanup_error", exc_info=True)
+
     async def _retry_pending_stops(self) -> None:
         """Retry placing stop-loss orders that failed due to IBKR race condition.
 
@@ -2105,34 +2137,57 @@ class TradingEngine:
 
                 is_short = trade.side == TradeSide.SELL
                 close_side = "BUY" if is_short else "SELL"
-                result = await self._order_manager.submit_order(
-                    trade_id=trade.id,
-                    symbol=symbol,
-                    side=close_side,
-                    quantity=trade.quantity,
-                    order_type=OrderType.MARKET,
-                    expected_price=current_price,
-                )
-                result = await self._await_market_fill(result)
-                mapped_status = self._order_manager._map_status(result.status)
-                if mapped_status == OrderStatus.FILLED and result.filled_price:
-                    await self._portfolio_tracker.record_trade_close(
-                        trade, result.filled_price
+                try:
+                    result = await self._order_manager.submit_order(
+                        trade_id=trade.id,
+                        symbol=symbol,
+                        side=close_side,
+                        quantity=trade.quantity,
+                        order_type=OrderType.MARKET,
+                        expected_price=current_price,
                     )
-                    self._open_trades.pop(symbol, None)
+                    result = await self._await_market_fill(result)
+                    mapped_status = self._order_manager._map_status(result.status)
+                    if mapped_status == OrderStatus.FILLED and result.filled_price:
+                        await self._portfolio_tracker.record_trade_close(
+                            trade, result.filled_price
+                        )
+                        self._open_trades.pop(symbol, None)
+                        self._eod_sell_pending.discard(symbol)
+                        self._last_close_time[symbol] = datetime.now(UTC)
+                        pnl = trade.realized_pnl or 0.0
+                        for strategy in self._strategies:
+                            if hasattr(strategy, "record_outcome"):
+                                strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
+                        self._record_adaptive_outcome(trade)
+                        action_word = "covered short" if is_short else "closed"
+                        await send_alert(
+                            "EOD Close",
+                            f"{symbol}: {action_word} at {result.filled_price:.2f} "
+                            f"({mins_left:.0f} min before close, P&L: {pnl:+.2f})",
+                        )
+                    else:
+                        # Did not fill — release the guard so the next tick
+                        # retries. Never leave a position stuck (and thus held
+                        # overnight) because a single close attempt failed.
+                        self._eod_sell_pending.discard(symbol)
+                        logger.error(
+                            "engine.eod_close_failed",
+                            symbol=symbol,
+                            status=result.status,
+                        )
+                        await send_alert(
+                            "⚠️ EOD Close Failed",
+                            f"{symbol}: end-of-day close did not fill "
+                            f"(status {result.status}). Will retry each minute; "
+                            f"may need manual intervention before close.",
+                            critical=True,
+                        )
+                except Exception:
+                    # On any error, release the guard so the position is retried
+                    # rather than silently skipped forever.
                     self._eod_sell_pending.discard(symbol)
-                    self._last_close_time[symbol] = datetime.now(UTC)
-                    pnl = trade.realized_pnl or 0.0
-                    for strategy in self._strategies:
-                        if hasattr(strategy, "record_outcome"):
-                            strategy.record_outcome(symbol, trade.strategy_name, pnl > 0)
-                    self._record_adaptive_outcome(trade)
-                    action_word = "covered short" if is_short else "closed"
-                    await send_alert(
-                        "EOD Close",
-                        f"{symbol}: {action_word} at {result.filled_price:.2f} "
-                        f"({mins_left:.0f} min before close, P&L: {pnl:+.2f})",
-                    )
+                    logger.exception("engine.eod_close_error", symbol=symbol)
 
     async def _check_stale_positions(self, prices: dict[str, float]) -> None:
         """Close positions held too long with negligible P&L.

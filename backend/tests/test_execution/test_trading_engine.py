@@ -598,6 +598,79 @@ async def test_buy_accepts_fill_after_cancel_race_no_duplicate():
         settings.opening_range_minutes = saved["o"]
 
 
+# ── Cycle/safety-loop session serialization (#5) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_holds_and_releases_cycle_lock():
+    """The cycle lock is held during the inner cycle and released afterwards."""
+    engine = make_engine()
+    await engine.start()
+
+    held = {}
+
+    async def fake_inner():
+        held["locked"] = engine._cycle_lock.locked()
+
+    engine._run_cycle_inner = fake_inner
+    await engine.run_cycle()
+
+    assert held["locked"] is True
+    assert not engine._cycle_lock.locked()
+
+
+# ── Reconciliation cadence (#3) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reconcile_if_due_throttles():
+    """Reconciliation runs at most once per interval, then again once it elapses."""
+    engine = make_engine()
+    await engine.start()
+    engine._run_reconciliation = AsyncMock()
+
+    await engine.reconcile_if_due(interval_minutes=5)
+    assert engine._run_reconciliation.await_count == 1
+
+    await engine.reconcile_if_due(interval_minutes=5)
+    assert engine._run_reconciliation.await_count == 1  # throttled
+
+    engine._last_reconcile_at = datetime.now(UTC) - timedelta(minutes=6)
+    await engine.reconcile_if_due(interval_minutes=5)
+    assert engine._run_reconciliation.await_count == 2  # interval elapsed
+
+
+# ── EOD close reliability (#4) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("app.execution.engine.minutes_until_close_for_symbol", return_value=1.0)
+async def test_eod_close_failure_releases_guard(_mins):
+    """An EOD close that does not fill must release its guard and keep retrying."""
+    from app.config import settings
+
+    old = settings.eod_close_minutes_before
+    settings.eod_close_minutes_before = 30
+    try:
+        engine = make_engine(trading_enabled=True)
+        await engine.start()
+
+        trade = _open_trade()
+        engine._open_trades["AAPL"] = trade
+        # The close order never fills.
+        engine._await_market_fill = AsyncMock(
+            return_value=OrderResult(order_id="x", status="SUBMITTED")
+        )
+
+        await engine._check_eod_close({"AAPL": 150.0})
+
+        # Guard released (so next tick retries) and position NOT dropped.
+        assert "AAPL" not in engine._eod_sell_pending
+        assert "AAPL" in engine._open_trades
+    finally:
+        settings.eod_close_minutes_before = old
+
+
 # ── Engine init concurrency ──────────────────────────────────
 
 

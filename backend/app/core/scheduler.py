@@ -583,40 +583,60 @@ def schedule_eod_safety_close(engine) -> None:
             if engine.state.value != "RUNNING" or not engine.trading_enabled:
                 return
 
-            # Continuous daily-loss halt — runs even in swing mode (EOD disabled)
-            # and even with no open trades, since it also blocks new entries.
+            # Serialize against the trading cycle: both touch the same DB
+            # session, which is not safe for concurrent use. If a cycle is
+            # running, skip this tick — it runs again in a minute.
             try:
-                await engine.check_daily_loss_halt()
-            except Exception:
-                logger.exception("scheduler.daily_loss_check_error")
+                await asyncio.wait_for(engine._cycle_lock.acquire(), timeout=5)
+            except (TimeoutError, asyncio.TimeoutError):
+                return
 
-            # Naked-position guard — retry failed stop-loss placements every
-            # minute so a filled position without a confirmed broker stop is
-            # protected (or flattened) within ~1 min instead of waiting for the
-            # next hourly trading cycle. Runs regardless of swing/EOD mode.
-            if engine._pending_stop_retries:
+            try:
+                # Continuous daily-loss halt — runs even in swing mode (EOD
+                # disabled) and with no open trades, since it also blocks entries.
                 try:
-                    if is_any_market_open(list(engine._pending_stop_retries)):
-                        await engine._retry_pending_stops()
-                        await engine._db.commit()
+                    await engine.check_daily_loss_halt()
                 except Exception:
-                    logger.exception("scheduler.stop_retry_error")
+                    logger.exception("scheduler.daily_loss_check_error")
 
-            # Skip EOD close if disabled (swing trading mode)
-            if not cfg.eod_close_enabled:
-                return
-            if not engine._open_trades:
-                return
+                # Naked-position guard — retry failed stop-loss placements every
+                # minute so a filled position without a confirmed broker stop is
+                # protected (or flattened) within ~1 min instead of waiting for
+                # the next hourly trading cycle. Runs regardless of swing/EOD.
+                if engine._pending_stop_retries:
+                    try:
+                        if is_any_market_open(list(engine._pending_stop_retries)):
+                            await engine._retry_pending_stops()
+                            await engine._db.commit()
+                    except Exception:
+                        logger.exception("scheduler.stop_retry_error")
 
-            # Only run the check if any market is still open
-            symbols = list(engine._open_trades.keys())
-            if not is_any_market_open(symbols):
-                return
+                # Drift-detection safety net — reconcile broker vs tracked state
+                # (~5 min throttle) so partial fills / orphans / external changes
+                # are caught quickly, not every ~3 hours.
+                try:
+                    await engine.reconcile_if_due()
+                    await engine._db.commit()
+                except Exception:
+                    logger.exception("scheduler.reconcile_error")
 
-            # Get fresh prices and run the EOD close check
-            snapshot = await engine._market_data.get_snapshot(symbols)
-            await engine._check_eod_close(snapshot.prices)
-            await engine._db.commit()
+                # Skip EOD close if disabled (swing trading mode)
+                if not cfg.eod_close_enabled:
+                    return
+                if not engine._open_trades:
+                    return
+
+                # Only run the check if any market is still open
+                symbols = list(engine._open_trades.keys())
+                if not is_any_market_open(symbols):
+                    return
+
+                # Get fresh prices and run the EOD close check
+                snapshot = await engine._market_data.get_snapshot(symbols)
+                await engine._check_eod_close(snapshot.prices)
+                await engine._db.commit()
+            finally:
+                engine._cycle_lock.release()
         except Exception:
             logger.exception("scheduler.eod_safety_check_error")
 
