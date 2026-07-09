@@ -1,5 +1,6 @@
 import asyncio
 import smtplib
+import time
 from email.message import EmailMessage
 
 import httpx
@@ -124,3 +125,27 @@ async def send_alert(title: str, message: str, critical: bool = False) -> None:
 
     if critical:
         await send_email_alert(title, message)
+
+
+# Deduplication state for send_alert_once: key -> monotonic timestamp of last send.
+_alert_once_sent: dict[str, float] = {}
+
+
+async def send_alert_once(
+    key: str,
+    title: str,
+    message: str,
+    critical: bool = False,
+    cooldown_hours: float = 6.0,
+) -> None:
+    """Send an alert at most once per cooldown period for a given key.
+
+    For persistent error conditions (API outage, reconciliation drift) that
+    would otherwise fire on every cycle and flood the alert channels.
+    """
+    now = time.monotonic()
+    last = _alert_once_sent.get(key)
+    if last is not None and now - last < cooldown_hours * 3600:
+        return
+    _alert_once_sent[key] = now
+    await send_alert(title, message, critical=critical)

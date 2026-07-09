@@ -164,19 +164,22 @@ async def run_reconciliation(db: AsyncSession = Depends(get_db)):
     if not await broker.is_connected():
         raise HTTPException(status_code=503, detail="Broker not connected")
 
-    portfolio = await engine._portfolio_tracker.get_current()
-    result = await reconcile(engine._open_trades, portfolio)
-    set_last_result(result)
+    # Hold the cycle lock: auto_fix mutates engine._open_trades and places
+    # orders, so it must not race with a running trading cycle.
+    async with engine._cycle_lock:
+        portfolio = await engine._portfolio_tracker.get_current()
+        result = await reconcile(engine._open_trades, portfolio)
+        set_last_result(result)
 
-    actions = []
-    if not result.is_clean:
-        actions = await auto_fix(result, engine, db)
-        if actions:
-            await send_alert(
-                "Manual Reconciliation",
-                "Forced reconciliation:\n" + "\n".join(actions),
-            )
-        await db.commit()
+        actions = []
+        if not result.is_clean:
+            actions = await auto_fix(result, engine, db)
+            if actions:
+                await send_alert(
+                    "Manual Reconciliation",
+                    "Forced reconciliation:\n" + "\n".join(actions),
+                )
+            await db.commit()
 
     return {
         "reconciliation": result.to_dict(),

@@ -16,6 +16,7 @@ import structlog
 
 from app.config import settings
 from app.data.market_data import MarketSnapshot
+from app.monitoring.alerts import send_alert_once
 from app.strategy.base import SignalAction, Strategy, TradingSignal
 
 logger = structlog.get_logger()
@@ -36,8 +37,24 @@ class AgenticStrategy(Strategy):
         self._client: anthropic.AsyncAnthropic | None = None
         self._calls: list[float] = []
         self._max_calls_per_minute = 5
+        # When the client is disabled (auth/billing errors), retry after cooldown
+        self._client_disabled_at: float | None = None
+        self._client_reset_cooldown = 3600
         if settings.anthropic_api_key:
             self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    def _maybe_reenable_client(self) -> None:
+        """Re-create the client after the cooldown so recovery (e.g. topped-up
+        credits) does not require a backend restart."""
+        if (
+            self._client is None
+            and settings.anthropic_api_key
+            and self._client_disabled_at is not None
+            and time.monotonic() - self._client_disabled_at > self._client_reset_cooldown
+        ):
+            self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            self._client_disabled_at = None
+            logger.info("agentic.client_reenabled")
 
     async def _rate_limit(self) -> None:
         now = time.monotonic()
@@ -137,6 +154,7 @@ If no clear setups: []
 JSON:"""
 
     async def generate_signals(self, market_data: MarketSnapshot) -> list[TradingSignal]:
+        self._maybe_reenable_client()
         if not self._client:
             return []
 
@@ -237,6 +255,30 @@ JSON:"""
         except anthropic.AuthenticationError:
             logger.error("agentic.auth_error")
             self._client = None
+            self._client_disabled_at = time.monotonic()
+            await send_alert_once(
+                "anthropic_api_unavailable",
+                "Anthropic API unavailable",
+                "Agentic strategy failing: invalid API key.\n"
+                "LLM strategies (sentiment/agentic) are disabled until this is fixed.",
+                critical=True,
+            )
+            return []
+        except anthropic.BadRequestError as e:
+            error_msg = str(e)
+            lowered = error_msg.lower()
+            logger.error("agentic.api_bad_request", error=error_msg[:200])
+            if "credit balance" in lowered or "usage limits" in lowered:
+                # Billing exhausted: stop hammering the API, retry after cooldown
+                self._client = None
+                self._client_disabled_at = time.monotonic()
+                await send_alert_once(
+                    "anthropic_api_unavailable",
+                    "Anthropic API unavailable",
+                    f"Agentic strategy failing: {error_msg[:300]}\n\n"
+                    "LLM strategies (sentiment/agentic) are disabled until this is fixed.",
+                    critical=True,
+                )
             return []
         except Exception:
             logger.exception("agentic.error")

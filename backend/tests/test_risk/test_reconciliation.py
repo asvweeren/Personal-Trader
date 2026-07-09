@@ -180,6 +180,106 @@ async def test_auto_fix_closes_short():
     assert order_req.quantity == 50
 
 
+@pytest.mark.asyncio
+async def test_reconcile_orphan_includes_position_prices():
+    """Orphaned long positions carry avg_cost/market_price for adoption."""
+    result = await reconcile({}, _make_portfolio([("AAPL", 10)]))
+    orphan = result.orphaned_broker[0]
+    assert orphan["action"] == "add_to_internal"
+    assert orphan["avg_cost"] == 100.0
+    assert orphan["market_price"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_auto_fix_adopts_orphaned_long():
+    """Auto-fix should adopt an orphaned long position as an internal OPEN
+    trade with a protective stop-loss."""
+    engine = MagicMock()
+    engine._open_trades = {}
+    engine._calculate_atr_stop = MagicMock(return_value=97.0)
+    engine._place_stop_verified = AsyncMock(return_value=True)
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    result = ReconciliationResult(
+        orphaned_broker=[{
+            "symbol": "MRK",
+            "broker_qty": 72,
+            "action": "add_to_internal",
+            "avg_cost": 100.0,
+            "market_price": 102.0,
+        }],
+    )
+    actions = await auto_fix(result, engine, db)
+
+    assert len(actions) == 1
+    assert "MRK" in actions[0]
+    assert "72" in actions[0]
+
+    trade = engine._open_trades["MRK"]
+    assert trade.symbol == "MRK"
+    assert trade.side == TradeSide.BUY
+    assert trade.quantity == 72
+    assert trade.entry_price == 100.0
+    assert trade.status == TradeStatus.OPEN
+    assert trade.strategy_name == "reconciliation"
+    assert trade.stop_loss == 97.0
+    db.add.assert_called_once_with(trade)
+    engine._calculate_atr_stop.assert_called_once_with(102.0, "MRK")
+    engine._place_stop_verified.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_auto_fix_adoption_skips_already_tracked():
+    """No duplicate trade is created when the symbol is already tracked."""
+    engine = MagicMock()
+    engine._open_trades = {"MRK": _make_trade("MRK", 72)}
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    result = ReconciliationResult(
+        orphaned_broker=[{
+            "symbol": "MRK",
+            "broker_qty": 72,
+            "action": "add_to_internal",
+            "avg_cost": 100.0,
+            "market_price": 102.0,
+        }],
+    )
+    actions = await auto_fix(result, engine, db)
+    assert actions == []
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_fix_adoption_stop_failure_still_adopts():
+    """If the stop placement fails, the position is still adopted (the
+    engine's stop-retry queue takes over) and the action says so."""
+    engine = MagicMock()
+    engine._open_trades = {}
+    engine._calculate_atr_stop = MagicMock(return_value=97.0)
+    engine._place_stop_verified = AsyncMock(return_value=False)
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    result = ReconciliationResult(
+        orphaned_broker=[{
+            "symbol": "XOM",
+            "broker_qty": 21,
+            "action": "add_to_internal",
+            "avg_cost": 150.0,
+            "market_price": 148.0,
+        }],
+    )
+    actions = await auto_fix(result, engine, db)
+    assert len(actions) == 1
+    assert "PENDING" in actions[0]
+    assert "XOM" in engine._open_trades
+
+
 def test_result_to_dict():
     result = ReconciliationResult(
         matches=["AAPL"],

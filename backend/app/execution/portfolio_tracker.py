@@ -66,11 +66,15 @@ class PortfolioTracker:
         if self._daily_start_value is None or self._last_portfolio is None:
             return 0.0
 
-        # Prefer performance-based calculation (handles deposits/withdrawals)
+        # Prefer performance-based calculation (handles deposits/withdrawals).
+        # Uses realized P&L from trades closed *today* plus the change in
+        # unrealized P&L since the daily reset — NOT the all-time realized_pnl,
+        # which is restored from full trade history on startup.
         if self._performance:
-            realized_today = self._performance.realized_pnl
+            realized_today = self._performance.daily_realized_pnl
             unrealized = self._last_portfolio.account_summary.unrealized_pnl
-            return realized_today + unrealized
+            unrealized_change = unrealized - self._performance.daily_start_unrealized
+            return realized_today + unrealized_change
 
         return self._last_portfolio.account_summary.total_value - self._daily_start_value
 

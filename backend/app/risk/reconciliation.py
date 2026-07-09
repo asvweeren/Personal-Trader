@@ -7,7 +7,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.broker.base import OrderType, Portfolio
-from app.models.trade import Trade, TradeStatus
+from app.models.trade import Trade, TradeSide, TradeStatus
 
 logger = structlog.get_logger()
 
@@ -51,9 +51,14 @@ async def reconcile(
 
     # Build broker positions map: symbol -> quantity (include shorts)
     broker_positions: dict[str, int] = {}
+    position_details: dict[str, dict] = {}
     for pos in portfolio.positions:
         if pos.quantity != 0:
             broker_positions[pos.symbol] = pos.quantity
+            position_details[pos.symbol] = {
+                "avg_cost": pos.avg_cost,
+                "market_price": pos.market_price,
+            }
 
     internal_symbols = set(engine_trades.keys())
     broker_symbols = set(broker_positions.keys())
@@ -93,10 +98,13 @@ async def reconcile(
                 "severity": "critical",
             })
         else:
+            detail = position_details.get(symbol, {})
             result.orphaned_broker.append({
                 "symbol": symbol,
                 "broker_qty": broker_qty,
                 "action": "add_to_internal",
+                "avg_cost": detail.get("avg_cost"),
+                "market_price": detail.get("market_price"),
             })
 
     # Orphaned in engine (engine thinks it has a position, broker doesn't)
@@ -175,6 +183,62 @@ async def auto_fix(
                 old=old_qty,
                 new=broker_qty,
             )
+
+    # Adopt orphaned long positions: create an internal OPEN trade and
+    # protect it with a stop-loss so it is never held naked.
+    for orphan in result.orphaned_broker:
+        if orphan.get("action") != "add_to_internal":
+            continue
+        symbol = orphan["symbol"]
+        qty = orphan["broker_qty"]
+        if symbol in engine._open_trades:
+            continue
+
+        entry_price = orphan.get("avg_cost") or orphan.get("market_price")
+        stop_basis = orphan.get("market_price") or entry_price
+
+        trade = Trade(
+            symbol=symbol,
+            side=TradeSide.BUY,
+            quantity=qty,
+            entry_price=entry_price,
+            status=TradeStatus.OPEN,
+            strategy_name="reconciliation",
+        )
+        db.add(trade)
+        await db.flush()
+
+        stop_price: float | None = None
+        stop_ok = False
+        if stop_basis and stop_basis > 0:
+            stop_price = engine._calculate_atr_stop(stop_basis, symbol)
+            trade.stop_loss = stop_price
+
+        engine._open_trades[symbol] = trade
+
+        if stop_price:
+            stop_ok = await engine._place_stop_verified(
+                trade.id, symbol, qty, stop_price
+            )
+
+        stop_desc = (
+            f"stop placed @ {stop_price:.2f}" if stop_ok
+            else f"stop @ {stop_price:.2f} PENDING (queued for retry)" if stop_price
+            else "NO STOP (no price available)"
+        )
+        actions.append(
+            f"Adopted orphaned position {symbol}: {qty} shares "
+            f"@ {entry_price or 'unknown'} (trade {trade.id}, {stop_desc})"
+        )
+        logger.warning(
+            "reconciliation.orphan_adopted",
+            symbol=symbol,
+            quantity=qty,
+            trade_id=trade.id,
+            entry_price=entry_price,
+            stop_loss=stop_price,
+            stop_confirmed=stop_ok,
+        )
 
     # Close short positions: place BUY order directly via broker to flatten
     for orphan in result.orphaned_broker:

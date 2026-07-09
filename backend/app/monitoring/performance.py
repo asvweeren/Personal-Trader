@@ -60,6 +60,13 @@ class PerformanceTracker:
     realized_pnl: float = 0.0
     unrealized_pnl: float = 0.0
     daily_pnl: float = 0.0
+    # Realized P&L accumulated since the last daily reset. Unlike
+    # realized_pnl (all-time, restored from trade history on startup),
+    # this only counts trades closed today.
+    daily_realized_pnl: float = 0.0
+    # Unrealized P&L at the moment of the last daily reset, so intraday
+    # unrealized *change* can be computed.
+    daily_start_unrealized: float = 0.0
     total_trades: int = 0
     winning_trades: int = 0
     losing_trades: int = 0
@@ -122,6 +129,7 @@ class PerformanceTracker:
     ) -> None:
         self.trade_pnls.append(pnl)
         self.realized_pnl += pnl
+        self.daily_realized_pnl += pnl
         self.total_commission += commission
         self.total_trades += 1
 
@@ -176,6 +184,8 @@ class PerformanceTracker:
     def reset_daily(self) -> None:
         self.daily_start_value = self.total_value
         self.daily_pnl = 0.0
+        self.daily_realized_pnl = 0.0
+        self.daily_start_unrealized = self.unrealized_pnl
         self.api_calls_today = 0
         self.api_cost_today_usd = 0.0
         self.last_reset = datetime.now(UTC)

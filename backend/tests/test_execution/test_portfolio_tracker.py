@@ -136,6 +136,59 @@ def test_daily_pnl_no_init():
     assert tracker.get_daily_pnl() == 0.0
 
 
+@pytest.mark.asyncio
+async def test_daily_pnl_excludes_historical_realized():
+    """Regression: all-time realized P&L (restored from trade history on
+    startup) must not leak into the daily P&L calculation."""
+    perf = PerformanceTracker(initial_capital=250000.0)
+    # Simulate months of historical losses restored at startup
+    perf.restore_from_trades([
+        {"realized_pnl": -35000.0, "commission": 0.0, "strategy_name": "ensemble"},
+    ])
+
+    pos = Position(
+        symbol="AAPL", quantity=10, avg_cost=100.0, market_price=105.0,
+        market_value=1050.0, unrealized_pnl=50.0,
+    )
+    broker = make_mock_broker(make_portfolio(total=215050.0, positions=[pos]))
+    db = make_mock_db()
+    tracker = PortfolioTracker(broker, db, performance=perf)
+
+    await tracker.initialize_daily()
+    # No trades closed today, unrealized unchanged since reset
+    assert tracker.get_daily_pnl() == 0.0
+
+    # A trade closes today for +120, unrealized rises by 30
+    perf.record_trade(120.0)
+    pos2 = Position(
+        symbol="AAPL", quantity=10, avg_cost=100.0, market_price=108.0,
+        market_value=1080.0, unrealized_pnl=80.0,
+    )
+    broker.get_portfolio = AsyncMock(
+        return_value=make_portfolio(total=215200.0, positions=[pos2])
+    )
+    await tracker.get_current()
+    assert tracker.get_daily_pnl() == pytest.approx(150.0)
+
+
+@pytest.mark.asyncio
+async def test_daily_reset_clears_daily_realized():
+    """After a daily reset, previous days' realized P&L no longer counts."""
+    perf = PerformanceTracker(initial_capital=250000.0)
+    broker = make_mock_broker()
+    db = make_mock_db()
+    tracker = PortfolioTracker(broker, db, performance=perf)
+
+    await tracker.initialize_daily()
+    perf.record_trade(-500.0)
+    assert perf.daily_realized_pnl == -500.0
+
+    await tracker.initialize_daily()
+    assert perf.daily_realized_pnl == 0.0
+    assert perf.realized_pnl == -500.0  # all-time is preserved
+    assert tracker.get_daily_pnl() == 0.0
+
+
 # ── Record trade close tests ────────────────────────────────
 
 

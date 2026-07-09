@@ -10,6 +10,7 @@ import structlog
 
 from app.config import settings
 from app.data.news_fetcher import NewsItem
+from app.monitoring.alerts import send_alert_once
 
 logger = structlog.get_logger()
 
@@ -320,16 +321,37 @@ class SentimentAnalyzer:
             # Disable client temporarily — will retry after cooldown
             self._client = None
             self._client_disabled_at = time.monotonic()
+            await send_alert_once(
+                "anthropic_api_unavailable",
+                "Anthropic API unavailable",
+                "Sentiment analysis failing: invalid API key.\n"
+                "LLM strategies (sentiment/agentic) return neutral signals "
+                "until this is fixed.",
+                critical=True,
+            )
             return self._neutral_result(
                 symbol, batch, reason="Invalid Anthropic API key"
             )
         except anthropic.BadRequestError as e:
             error_msg = str(e)
-            if "usage limits" in error_msg or "rate" in error_msg.lower():
+            lowered = error_msg.lower()
+            if (
+                "credit balance" in lowered
+                or "usage limits" in lowered
+                or "rate" in lowered
+            ):
                 logger.warning("sentiment.api_budget_exhausted", detail=error_msg[:200])
                 # Disable client temporarily — will retry after cooldown
                 self._client = None
                 self._client_disabled_at = time.monotonic()
+                await send_alert_once(
+                    "anthropic_api_unavailable",
+                    "Anthropic API unavailable",
+                    f"Sentiment analysis failing: {error_msg[:300]}\n\n"
+                    "LLM strategies (sentiment/agentic) return neutral signals "
+                    "until this is fixed.",
+                    critical=True,
+                )
             else:
                 logger.error("sentiment.api_bad_request", symbol=symbol, error=error_msg[:200])
             return self._neutral_result(
